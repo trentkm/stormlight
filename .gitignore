@@ -1,0 +1,6 @@
+/runstead
+/agentmux
+/dist/
+/.DS_Store
+/.local/
+*.log
