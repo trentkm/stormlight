@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/trentkm/runstead/internal/app"
 	"github.com/trentkm/runstead/internal/pending"
 	"github.com/trentkm/runstead/internal/provider"
+	"github.com/trentkm/runstead/internal/surface"
 	"github.com/trentkm/runstead/internal/workspace"
 )
 
@@ -803,26 +805,66 @@ func TestResolveYaziDirectory(t *testing.T) {
 	}
 }
 
-func TestYaziPopupArgsUseTmuxOverlay(t *testing.T) {
-	args := yaziPopupArgs(
-		"/opt/homebrew/bin/yazi",
-		"/workspace/project",
-		[]string{"--chooser-file", "/tmp/choice", "--cwd-file", "/tmp/cwd"},
-	)
-	joined := strings.Join(args, " ")
-	for _, value := range []string{
-		"display-popup",
-		"-E",
-		"-w 78%",
-		"-h 76%",
-		"-d /workspace/project",
-		"/opt/homebrew/bin/yazi",
-		"--chooser-file /tmp/choice",
-		"--cwd-file /tmp/cwd",
-	} {
-		if !strings.Contains(joined, value) {
-			t.Fatalf("popup args are missing %q: %#v", value, args)
-		}
+type recordingSurface struct {
+	request surface.Request
+	popups  bool
+}
+
+func (s *recordingSurface) Capabilities() surface.Capabilities {
+	return surface.Capabilities{Popups: s.popups}
+}
+
+func (s *recordingSurface) Present(
+	request surface.Request,
+) (surface.Presentation, error) {
+	s.request = request
+	return surface.Presentation{
+		Command: exec.Command("true"),
+		Mode:    surface.PresentationOverlay,
+	}, nil
+}
+
+func TestYaziPickerDelegatesPresentationToSurface(t *testing.T) {
+	start := t.TempDir()
+	current := &recordingSurface{popups: true}
+	command, err := yaziPickerCmd(current, "/usr/local/bin/yazi", start)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if current.request.Command.Path != "/usr/local/bin/yazi" ||
+		current.request.Command.Dir != start {
+		t.Fatalf("command request = %#v", current.request.Command)
+	}
+	if current.request.Popup == nil ||
+		current.request.Popup.Width != "78%" ||
+		current.request.Popup.Height != "76%" {
+		t.Fatalf("popup request = %#v", current.request.Popup)
+	}
+	args := strings.Join(current.request.Command.Args, " ")
+	if !strings.Contains(args, "--chooser-file") ||
+		!strings.Contains(args, "--cwd-file") {
+		t.Fatalf("Yazi handoff args = %#v", current.request.Command.Args)
+	}
+
+	message := command()
+	result, ok := message.(directoryPickedMsg)
+	if !ok || result.err != nil {
+		t.Fatalf("picker result = %#v", message)
+	}
+}
+
+func TestYaziPickerOmitsPopupForDirectSurface(t *testing.T) {
+	current := &recordingSurface{}
+	command, err := yaziPickerCmd(current, "/usr/local/bin/yazi", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.request.Popup != nil {
+		t.Fatalf("unsupported popup was requested: %#v", current.request.Popup)
+	}
+	if result, ok := command().(directoryPickedMsg); !ok || result.err != nil {
+		t.Fatalf("picker did not complete cleanly: %#v", result)
 	}
 }
 

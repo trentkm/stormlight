@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/provider"
+	"github.com/trentkm/runstead/internal/session"
+	"github.com/trentkm/runstead/internal/workspace"
 )
 
 func TestParseAgent(t *testing.T) {
@@ -137,7 +138,7 @@ func TestWindowName(t *testing.T) {
 }
 
 func TestLaunchRoundTrip(t *testing.T) {
-	want := provider.Launch{
+	want := session.Launch{
 		Path: "/path/with spaces/codex",
 		Args: []string{"quote's", "line\nbreak"},
 	}
@@ -405,7 +406,7 @@ func TestUpdateMigratesLegacyWindowMetadata(t *testing.T) {
 	runner := &captureRunner{agentLine: legacyCaptureAgentLine()}
 	runtime := &Runtime{runner: runner}
 
-	if err := runtime.Update(context.Background(), "legacy-id", Update{
+	if err := runtime.Update(context.Background(), "legacy-id", session.Update{
 		Activity: agent.ActivityIdle,
 	}); err != nil {
 		t.Fatal(err)
@@ -433,6 +434,33 @@ func TestUpdateMigratesLegacyWindowMetadata(t *testing.T) {
 		if strings.HasPrefix(key, "@agentmux_") {
 			t.Fatalf("wrote legacy option %q", key)
 		}
+	}
+}
+
+func TestSetWorkspaceResolvesRuntimeHandleFromAgentID(t *testing.T) {
+	runner := &captureRunner{agentLine: captureAgentLine(false)}
+	runtime := &Runtime{runner: runner}
+
+	if err := runtime.SetWorkspace(
+		context.Background(),
+		"capture-id",
+		workspace.DirectoryContext("/workspace/project"),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	writes := 0
+	for _, call := range runner.calls {
+		if len(call) < 4 || call[0] != "set-option" || call[1] != "-w" {
+			continue
+		}
+		writes++
+		if call[3] != "@1" {
+			t.Fatalf("workspace target = %q, want @1", call[3])
+		}
+	}
+	if writes == 0 {
+		t.Fatal("workspace metadata was not persisted")
 	}
 }
 

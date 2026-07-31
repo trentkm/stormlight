@@ -18,6 +18,8 @@ import (
 	"github.com/trentkm/runstead/internal/diagnostic"
 	"github.com/trentkm/runstead/internal/pending"
 	"github.com/trentkm/runstead/internal/provider"
+	"github.com/trentkm/runstead/internal/session"
+	"github.com/trentkm/runstead/internal/surface"
 	"github.com/trentkm/runstead/internal/tmux"
 	"github.com/trentkm/runstead/internal/ui"
 	"github.com/trentkm/runstead/internal/workspace"
@@ -122,7 +124,16 @@ func runDashboard(socket, sessionName string) error {
 	if err != nil {
 		return err
 	}
-	program := tea.NewProgram(ui.NewModel(service), tea.WithAltScreen())
+	currentSurface := surface.Surface(surface.NewDirect())
+	if os.Getenv("TMUX") != "" {
+		if tmuxPath, lookupErr := exec.LookPath("tmux"); lookupErr == nil {
+			currentSurface = tmux.NewSurface(tmuxPath)
+		}
+	}
+	program := tea.NewProgram(
+		ui.NewModelWithSurface(service, currentSurface),
+		tea.WithAltScreen(),
+	)
 	_, err = program.Run()
 	return err
 }
@@ -463,7 +474,7 @@ func newEventCommand(socket, sessionName *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return service.Update(cmd.Context(), id, tmux.Update{
+			return service.Update(cmd.Context(), id, session.Update{
 				Activity:  activity,
 				Attention: attentionKind,
 				Summary:   summary,
@@ -508,7 +519,7 @@ func newProviderEventCommand(socket, sessionName *string) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
-			_ = service.Update(ctx, id, tmux.Update{
+			_ = service.Update(ctx, id, session.Update{
 				Activity:  event.Activity,
 				Attention: event.Attention,
 				Summary:   event.Summary,
@@ -654,7 +665,7 @@ func updatePermissionAgent(
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := service.Update(ctx, id, tmux.Update{
+	if err := service.Update(ctx, id, session.Update{
 		Activity:  activity,
 		Attention: attention,
 		Summary:   summary,
@@ -689,7 +700,7 @@ func newRunCommand(socket, sessionName *string) *cobra.Command {
 				return err
 			}
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = service.Update(updateCtx, id, tmux.Update{Activity: agent.ActivityWorking})
+			_ = service.Update(updateCtx, id, session.Update{Activity: agent.ActivityWorking})
 			cancel()
 
 			child := exec.Command(launch.Path, launch.Args...)
@@ -725,7 +736,7 @@ func newRunCommand(socket, sessionName *string) *cobra.Command {
 			}
 
 			updateCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			_ = service.Update(updateCtx, id, tmux.Update{Activity: activity})
+			_ = service.Update(updateCtx, id, session.Update{Activity: activity})
 			cancel()
 			if runErr != nil {
 				return fmt.Errorf("%s exited: %w", launch.Path, runErr)

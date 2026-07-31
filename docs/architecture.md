@@ -48,6 +48,20 @@ switching the same semantics as an inside-tmux launch. The supervising process
 removes the temporary session when its client exits; managed agent sessions
 remain independent.
 
+The application layer depends on `session.Runtime`, not the tmux implementation.
+That contract owns conversation dispatch, discovery, capture, input, lifecycle,
+metadata updates, and terminal attachment. tmux is the first implementation;
+other runtimes can provide the same agent model without entering the UI or
+provider packages. The stable agent ID is the only runtime handle passed back
+through the application layer; tmux session, window, and pane fields remain
+transport-specific compatibility metadata.
+
+External interactive presentation is a separate `surface.Surface` contract.
+The tmux surface advertises popup and client-switch capabilities and translates
+generic commands into `display-popup`; the direct surface suspends Bubble Tea
+and runs the command in the current terminal. The UI requests a capability and
+does not inspect `$TMUX` or construct multiplexer commands.
+
 Each dispatch creates one window in a managed tmux session. Window options hold
 the durable metadata:
 

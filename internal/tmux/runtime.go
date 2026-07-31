@@ -16,7 +16,7 @@ import (
 
 	"github.com/trentkm/runstead/internal/agent"
 	"github.com/trentkm/runstead/internal/diagnostic"
-	"github.com/trentkm/runstead/internal/provider"
+	"github.com/trentkm/runstead/internal/session"
 	"github.com/trentkm/runstead/internal/workspace"
 )
 
@@ -71,24 +71,7 @@ type Runtime struct {
 	socket      string
 }
 
-type DispatchRequest struct {
-	Provider  agent.Provider
-	Name      string
-	Task      string
-	Cwd       string
-	Launch    provider.Launch
-	Workspace workspace.Context
-}
-
-type Update struct {
-	Activity  agent.Activity
-	Attention agent.Attention
-	Summary   string
-}
-
-type AttachResult struct {
-	Command *exec.Cmd
-}
+var _ session.Runtime = (*Runtime)(nil)
 
 func NewRuntime(runner Runner, sessionName string) (*Runtime, error) {
 	if sessionName == "" {
@@ -153,7 +136,7 @@ func paneListFormat() string {
 	return strings.Join(fields, fieldSeparator)
 }
 
-func (r *Runtime) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agent, error) {
+func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (agent.Agent, error) {
 	if strings.TrimSpace(req.Task) == "" {
 		return agent.Agent{}, fmt.Errorf("task cannot be empty")
 	}
@@ -267,10 +250,10 @@ func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, er
 	return r.runner.Run(ctx, nil, args...)
 }
 
-func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
+func (r *Runtime) Attach(ctx context.Context, id string) (session.AttachResult, error) {
 	managedAgent, err := r.FindAgent(ctx, id)
 	if err != nil {
-		return AttachResult{}, err
+		return session.AttachResult{}, err
 	}
 
 	insideTmux := insideTmuxServer(r.socket)
@@ -278,16 +261,16 @@ func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
 	if insideTmux {
 		sourcePane := os.Getenv("TMUX_PANE")
 		if sourcePane == "" {
-			return AttachResult{}, fmt.Errorf("find return target: TMUX_PANE is not set")
+			return session.AttachResult{}, fmt.Errorf("find return target: TMUX_PANE is not set")
 		}
 		returnTarget, err = r.runner.Run(ctx, nil,
 			"display-message", "-p", "-t", sourcePane, "#{session_id}",
 		)
 		if err != nil {
-			return AttachResult{}, fmt.Errorf("find return target: %w", err)
+			return session.AttachResult{}, fmt.Errorf("find return target: %w", err)
 		}
 		if returnTarget == "" {
-			return AttachResult{}, fmt.Errorf("find return target: tmux returned an empty session id")
+			return session.AttachResult{}, fmt.Errorf("find return target: tmux returned an empty session id")
 		}
 	}
 	if err := r.configureReturn(
@@ -296,7 +279,7 @@ func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
 		managedAgent.WindowID,
 		returnTarget,
 	); err != nil {
-		return AttachResult{}, err
+		return session.AttachResult{}, err
 	}
 
 	diagnostic.Logger().Info("opening agent",
@@ -307,13 +290,13 @@ func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
 	)
 	if insideTmux {
 		if _, err := r.runner.Run(ctx, nil, "switch-client", "-t", managedAgent.WindowID); err != nil {
-			return AttachResult{}, fmt.Errorf("switch tmux client: %w", err)
+			return session.AttachResult{}, fmt.Errorf("switch tmux client: %w", err)
 		}
-		return AttachResult{}, nil
+		return session.AttachResult{}, nil
 	}
 
 	if _, err := r.runner.Run(ctx, nil, "select-window", "-t", managedAgent.WindowID); err != nil {
-		return AttachResult{}, fmt.Errorf("select agent window: %w", err)
+		return session.AttachResult{}, fmt.Errorf("select agent window: %w", err)
 	}
 	args := make([]string, 0, 5)
 	if r.socket != "" {
@@ -322,7 +305,7 @@ func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
 	args = append(args, "attach-session", "-t", managedAgent.TmuxSession)
 	command := exec.Command("tmux", args...)
 	command.Env = withoutTmuxEnvironment(os.Environ())
-	return AttachResult{Command: command}, nil
+	return session.AttachResult{Command: command}, nil
 }
 
 func insideTmuxServer(socket string) bool {
@@ -523,7 +506,7 @@ func (r *Runtime) Send(ctx context.Context, id, message string) error {
 	}
 	_, err = r.runner.Run(ctx, nil, "send-keys", "-t", managedAgent.PaneID, "Enter")
 	if err == nil {
-		_ = r.Update(ctx, id, Update{Activity: agent.ActivityWorking})
+		_ = r.Update(ctx, id, session.Update{Activity: agent.ActivityWorking})
 	}
 	return err
 }
@@ -536,7 +519,7 @@ func (r *Runtime) Interrupt(ctx context.Context, id string) error {
 	if _, err := r.runner.Run(ctx, nil, "send-keys", "-t", managedAgent.PaneID, "C-c"); err != nil {
 		return err
 	}
-	return r.Update(ctx, id, Update{Activity: agent.ActivityIdle})
+	return r.Update(ctx, id, session.Update{Activity: agent.ActivityIdle})
 }
 
 func (r *Runtime) Delete(ctx context.Context, id string) error {
@@ -568,7 +551,7 @@ func (r *Runtime) FindAgent(ctx context.Context, id string) (agent.Agent, error)
 	return *match, nil
 }
 
-func (r *Runtime) Update(ctx context.Context, id string, update Update) error {
+func (r *Runtime) Update(ctx context.Context, id string, update session.Update) error {
 	managedAgent, err := r.FindAgent(ctx, id)
 	if err != nil {
 		return err
@@ -607,16 +590,20 @@ func (r *Runtime) Update(ctx context.Context, id string, update Update) error {
 
 func (r *Runtime) SetWorkspace(
 	ctx context.Context,
-	windowID string,
+	id string,
 	value workspace.Context,
 ) error {
+	managedAgent, err := r.FindAgent(ctx, id)
+	if err != nil {
+		return err
+	}
 	options, err := encodeWorkspaceOptions(value)
 	if err != nil {
 		return err
 	}
 	for key, item := range options {
 		if _, err := r.runner.Run(ctx, nil,
-			"set-option", "-w", "-t", windowID, key, item,
+			"set-option", "-w", "-t", managedAgent.WindowID, key, item,
 		); err != nil {
 			return fmt.Errorf("set %s metadata: %w", key, err)
 		}
@@ -922,7 +909,7 @@ func metadataValue(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func encodeLaunch(launch provider.Launch) (string, error) {
+func encodeLaunch(launch session.Launch) (string, error) {
 	data, err := json.Marshal(launch)
 	if err != nil {
 		return "", fmt.Errorf("encode provider launch: %w", err)
@@ -930,17 +917,17 @@ func encodeLaunch(launch provider.Launch) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
-func DecodeLaunch(encoded string) (provider.Launch, error) {
+func DecodeLaunch(encoded string) (session.Launch, error) {
 	data, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return provider.Launch{}, fmt.Errorf("decode provider launch: %w", err)
+		return session.Launch{}, fmt.Errorf("decode provider launch: %w", err)
 	}
-	var launch provider.Launch
+	var launch session.Launch
 	if err := json.Unmarshal(data, &launch); err != nil {
-		return provider.Launch{}, fmt.Errorf("decode provider launch: %w", err)
+		return session.Launch{}, fmt.Errorf("decode provider launch: %w", err)
 	}
 	if launch.Path == "" {
-		return provider.Launch{}, fmt.Errorf("provider launch path is empty")
+		return session.Launch{}, fmt.Errorf("provider launch path is empty")
 	}
 	return launch, nil
 }

@@ -10,12 +10,10 @@ import (
 	"strings"
 
 	"github.com/trentkm/runstead/internal/agent"
+	"github.com/trentkm/runstead/internal/session"
 )
 
-type Launch struct {
-	Path string   `json:"path"`
-	Args []string `json:"args"`
-}
+type Launch = session.Launch
 
 type Info struct {
 	ID        agent.Provider

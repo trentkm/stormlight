@@ -21,6 +21,7 @@ import (
 	"github.com/trentkm/runstead/internal/diagnostic"
 	"github.com/trentkm/runstead/internal/pending"
 	"github.com/trentkm/runstead/internal/provider"
+	"github.com/trentkm/runstead/internal/surface"
 	"github.com/trentkm/runstead/internal/workspace"
 )
 
@@ -89,6 +90,7 @@ const (
 
 type Model struct {
 	backend Backend
+	surface surface.Surface
 
 	agents            []agent.Agent
 	catalogWorkspaces []workspace.Context
@@ -193,8 +195,15 @@ var (
 )
 
 func NewModel(backend Backend) Model {
+	return NewModelWithSurface(backend, surface.NewDirect())
+}
+
+func NewModelWithSurface(backend Backend, current surface.Surface) Model {
 	cwd, _ := os.Getwd()
 	yaziPath, _ := exec.LookPath("yazi")
+	if current == nil {
+		current = surface.NewDirect()
+	}
 
 	cwdInput := newLineInput("")
 	cwdInput.SetValue(cwd)
@@ -205,6 +214,7 @@ func NewModel(backend Backend) Model {
 
 	model := Model{
 		backend:      backend,
+		surface:      current,
 		providers:    backend.Providers(),
 		cwdInput:     cwdInput,
 		taskInput:    taskInput,
@@ -2635,7 +2645,7 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	if !isDirectory(start) {
 		start = m.initialCwd
 	}
-	command, err := yaziPickerCmd(m.yaziPath, start)
+	command, err := yaziPickerCmd(m.surface, m.yaziPath, start)
 	if err != nil {
 		m.err = err
 		m.status = "Action failed"
@@ -2645,7 +2655,11 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	return m, command
 }
 
-func yaziPickerCmd(binary, start string) (tea.Cmd, error) {
+func yaziPickerCmd(
+	current surface.Surface,
+	binary string,
+	start string,
+) (tea.Cmd, error) {
 	choiceHandoff, err := createYaziHandoff("choice")
 	if err != nil {
 		return nil, err
@@ -2685,36 +2699,48 @@ func yaziPickerCmd(binary, start string) (tea.Cmd, error) {
 		return directoryPickedMsg{path: selected}
 	}
 
-	if os.Getenv("TMUX") != "" {
-		tmuxPath, lookupErr := exec.LookPath("tmux")
-		if lookupErr == nil {
-			command := exec.Command(
-				tmuxPath,
-				yaziPopupArgs(binary, start, pickerArgs)...,
-			)
-			return func() tea.Msg {
-				return result(command.Run())
-			}, nil
+	var popup *surface.Popup
+	if current.Capabilities().Popups {
+		popup = &surface.Popup{
+			Width:       "78%",
+			Height:      "76%",
+			Title:       " Runstead · Choose directory ",
+			BorderStyle: "fg=#e5c07b",
 		}
 	}
-
-	command := exec.Command(binary, pickerArgs...)
-	command.Dir = start
-	return tea.ExecProcess(command, result), nil
-}
-
-func yaziPopupArgs(binary, start string, pickerArgs []string) []string {
-	args := []string{
-		"display-popup",
-		"-E",
-		"-w", "78%",
-		"-h", "76%",
-		"-d", start,
-		"-T", " Runstead · Choose directory ",
-		"-S", "fg=#e5c07b",
-		binary,
+	presentation, err := current.Present(surface.Request{
+		Command: surface.Command{
+			Path: binary,
+			Args: pickerArgs,
+			Dir:  start,
+		},
+		Popup: popup,
+	})
+	if err != nil {
+		_ = os.Remove(choiceHandoff)
+		_ = os.Remove(cwdHandoff)
+		return nil, err
 	}
-	return append(args, pickerArgs...)
+	if presentation.Command == nil {
+		_ = os.Remove(choiceHandoff)
+		_ = os.Remove(cwdHandoff)
+		return nil, fmt.Errorf("surface returned an empty Yazi command")
+	}
+	switch presentation.Mode {
+	case surface.PresentationOverlay:
+		return func() tea.Msg {
+			return result(presentation.Command.Run())
+		}, nil
+	case surface.PresentationSuspend:
+		return tea.ExecProcess(presentation.Command, result), nil
+	default:
+		_ = os.Remove(choiceHandoff)
+		_ = os.Remove(cwdHandoff)
+		return nil, fmt.Errorf(
+			"surface returned unsupported presentation mode %d",
+			presentation.Mode,
+		)
+	}
 }
 
 func createYaziHandoff(kind string) (string, error) {

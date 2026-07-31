@@ -18,6 +18,7 @@ preserving the checkout or worktree each agent is using.
 - The dashboard can exit without stopping any agent.
 - Metadata is stored as tmux window options, not inferred from window names.
 - Provider adapters construct commands; tmux lifecycle is provider-neutral.
+- Agent runtimes and dashboard presentation surfaces are separate interfaces.
 - Workspace resolvers are provider-neutral and external resolvers are supported.
 - Pane messages use tmux buffers, avoiding command interpolation.
 - The Interaction pane combines structured actions with sampled terminal output.

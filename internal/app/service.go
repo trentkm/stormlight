@@ -11,7 +11,7 @@ import (
 	"github.com/trentkm/runstead/internal/diagnostic"
 	"github.com/trentkm/runstead/internal/pending"
 	"github.com/trentkm/runstead/internal/provider"
-	"github.com/trentkm/runstead/internal/tmux"
+	"github.com/trentkm/runstead/internal/session"
 	"github.com/trentkm/runstead/internal/workspace"
 )
 
@@ -22,10 +22,10 @@ type DispatchRequest struct {
 	Cwd      string
 }
 
-type AttachResult = tmux.AttachResult
+type AttachResult = session.AttachResult
 
 type Service struct {
-	runtime    *tmux.Runtime
+	runtime    session.Runtime
 	providers  *provider.Registry
 	workspaces *workspace.Registry
 	catalog    *workspace.Catalog
@@ -33,7 +33,7 @@ type Service struct {
 }
 
 func NewService(
-	runtime *tmux.Runtime,
+	runtime session.Runtime,
 	providers *provider.Registry,
 	workspaces *workspace.Registry,
 ) *Service {
@@ -46,7 +46,7 @@ func NewService(
 }
 
 func NewServiceWithCatalog(
-	runtime *tmux.Runtime,
+	runtime session.Runtime,
 	providers *provider.Registry,
 	workspaces *workspace.Registry,
 	catalog *workspace.Catalog,
@@ -61,7 +61,7 @@ func NewServiceWithCatalog(
 }
 
 func NewServiceWithStores(
-	runtime *tmux.Runtime,
+	runtime session.Runtime,
 	providers *provider.Registry,
 	workspaces *workspace.Registry,
 	catalog *workspace.Catalog,
@@ -106,7 +106,7 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 		agents[index].Workspace = value
 		if persistErr := s.runtime.SetWorkspace(
 			ctx,
-			agents[index].WindowID,
+			agents[index].ID,
 			value,
 		); persistErr != nil {
 			diagnostic.Logger().Warn("legacy agent workspace backfill failed",
@@ -128,7 +128,7 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("resolve workspace: %w", err)
 	}
-	managedAgent, err := s.runtime.Dispatch(ctx, tmux.DispatchRequest{
+	managedAgent, err := s.runtime.Dispatch(ctx, session.DispatchRequest{
 		Provider:  req.Provider,
 		Name:      req.Name,
 		Task:      req.Task,
@@ -228,7 +228,7 @@ func (s *Service) ResolvePendingAction(
 	return s.actions.Resolve(ctx, actionID, optionID)
 }
 
-func (s *Service) Update(ctx context.Context, id string, update tmux.Update) error {
+func (s *Service) Update(ctx context.Context, id string, update session.Update) error {
 	return s.runtime.Update(ctx, id, update)
 }
 
@@ -236,6 +236,6 @@ func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
 }
 
-func (s *Service) Runtime() *tmux.Runtime {
+func (s *Service) Runtime() session.Runtime {
 	return s.runtime
 }
