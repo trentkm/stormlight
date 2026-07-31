@@ -459,15 +459,26 @@ func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
 	}
 }
 
+func TestActivePaneAndRowRailsShareTheFirstColumn(t *testing.T) {
+	header := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true))
+	row := ansi.Strip(renderSelectableRow("project", 24, true))
+	if !strings.HasPrefix(header, "▌ ") || !strings.HasPrefix(row, "▌ ") {
+		t.Fatalf("rails are not aligned:\nheader: %q\nrow:    %q", header, row)
+	}
+}
+
 func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 120
 	model.height = 30
+	if model.rowsExpanded {
+		t.Fatal("rows are expanded by default")
+	}
 
 	updated, _ := model.updateNormal(runeKey("z"))
 	model = updated.(Model)
-	if model.rowsExpanded {
-		t.Fatal("z did not compact rows")
+	if !model.rowsExpanded {
+		t.Fatal("z did not expand rows")
 	}
 	body := ansi.Strip(model.renderBody())
 	header := strings.Split(body, "\n")[0]
@@ -476,14 +487,14 @@ func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 		!strings.Contains(header, "Interaction") {
 		t.Fatalf("density toggle hid dashboard panes: %q", header)
 	}
-	if !strings.Contains(model.commandHints(), "z expand rows") {
-		t.Fatalf("compact hint = %q", model.commandHints())
+	if !strings.Contains(model.commandHints(), "z compact rows") {
+		t.Fatalf("expanded hint = %q", model.commandHints())
 	}
 
 	updated, _ = model.updateNormal(runeKey("z"))
 	model = updated.(Model)
-	if !model.rowsExpanded {
-		t.Fatal("second z did not expand rows")
+	if model.rowsExpanded {
+		t.Fatal("second z did not compact rows")
 	}
 }
 
@@ -955,10 +966,10 @@ func TestWorkspacePulseKeepsStableWidth(t *testing.T) {
 	}
 
 	model.pulseOn = false
-	quiet := ansi.Strip(model.renderWorkspaceRow(group, false, false, 30))
+	quiet := ansi.Strip(model.renderWorkspaceRow(group, true, true, 30))
 	model.pulseOn = true
-	pulse := ansi.Strip(model.renderWorkspaceRow(group, false, false, 30))
-	if !strings.Contains(quiet, "·") || !strings.Contains(pulse, "●") {
+	pulse := ansi.Strip(model.renderWorkspaceRow(group, true, true, 30))
+	if !strings.Contains(quiet, "○") || !strings.Contains(pulse, "●") {
 		t.Fatalf(
 			"workspace activity did not pulse:\nquiet:\n%s\npulse:\n%s",
 			quiet,
@@ -973,6 +984,66 @@ func TestWorkspacePulseKeepsStableWidth(t *testing.T) {
 	for index := range quietLines {
 		if lipgloss.Width(quietLines[index]) != lipgloss.Width(pulseLines[index]) {
 			t.Fatalf("pulse changed line %d width", index+1)
+		}
+	}
+}
+
+func TestHierarchyConnectorRowsFollowDensity(t *testing.T) {
+	model := NewModel(stubBackend{})
+	model.width = 120
+	model.groups = []workspaceGroup{
+		{context: workspace.DirectoryContext("/workspace/one")},
+		{
+			context: workspace.DirectoryContext("/workspace/two"),
+			agents: []agent.Agent{
+				{ID: "one"},
+				{ID: "two"},
+				{ID: "three"},
+			},
+		},
+	}
+	model.workspaceCursor = 1
+	model.agentCursor = 2
+
+	workspaceRow, agentRow, ok := model.hierarchyConnectorRows(20)
+	if !ok || workspaceRow != 2 || agentRow != 3 {
+		t.Fatalf(
+			"compact connector rows = %d -> %d, ok=%v",
+			workspaceRow,
+			agentRow,
+			ok,
+		)
+	}
+
+	model.rowsExpanded = true
+	workspaceRow, agentRow, ok = model.hierarchyConnectorRows(20)
+	if !ok || workspaceRow != 4 || agentRow != 7 {
+		t.Fatalf(
+			"expanded connector rows = %d -> %d, ok=%v",
+			workspaceRow,
+			agentRow,
+			ok,
+		)
+	}
+}
+
+func TestHierarchyConnectorBridgesDifferentRows(t *testing.T) {
+	pane := strings.Join([]string{
+		"header │",
+		"one    │",
+		"two    │",
+		"three  │",
+	}, "\n")
+	rendered := ansi.Strip(paintHierarchyConnector(pane, 8, 1, 3))
+	lines := strings.Split(rendered, "\n")
+	if !strings.HasSuffix(lines[1], "─┐") ||
+		!strings.HasSuffix(lines[2], "│") ||
+		!strings.HasSuffix(lines[3], "└") {
+		t.Fatalf("hierarchy path is incomplete:\n%s", rendered)
+	}
+	for index, line := range lines {
+		if width := lipgloss.Width(line); width != 8 {
+			t.Fatalf("line %d width = %d, want 8: %q", index+1, width, line)
 		}
 	}
 }
@@ -1038,6 +1109,7 @@ func TestListRowsHaveVisualSeparation(t *testing.T) {
 		{ID: "two", Name: "two", Workspace: workspaceContext},
 	}
 	model.rebuildGroups(workspaceContext.ID, "one")
+	model.rowsExpanded = true
 
 	rendered := ansi.Strip(model.renderAgents(52, 20))
 	if !strings.Contains(rendered, "\n\n") {

@@ -42,6 +42,12 @@ environment-specific workspace semantics outside the public runtime.
 tmux is the process supervisor and terminal transport. `runstead` never starts
 a nested tmux server.
 
+When launched from a regular shell, the dashboard re-enters a uniquely named
+temporary session on the selected tmux server. That gives overlays and agent
+switching the same semantics as an inside-tmux launch. The supervising process
+removes the temporary session when its client exits; managed agent sessions
+remain independent.
+
 Each dispatch creates one window in a managed tmux session. Window options hold
 the durable metadata:
 

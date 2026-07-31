@@ -273,7 +273,7 @@ func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
 		return AttachResult{}, err
 	}
 
-	insideTmux := os.Getenv("TMUX") != "" && r.socket == ""
+	insideTmux := insideTmuxServer(r.socket)
 	returnTarget := ""
 	if insideTmux {
 		sourcePane := os.Getenv("TMUX_PANE")
@@ -323,6 +323,26 @@ func (r *Runtime) Attach(ctx context.Context, id string) (AttachResult, error) {
 	command := exec.Command("tmux", args...)
 	command.Env = withoutTmuxEnvironment(os.Environ())
 	return AttachResult{Command: command}, nil
+}
+
+func insideTmuxServer(socket string) bool {
+	current := os.Getenv("TMUX")
+	if current == "" {
+		return false
+	}
+	if socket == "" {
+		return true
+	}
+
+	lastComma := strings.LastIndex(current, ",")
+	if lastComma < 0 {
+		return false
+	}
+	previousComma := strings.LastIndex(current[:lastComma], ",")
+	if previousComma < 0 {
+		return false
+	}
+	return filepath.Base(current[:previousComma]) == socket
 }
 
 func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, target string) error {

@@ -25,6 +25,8 @@ import (
 
 var version = "dev"
 
+const dashboardHostedEnv = "RUNSTEAD_UI_HOSTED"
+
 func main() {
 	root := newRootCommand()
 	err := root.Execute()
@@ -64,13 +66,18 @@ func newRootCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(socket, sessionName)
-			if err != nil {
-				return err
+			if shouldHostDashboard() {
+				tmuxPath, lookupErr := exec.LookPath("tmux")
+				if lookupErr == nil {
+					return hostDashboard(cmd, tmuxPath, socket)
+				}
+				diagnostic.Logger().Warn(
+					"tmux is unavailable; running dashboard directly",
+					"error", lookupErr,
+				)
 			}
-			program := tea.NewProgram(ui.NewModel(service), tea.WithAltScreen())
-			_, err = program.Run()
-			return err
+			configureHostedDashboard(socket)
+			return runDashboard(socket, sessionName)
 		},
 	}
 	root.PersistentFlags().StringVar(&socket, "tmux-socket",
@@ -104,6 +111,135 @@ func newRootCommand() *cobra.Command {
 		newRunCommand(&socket, &sessionName),
 	)
 	return root
+}
+
+func shouldHostDashboard() bool {
+	return os.Getenv("TMUX") == "" && os.Getenv(dashboardHostedEnv) == ""
+}
+
+func runDashboard(socket, sessionName string) error {
+	service, err := newService(socket, sessionName)
+	if err != nil {
+		return err
+	}
+	program := tea.NewProgram(ui.NewModel(service), tea.WithAltScreen())
+	_, err = program.Run()
+	return err
+}
+
+func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find Runstead executable: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("find dashboard directory: %w", err)
+	}
+
+	session := dashboardSessionName(os.Getpid(), time.Now())
+	shellCommand := dashboardShellCommand(executable, os.Args[1:])
+	args := dashboardHostArgs(socket, session, cwd, shellCommand)
+	process := exec.Command(tmuxPath, args...)
+	process.Stdin = command.InOrStdin()
+	process.Stdout = command.OutOrStdout()
+	process.Stderr = command.ErrOrStderr()
+
+	defer cleanupDashboardSession(tmuxPath, socket, session)
+	if err := process.Run(); err != nil {
+		return fmt.Errorf("host dashboard in tmux: %w", err)
+	}
+	return nil
+}
+
+func dashboardSessionName(pid int, now time.Time) string {
+	return fmt.Sprintf(
+		"runstead-ui-%d-%06x",
+		pid,
+		uint64(now.UnixNano())&0xffffff,
+	)
+}
+
+func dashboardShellCommand(executable string, args []string) string {
+	command := append([]string{executable}, args...)
+	return dashboardHostedEnv + "=1 exec " + shellJoinCommand(command)
+}
+
+func dashboardHostArgs(socket, session, cwd, shellCommand string) []string {
+	args := make([]string, 0, 10)
+	if socket != "" {
+		args = append(args, "-L", socket)
+	}
+	return append(
+		args,
+		"new-session",
+		"-s", session,
+		"-c", cwd,
+		"-n", "runstead",
+		shellCommand,
+	)
+}
+
+func configureHostedDashboard(socket string) {
+	if os.Getenv(dashboardHostedEnv) == "" || os.Getenv("TMUX") == "" {
+		return
+	}
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		diagnostic.Logger().Warn(
+			"cannot configure hosted dashboard",
+			"error", err,
+		)
+		return
+	}
+
+	pane := os.Getenv("TMUX_PANE")
+	displayArgs := tmuxSocketArgs(socket,
+		"display-message", "-p", "-t", pane, "#{session_id}",
+	)
+	output, err := exec.Command(tmuxPath, displayArgs...).CombinedOutput()
+	if err != nil {
+		diagnostic.Logger().Warn(
+			"cannot identify hosted dashboard session",
+			"error", strings.TrimSpace(string(output)),
+		)
+		return
+	}
+	session := strings.TrimSpace(string(output))
+	args := tmuxSocketArgs(
+		socket,
+		"set-option", "-t", session, "status", "off",
+	)
+	if output, err := exec.Command(tmuxPath, args...).CombinedOutput(); err != nil {
+		diagnostic.Logger().Warn(
+			"cannot hide hosted dashboard status",
+			"error", strings.TrimSpace(string(output)),
+		)
+	}
+}
+
+func cleanupDashboardSession(tmuxPath, socket, session string) {
+	args := tmuxSocketArgs(socket, "kill-session", "-t", session)
+	_ = exec.Command(tmuxPath, args...).Run()
+}
+
+func tmuxSocketArgs(socket string, args ...string) []string {
+	if socket == "" {
+		return args
+	}
+	return append([]string{"-L", socket}, args...)
+}
+
+func shellJoinCommand(args []string) string {
+	quoted := make([]string, len(args))
+	for index, arg := range args {
+		if arg == "" {
+			quoted[index] = "''"
+			continue
+		}
+		quoted[index] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+	}
+	return strings.Join(quoted, " ")
 }
 
 func newLogsCommand(logFile *string) *cobra.Command {

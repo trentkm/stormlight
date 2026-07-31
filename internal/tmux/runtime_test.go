@@ -236,34 +236,65 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 }
 
 func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
-	t.Setenv("TMUX", "/private/tmp/tmux/default,1,0")
-	t.Setenv("TMUX_PANE", "%9")
-	runner := &captureRunner{
-		agentLine:       captureAgentLine(false),
-		sourceSessionID: "$7",
+	tests := []struct {
+		name   string
+		tmux   string
+		socket string
+	}{
+		{
+			name: "default socket",
+			tmux: "/private/tmp/tmux/default,1,0",
+		},
+		{
+			name:   "matching named socket",
+			tmux:   "/private/tmp/tmux/isolated,1,0",
+			socket: "isolated",
+		},
 	}
-	runtime := &Runtime{runner: runner}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("TMUX", test.tmux)
+			t.Setenv("TMUX_PANE", "%9")
+			runner := &captureRunner{
+				agentLine:       captureAgentLine(false),
+				sourceSessionID: "$7",
+			}
+			runtime := &Runtime{runner: runner, socket: test.socket}
 
-	result, err := runtime.Attach(context.Background(), "capture-id")
-	if err != nil {
-		t.Fatal(err)
+			result, err := runtime.Attach(context.Background(), "capture-id")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Command != nil {
+				t.Fatalf("unexpected external command: %#v", result.Command.Args)
+			}
+			wantCalls := [][]string{
+				{"list-panes", "-a", "-F", expectedPaneListFormat()},
+				{"display-message", "-p", "-t", "%9", "#{session_id}"},
+				{"list-keys", "-T", "prefix", "Q"},
+				{"bind-key", "-T", "prefix", "-N", "Return from Runstead", "Q",
+					"run-shell", "-C", returnBindingFormat},
+			}
+			wantCalls = append(wantCalls, prefixFeedbackCalls("runstead-agents")...)
+			wantCalls = append(wantCalls,
+				[]string{"set-option", "-w", "-t", "@1", "@runstead_return_target", "$7"},
+				[]string{"switch-client", "-t", "@1"},
+			)
+			assertCalls(t, runner.calls, wantCalls)
+		})
 	}
-	if result.Command != nil {
-		t.Fatalf("unexpected external command: %#v", result.Command.Args)
+}
+
+func TestInsideTmuxServerRejectsDifferentOrMalformedSockets(t *testing.T) {
+	t.Setenv("TMUX", "/private/tmp/tmux/current,1,0")
+	if insideTmuxServer("other") {
+		t.Fatal("different named socket matched the current tmux server")
 	}
-	wantCalls := [][]string{
-		{"list-panes", "-a", "-F", expectedPaneListFormat()},
-		{"display-message", "-p", "-t", "%9", "#{session_id}"},
-		{"list-keys", "-T", "prefix", "Q"},
-		{"bind-key", "-T", "prefix", "-N", "Return from Runstead", "Q",
-			"run-shell", "-C", returnBindingFormat},
+
+	t.Setenv("TMUX", "malformed")
+	if insideTmuxServer("malformed") {
+		t.Fatal("malformed TMUX value matched a named socket")
 	}
-	wantCalls = append(wantCalls, prefixFeedbackCalls("runstead-agents")...)
-	wantCalls = append(wantCalls,
-		[]string{"set-option", "-w", "-t", "@1", "@runstead_return_target", "$7"},
-		[]string{"switch-client", "-t", "@1"},
-	)
-	assertCalls(t, runner.calls, wantCalls)
 }
 
 func TestAttachRefusesToReplaceExistingReturnBinding(t *testing.T) {

@@ -212,7 +212,7 @@ func NewModel(backend Backend) Model {
 		initialCwd:   cwd,
 		yaziPath:     yaziPath,
 		activePane:   paneWorkspaces,
-		rowsExpanded: true,
+		rowsExpanded: false,
 		status:       "Ready",
 	}
 	model.prepareDirectoryChoices(cwd)
@@ -951,6 +951,14 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		m.activePane == paneWorkspaces,
 		true,
 	)
+	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
+		workspaces = paintHierarchyConnector(
+			workspaces,
+			workspaceWidth,
+			workspaceRow,
+			agentRow,
+		)
+	}
 	agents := m.renderPane(
 		"Agents",
 		m.selectedWorkspaceLabel(),
@@ -973,6 +981,122 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		false,
 	)
 	return lipgloss.JoinHorizontal(lipgloss.Top, workspaces, agents, interaction)
+}
+
+func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
+	if len(m.groups) == 0 || contentHeight < 2 {
+		return 0, 0, false
+	}
+	agents := m.agentsForSelectedWorkspace()
+	if len(agents) == 0 {
+		return 0, 0, false
+	}
+
+	expanded := m.expandedRows()
+	listHeight := contentHeight - 1
+	workspaceCapacity := listRowCapacity(listHeight, expanded)
+	workspaceStart, workspaceEnd := visibleRange(
+		len(m.groups),
+		m.workspaceCursor,
+		workspaceCapacity,
+	)
+	agentCapacity := listRowCapacity(listHeight, expanded)
+	agentStart, agentEnd := visibleRange(
+		len(agents),
+		m.agentCursor,
+		agentCapacity,
+	)
+	if m.workspaceCursor < workspaceStart ||
+		m.workspaceCursor >= workspaceEnd ||
+		m.agentCursor < agentStart ||
+		m.agentCursor >= agentEnd {
+		return 0, 0, false
+	}
+
+	rowStep := 1
+	if expanded {
+		rowStep = 3
+	}
+	workspaceRow := 1 + (m.workspaceCursor-workspaceStart)*rowStep
+	agentRow := 1 + (m.agentCursor-agentStart)*rowStep
+	return workspaceRow, agentRow, true
+}
+
+func paintHierarchyConnector(
+	paneContent string,
+	width int,
+	workspaceRow int,
+	agentRow int,
+) string {
+	if width < 2 {
+		return paneContent
+	}
+	lines := strings.Split(paneContent, "\n")
+	if workspaceRow < 0 ||
+		workspaceRow >= len(lines) ||
+		agentRow < 0 ||
+		agentRow >= len(lines) {
+		return paneContent
+	}
+
+	style := lipgloss.NewStyle().Foreground(colorWaiting)
+	first := min(workspaceRow, agentRow)
+	last := max(workspaceRow, agentRow)
+	for row := first; row <= last; row++ {
+		glyph := "│"
+		switch {
+		case workspaceRow == agentRow:
+			glyph = "─"
+		case row == workspaceRow && workspaceRow < agentRow:
+			glyph = "┐"
+		case row == workspaceRow:
+			glyph = "┘"
+		case row == agentRow && agentRow < workspaceRow:
+			glyph = "┌"
+		case row == agentRow:
+			glyph = "└"
+		}
+		lines[row] = replaceStyledCell(
+			lines[row],
+			width,
+			width-1,
+			glyph,
+			style,
+		)
+	}
+	lines[workspaceRow] = replaceStyledCell(
+		lines[workspaceRow],
+		width,
+		width-2,
+		"─",
+		style,
+	)
+	return strings.Join(lines, "\n")
+}
+
+func replaceStyledCell(
+	line string,
+	width int,
+	column int,
+	value string,
+	style lipgloss.Style,
+) string {
+	if width <= 0 || column < 0 || column >= width {
+		return line
+	}
+	line = fitLine(line, width)
+	before := ansi.Cut(line, 0, column)
+	after := ansi.Cut(line, column+1, width)
+	restore := ""
+	if column+1 < width {
+		restore = sgrStateAt(line, column+1)
+	}
+	return fitLine(before, column) +
+		ansi.ResetStyle +
+		style.Render(value) +
+		ansi.ResetStyle +
+		restore +
+		fitLine(after, width-column-1)
 }
 
 func (m Model) renderDispatchModal(width, height int) string {
@@ -1213,7 +1337,7 @@ func renderPaneHeader(label, contextLabel string, width int, active bool) string
 		rail := lipgloss.NewStyle().
 			Foreground(colorAccent).
 			Bold(true).
-			Render(ansi.Truncate(" ▌ ", width, ""))
+			Render(ansi.Truncate("▌ ", width, ""))
 		labelWidth := max(0, width-lipgloss.Width(rail))
 		left = rail + titleStyle.Render(truncate(label, labelWidth))
 	}
@@ -1307,7 +1431,7 @@ func (m Model) renderWorkspaceRow(
 	}
 	activityMarker := "  "
 	if active > 0 {
-		activityMarker = "· "
+		activityMarker = "○ "
 		if m.pulseOn {
 			activityMarker = "● "
 		}
@@ -1324,30 +1448,33 @@ func (m Model) renderWorkspaceRow(
 			lipgloss.Width(name)-
 			lipgloss.Width(suffix),
 	)
-	topContent := activityMarker + name + strings.Repeat(" ", gap) + suffix
 	path, kind, detailGap := workspaceDetail(group.context, contentWidth)
 	bottomContent := path + strings.Repeat(" ", detailGap) + kind
-	if focused {
-		if !m.expandedRows() {
-			return renderSelectableRow(topContent, width, true)
-		}
-		return renderFocusedRow(topContent, bottomContent, width)
-	}
 	if selected {
-		if !m.expandedRows() {
-			return renderSelectableRow(topContent, width, false)
-		}
-		return renderContextRow(topContent, bottomContent, width)
+		return renderSelectedWorkspaceRow(
+			activityMarker,
+			name,
+			gap,
+			suffix,
+			bottomContent,
+			width,
+			focused,
+			m.expandedRows(),
+			active > 0,
+			m.pulseOn,
+		)
 	}
 
 	marker := "  "
 	activityStyle := mutedStyle
 	nameStyle := titleStyle
-	if active > 0 && m.pulseOn {
+	if active > 0 {
 		activityStyle = lipgloss.NewStyle().
 			Foreground(colorWorking).
 			Bold(true)
-		nameStyle = titleStyle.Copy().Foreground(colorWorking)
+		if m.pulseOn {
+			nameStyle = titleStyle.Copy().Foreground(colorWorking)
+		}
 	}
 	top := marker + activityStyle.Render(activityMarker) +
 		nameStyle.Render(name) +
@@ -1360,6 +1487,79 @@ func (m Model) renderWorkspaceRow(
 		return top
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+}
+
+func renderSelectedWorkspaceRow(
+	activityMarker string,
+	name string,
+	gap int,
+	suffix string,
+	bottom string,
+	width int,
+	focused bool,
+	expanded bool,
+	active bool,
+	pulseOn bool,
+) string {
+	top := activityMarker + name + strings.Repeat(" ", gap) + suffix
+	if width < 3 || lipgloss.Width(top) > max(0, width-2) {
+		if focused {
+			if !expanded {
+				return renderSelectableRow(top, width, true)
+			}
+			return renderFocusedRow(top, bottom, width)
+		}
+		if !expanded {
+			return renderSelectableRow(top, width, false)
+		}
+		return renderContextRow(top, bottom, width)
+	}
+
+	marker := "▏ "
+	markerColor := colorBorder
+	if focused {
+		marker = "▌ "
+		markerColor = colorWaiting
+	}
+	markerStyle := lipgloss.NewStyle().
+		Foreground(markerColor).
+		Background(colorSelect).
+		Bold(focused)
+	baseStyle := lipgloss.NewStyle().
+		Foreground(colorSelectedText).
+		Background(colorSelect)
+	activityStyle := baseStyle.Copy()
+	nameStyle := baseStyle.Copy().Bold(true)
+	if active {
+		activityStyle = activityStyle.
+			Foreground(colorWorking).
+			Bold(true)
+		if pulseOn {
+			nameStyle = nameStyle.Foreground(colorWorking)
+		}
+	}
+
+	contentWidth := width - 2
+	tailWidth := max(
+		0,
+		contentWidth-lipgloss.Width(activityMarker)-lipgloss.Width(name),
+	)
+	topLine := markerStyle.Render(marker) +
+		activityStyle.Render(activityMarker) +
+		nameStyle.Render(name) +
+		baseStyle.Copy().
+			Width(tailWidth).
+			MaxWidth(tailWidth).
+			Render(strings.Repeat(" ", gap)+suffix)
+	if !expanded {
+		return topLine
+	}
+	bottomLine := markerStyle.Render(marker) +
+		baseStyle.Copy().
+			Width(contentWidth).
+			MaxWidth(contentWidth).
+			Render(ansi.Truncate(bottom, contentWidth, ""))
+	return lipgloss.JoinVertical(lipgloss.Left, topLine, bottomLine)
 }
 
 func workspaceDetail(value workspace.Context, width int) (string, string, int) {

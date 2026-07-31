@@ -24,13 +24,14 @@ preserving the checkout or worktree each agent is using.
 - Claude permission requests can be resolved without leaving the dashboard.
 - The shell adapter gives unsupported CLIs a generic fallback.
 
-No nested tmux server is created. When `runstead` runs inside tmux, selecting an
-agent switches the current client to its window. Outside tmux, selecting an
-agent temporarily attaches the current terminal. In either case, press your
-tmux prefix followed by `Q` to return to the dashboard. Runstead installs this
-binding only when `Q` is unbound or already owned by Runstead. While the prefix
-is active, the managed session highlights the tmux status bar and shows `Q` for
-return and `?` for the full tmux key list.
+No nested tmux server is created. An outside-tmux launch transparently hosts
+the dashboard in a temporary session on the existing tmux server; an
+inside-tmux launch uses the current client directly. Selecting an agent
+switches that client to its window. Press your tmux prefix followed by `Q` to
+return to the dashboard. Runstead installs this binding only when `Q` is
+unbound or already owned by Runstead. While the prefix is active, the managed
+session highlights the tmux status bar and shows `Q` for return and `?` for the
+full tmux key list. Closing the dashboard removes only its temporary session.
 
 ## Build
 
@@ -136,8 +137,9 @@ directory picker with known workspaces, worktrees, components, Yazi, and manual
 path entry. Use `j` / `k` or `gg` / `G` to select a location. Pressing `e` on a
 location edits that path directly. In Yazi, `Enter` chooses the highlighted
 directory (or a highlighted file's parent), `q` chooses Yazi's current
-directory, and `Q` cancels. When Runstead is inside tmux, Yazi opens as a popup
-over the dashboard; outside tmux, it temporarily takes over the terminal.
+directory, and `Q` cancels. Yazi opens as a tmux popup over the dashboard,
+including when Runstead was launched from a regular shell. Direct terminal
+takeover remains a fallback when the dashboard cannot be hosted in tmux.
 
 The Interaction pane retains provider terminal colors while removing startup
 chrome and the inactive prompt/status area for Claude and Codex. Shell agent
@@ -155,9 +157,9 @@ read-only context. The catalog is stored at
 `~/.local/state/runstead/workspaces.json` by default. Workspaces containing
 active agents remain visible even when they are not in the catalog.
 
-Compact rows show the primary workspace or agent line. Press `z` to reveal the
-path and resolver or provider details. Narrow terminals always use expanded
-rows and show one full-width pane at a time.
+Compact rows are the default and show the primary workspace or agent line.
+Press `z` to reveal the path and resolver or provider details. Narrow terminals
+always use expanded rows and show one full-width pane at a time.
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/runstead/resolvers`. The protocol is public and does not require
