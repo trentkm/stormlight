@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/trentkm/runstead/internal/agent"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 type Kind string

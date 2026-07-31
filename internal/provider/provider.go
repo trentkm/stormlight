@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/session"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/session"
 )
 
 type Launch = session.Launch
@@ -138,7 +138,7 @@ func codexArgs(prompt string) ([]string, error) {
 	notify, err := json.Marshal([]string{
 		"/bin/sh",
 		"-c",
-		`exec "${RUNSTEAD_BIN:-$AGENTMUX_BIN}" _provider-event codex "$0"`,
+		`exec "$STORMLIGHT_BIN" _provider-event codex "$0"`,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode Codex notification command: %w", err)
@@ -147,8 +147,8 @@ func codexArgs(prompt string) ([]string, error) {
 }
 
 func claudeArgs(prompt string) ([]string, error) {
-	const eventCommand = `exec "${RUNSTEAD_BIN:-$AGENTMUX_BIN}" _provider-event claude`
-	const permissionCommand = `exec "${RUNSTEAD_BIN:-$AGENTMUX_BIN}" _provider-permission claude`
+	const eventCommand = `exec "$STORMLIGHT_BIN" _provider-event claude`
+	const permissionCommand = `exec "$STORMLIGHT_BIN" _provider-permission claude`
 	settings := claudeSettings{
 		Hooks: map[string][]claudeHookGroup{
 			"UserPromptSubmit": {
@@ -166,7 +166,7 @@ func claudeArgs(prompt string) ([]string, error) {
 						Type:          "command",
 						Command:       permissionCommand,
 						Timeout:       86400,
-						StatusMessage: "Waiting for approval in Runstead",
+						StatusMessage: "Waiting for approval in Stormlight",
 					}},
 				},
 			},

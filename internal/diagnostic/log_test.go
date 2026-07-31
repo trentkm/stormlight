@@ -8,7 +8,7 @@ import (
 )
 
 func TestInitWritesJSONAndTailReturnsLatestLines(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "runstead.log")
+	path := filepath.Join(t.TempDir(), "stormlight.log")
 	if _, err := Init(path, "debug"); err != nil {
 		t.Fatal(err)
 	}
@@ -37,30 +37,15 @@ func TestInitWritesJSONAndTailReturnsLatestLines(t *testing.T) {
 }
 
 func TestInitRejectsUnknownLevel(t *testing.T) {
-	_, err := Init(filepath.Join(t.TempDir(), "runstead.log"), "verbose")
+	_, err := Init(filepath.Join(t.TempDir(), "stormlight.log"), "verbose")
 	if err == nil {
 		t.Fatal("expected invalid level error")
 	}
 }
 
-func TestResolvePathSupportsLegacyEnvironmentFallback(t *testing.T) {
-	legacy := filepath.Join(t.TempDir(), "legacy.log")
-	t.Setenv("RUNSTEAD_LOG_FILE", "")
-	t.Setenv("AGENTMUX_LOG_FILE", legacy)
-
-	got, err := ResolvePath("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != legacy {
-		t.Fatalf("path = %q, want %q", got, legacy)
-	}
-}
-
-func TestResolvePathPrefersRunsteadEnvironment(t *testing.T) {
+func TestResolvePathUsesStormlightEnvironment(t *testing.T) {
 	current := filepath.Join(t.TempDir(), "current.log")
-	t.Setenv("RUNSTEAD_LOG_FILE", current)
-	t.Setenv("AGENTMUX_LOG_FILE", filepath.Join(t.TempDir(), "legacy.log"))
+	t.Setenv("STORMLIGHT_LOG_FILE", current)
 
 	got, err := ResolvePath("")
 	if err != nil {

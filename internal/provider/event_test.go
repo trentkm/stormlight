@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trentkm/runstead/internal/agent"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 func TestParseCodexCompletion(t *testing.T) {

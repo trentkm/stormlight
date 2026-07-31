@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/provider"
-	"github.com/trentkm/runstead/internal/session"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/session"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 type recordingRuntime struct {

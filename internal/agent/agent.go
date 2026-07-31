@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 type Provider string

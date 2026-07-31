@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/trentkm/runstead/internal/surface"
+	"github.com/trentkm/stormlight/internal/surface"
 )
 
 type Surface struct {

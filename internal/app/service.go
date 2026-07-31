@@ -7,12 +7,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/diagnostic"
-	"github.com/trentkm/runstead/internal/pending"
-	"github.com/trentkm/runstead/internal/provider"
-	"github.com/trentkm/runstead/internal/session"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/pending"
+	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/session"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 type DispatchRequest struct {

@@ -1,4 +1,4 @@
-module github.com/trentkm/runstead
+module github.com/trentkm/stormlight
 
 go 1.25.6
 
@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect

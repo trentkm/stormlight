@@ -18,18 +18,9 @@ func TestWithoutTmuxEnvironment(t *testing.T) {
 	}
 }
 
-func TestNewClientFromEnvSupportsLegacySocket(t *testing.T) {
-	t.Setenv("RUNSTEAD_TMUX_SOCKET", "")
-	t.Setenv("AGENTMUX_TMUX_SOCKET", "legacy")
-	if got := NewClientFromEnv().Socket(); got != "legacy" {
-		t.Fatalf("socket = %q", got)
-	}
-}
-
-func TestNewClientFromEnvPrefersRunsteadSocket(t *testing.T) {
-	t.Setenv("RUNSTEAD_TMUX_SOCKET", "current")
-	t.Setenv("AGENTMUX_TMUX_SOCKET", "legacy")
-	if got := NewClientFromEnv().Socket(); got != "current" {
+func TestNewClientFromEnvUsesStormlightSocket(t *testing.T) {
+	t.Setenv("STORMLIGHT_TMUX_SOCKET", "isolated")
+	if got := NewClientFromEnv().Socket(); got != "isolated" {
 		t.Fatalf("socket = %q", got)
 	}
 }

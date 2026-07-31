@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/pending"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/pending"
 )
 
 const permissionActionID = "0123456789abcdef0123456789abcdef"

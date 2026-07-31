@@ -1,6 +1,6 @@
 # Architecture
 
-`runstead` separates agent semantics from terminal and process ownership.
+`stormlight` separates agent semantics from terminal and process ownership.
 
 ## Layers
 
@@ -22,7 +22,7 @@ The CLI adapters currently add provider-native lifecycle callbacks:
 The next Codex revision should use App Server JSON-RPC for threads, turns,
 approvals, and streamed items. Claude background-agent discovery or the Agent
 SDK can similarly replace its CLI hook bridge. The runtime exposes
-`runstead event` so generic providers can report semantic state.
+`stormlight event` so generic providers can report semantic state.
 
 ### Application service
 
@@ -39,7 +39,7 @@ environment-specific workspace semantics outside the public runtime.
 
 ### tmux runtime
 
-tmux is the process supervisor and terminal transport. `runstead` never starts
+tmux is the process supervisor and terminal transport. `stormlight` never starts
 a nested tmux server.
 
 When launched from a regular shell, the dashboard re-enters a uniquely named
@@ -60,35 +60,36 @@ External interactive presentation is a separate `surface.Surface` contract.
 The tmux surface advertises popup and client-switch capabilities and translates
 generic commands into `display-popup`; the direct surface suspends Bubble Tea
 and runs the command in the current terminal. The UI requests a capability and
-does not inspect `$TMUX` or construct multiplexer commands.
+does not inspect `$TMUX` or construct multiplexer commands. Yazi directory
+selection and Neovim task editing both use this contract and return their
+results through permission-restricted temporary handoff files.
 
 Each dispatch creates one window in a managed tmux session. Window options hold
 the durable metadata:
 
 | Option | Purpose |
 |---|---|
-| `@runstead_id` | Stable agent identifier |
-| `@runstead_provider` | Provider adapter |
-| `@runstead_task` | Original task |
-| `@runstead_summary` | Current one-line summary |
-| `@runstead_cwd` | Working directory |
-| `@runstead_created_at` | Unix creation timestamp |
-| `@runstead_activity` | Normalized activity state |
-| `@runstead_attention` | Pending human-attention type |
-| `@runstead_pane` | Original agent pane |
-| `@runstead_workspace_id` | Stable workspace group identifier |
-| `@runstead_workspace_kind` | Resolver-defined workspace type |
-| `@runstead_workspace_name` | Human-readable group name |
-| `@runstead_workspace_root` | Canonical group root |
-| `@runstead_execution_root` | Checkout or runnable workspace root |
-| `@runstead_component_name` | Optional package or component name |
-| `@runstead_component_root` | Optional package or component root |
-| `@runstead_workspace_metadata` | Encoded resolver metadata |
-| `@runstead_return_target` | Source session for the current attach, or empty to detach |
+| `@stormlight_id` | Stable agent identifier |
+| `@stormlight_provider` | Provider adapter |
+| `@stormlight_task` | Original task |
+| `@stormlight_summary` | Current one-line summary |
+| `@stormlight_cwd` | Working directory |
+| `@stormlight_created_at` | Unix creation timestamp |
+| `@stormlight_activity` | Normalized activity state |
+| `@stormlight_attention` | Pending human-attention type |
+| `@stormlight_pane` | Original agent pane |
+| `@stormlight_workspace_id` | Stable workspace group identifier |
+| `@stormlight_workspace_kind` | Resolver-defined workspace type |
+| `@stormlight_workspace_name` | Human-readable group name |
+| `@stormlight_workspace_root` | Canonical group root |
+| `@stormlight_execution_root` | Checkout or runnable workspace root |
+| `@stormlight_component_name` | Optional package or component name |
+| `@stormlight_component_root` | Optional package or component root |
+| `@stormlight_workspace_metadata` | Encoded resolver metadata |
+| `@stormlight_return_target` | Source session for the current attach, or empty to detach |
 
-The tmux session itself carries `@runstead_managed=1`. A session carrying the
-legacy `@agentmux_managed=1` marker is accepted and migrated. An existing
-session with neither marker is never reused.
+The tmux session itself carries `@stormlight_managed=1`. An existing session
+without that marker is never reused.
 
 The window uses `remain-on-exit`, allowing completed output and exit status to
 remain reviewable. Messages are loaded into tmux buffers and pasted into the
@@ -105,24 +106,16 @@ composed in the pane are pasted into the selected tmux pane.
 
 Pending actions use permission-restricted request and response files. The TUI
 refreshes a short-lived controller heartbeat while open. A provider hook waits
-only while that heartbeat is fresh; if Runstead exits or crashes, the hook
+only while that heartbeat is fresh; if Stormlight exits or crashes, the hook
 returns without a decision so the provider's native prompt remains available.
 
 On first attach, the runtime reserves `Q` in tmux's prefix key table and marks
-the binding with the `Return from Runstead` key note. The binding recognizes
-both Runstead and legacy Agentmux windows. Runstead refreshes bindings carrying
-either product's note but refuses to replace a user-owned `Q` binding. The
+the binding with the `Return from Stormlight` key note. The binding recognizes
+Stormlight windows. Stormlight refreshes a binding carrying its note but
+refuses to replace a user-owned `Q` binding. The
 managed session preserves the global tmux status formats and uses
 `client_prefix` to temporarily switch to a high-contrast status style with the
 available return and help keys.
-
-### Legacy compatibility
-
-Discovery requests both `@runstead_*` and `@agentmux_*` fields in one tmux
-query. New metadata wins when present; otherwise the legacy record is used.
-The first state update writes a complete Runstead record, after which only
-`@runstead_*` options are changed. This keeps live agents available across the
-rename without moving windows or restarting provider processes.
 
 ## State model
 
@@ -141,8 +134,8 @@ currently running process.
 The current implementation uses tmux options as the source of truth because
 managed processes cannot outlive the tmux server. The workspace catalog is an
 atomic JSON file independent of tmux. Ephemeral pending actions live under
-`$XDG_RUNTIME_DIR/runstead/actions` when available, otherwise under the
-Runstead state directory. A future daemon may add an append-only event journal
+`$XDG_RUNTIME_DIR/stormlight/actions` when available, otherwise under the
+Stormlight state directory. A future daemon may add an append-only event journal
 for agents that survive tmux restarts or run remotely.
 
 ## Workspace boundary

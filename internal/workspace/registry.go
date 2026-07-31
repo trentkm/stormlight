@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/trentkm/runstead/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/diagnostic"
 )
 
 type Resolver interface {
@@ -93,10 +93,7 @@ func (r *Registry) store(path string, value Context) {
 }
 
 func resolverDirectory() string {
-	if configured := os.Getenv("RUNSTEAD_RESOLVERS_DIR"); configured != "" {
-		return configured
-	}
-	if configured := os.Getenv("AGENTMUX_RESOLVERS_DIR"); configured != "" {
+	if configured := os.Getenv("STORMLIGHT_RESOLVERS_DIR"); configured != "" {
 		return configured
 	}
 	configHome := os.Getenv("XDG_CONFIG_HOME")
@@ -107,13 +104,9 @@ func resolverDirectory() string {
 		}
 		configHome = filepath.Join(home, ".config")
 	}
-	runsteadDirectory := filepath.Join(configHome, "runstead", "resolvers")
-	if info, err := os.Stat(runsteadDirectory); err == nil && info.IsDir() {
-		return runsteadDirectory
+	stormlightDirectory := filepath.Join(configHome, "stormlight", "resolvers")
+	if info, err := os.Stat(stormlightDirectory); err == nil && info.IsDir() {
+		return stormlightDirectory
 	}
-	legacyDirectory := filepath.Join(configHome, "agentmux", "resolvers")
-	if info, err := os.Stat(legacyDirectory); err == nil && info.IsDir() {
-		return legacyDirectory
-	}
-	return runsteadDirectory
+	return stormlightDirectory
 }

@@ -13,21 +13,21 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/app"
-	"github.com/trentkm/runstead/internal/diagnostic"
-	"github.com/trentkm/runstead/internal/pending"
-	"github.com/trentkm/runstead/internal/provider"
-	"github.com/trentkm/runstead/internal/session"
-	"github.com/trentkm/runstead/internal/surface"
-	"github.com/trentkm/runstead/internal/tmux"
-	"github.com/trentkm/runstead/internal/ui"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/pending"
+	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/session"
+	"github.com/trentkm/stormlight/internal/surface"
+	"github.com/trentkm/stormlight/internal/tmux"
+	"github.com/trentkm/stormlight/internal/ui"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 var version = "dev"
 
-const dashboardHostedEnv = "RUNSTEAD_UI_HOSTED"
+const dashboardHostedEnv = "STORMLIGHT_UI_HOSTED"
 
 func main() {
 	root := newRootCommand()
@@ -48,7 +48,7 @@ func newRootCommand() *cobra.Command {
 	var logLevel string
 
 	root := &cobra.Command{
-		Use:          "runstead",
+		Use:          "stormlight",
 		Short:        "A workspace-native control surface for coding agents",
 		SilenceUsage: true,
 		Version:      version,
@@ -83,19 +83,19 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().StringVar(&socket, "tmux-socket",
-		envFirst("RUNSTEAD_TMUX_SOCKET", "AGENTMUX_TMUX_SOCKET"),
+		os.Getenv("STORMLIGHT_TMUX_SOCKET"),
 		"tmux socket name",
 	)
 	root.PersistentFlags().StringVar(&sessionName, "session",
-		envFirstOr("runstead-agents", "RUNSTEAD_SESSION", "AGENTMUX_SESSION"),
+		envFirstOr("stormlight-agents", "STORMLIGHT_SESSION"),
 		"managed tmux session name",
 	)
 	root.PersistentFlags().StringVar(&logFile, "log-file",
-		envFirst("RUNSTEAD_LOG_FILE", "AGENTMUX_LOG_FILE"),
+		os.Getenv("STORMLIGHT_LOG_FILE"),
 		"diagnostic log file",
 	)
 	root.PersistentFlags().StringVar(&logLevel, "log-level",
-		envFirstOr("info", "RUNSTEAD_LOG_LEVEL", "AGENTMUX_LOG_LEVEL"),
+		envFirstOr("info", "STORMLIGHT_LOG_LEVEL"),
 		"diagnostic log level",
 	)
 
@@ -116,7 +116,11 @@ func newRootCommand() *cobra.Command {
 }
 
 func shouldHostDashboard() bool {
-	return os.Getenv("TMUX") == "" && os.Getenv(dashboardHostedEnv) == ""
+	return os.Getenv("TMUX") == "" && !dashboardIsHosted()
+}
+
+func dashboardIsHosted() bool {
+	return os.Getenv(dashboardHostedEnv) != ""
 }
 
 func runDashboard(socket, sessionName string) error {
@@ -141,7 +145,7 @@ func runDashboard(socket, sessionName string) error {
 func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
 	executable, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("find Runstead executable: %w", err)
+		return fmt.Errorf("find Stormlight executable: %w", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -165,7 +169,7 @@ func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
 
 func dashboardSessionName(pid int, now time.Time) string {
 	return fmt.Sprintf(
-		"runstead-ui-%d-%06x",
+		"stormlight-ui-%d-%06x",
 		pid,
 		uint64(now.UnixNano())&0xffffff,
 	)
@@ -186,13 +190,13 @@ func dashboardHostArgs(socket, session, cwd, shellCommand string) []string {
 		"new-session",
 		"-s", session,
 		"-c", cwd,
-		"-n", "runstead",
+		"-n", "stormlight",
 		shellCommand,
 	)
 }
 
 func configureHostedDashboard(socket string) {
-	if os.Getenv(dashboardHostedEnv) == "" || os.Getenv("TMUX") == "" {
+	if !dashboardIsHosted() || os.Getenv("TMUX") == "" {
 		return
 	}
 	tmuxPath, err := exec.LookPath("tmux")
@@ -457,10 +461,10 @@ func newEventCommand(socket, sessionName *string) *cobra.Command {
 		Short: "Update agent state from a provider hook",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if id == "" {
-				id = envFirst("RUNSTEAD_ID", "AGENTMUX_ID")
+				id = agentIDFromEnv()
 			}
 			if id == "" {
-				return fmt.Errorf("agent id is required; pass --id or run inside a Runstead agent")
+				return fmt.Errorf("agent id is required; pass --id or run inside a Stormlight agent")
 			}
 			activity, err := parseActivity(state)
 			if err != nil {
@@ -494,7 +498,7 @@ func newProviderEventCommand(socket, sessionName *string) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := envFirst("RUNSTEAD_ID", "AGENTMUX_ID")
+			id := agentIDFromEnv()
 			if id == "" {
 				return nil
 			}
@@ -535,7 +539,7 @@ func newProviderPermissionCommand(socket, sessionName *string) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := envFirst("RUNSTEAD_ID", "AGENTMUX_ID")
+			id := agentIDFromEnv()
 			if id == "" {
 				return nil
 			}
@@ -709,17 +713,11 @@ func newRunCommand(socket, sessionName *string) *cobra.Command {
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
 			child.Env = append(os.Environ(),
-				"RUNSTEAD_ID="+id,
-				"RUNSTEAD_WINDOW="+window,
-				"RUNSTEAD_BIN="+os.Args[0],
-				"RUNSTEAD_SESSION="+*sessionName,
-				"RUNSTEAD_TMUX_SOCKET="+*socket,
-				// Keep legacy hook integrations working during the rename.
-				"AGENTMUX_ID="+id,
-				"AGENTMUX_WINDOW="+window,
-				"AGENTMUX_BIN="+os.Args[0],
-				"AGENTMUX_SESSION="+*sessionName,
-				"AGENTMUX_TMUX_SOCKET="+*socket,
+				"STORMLIGHT_ID="+id,
+				"STORMLIGHT_WINDOW="+window,
+				"STORMLIGHT_BIN="+os.Args[0],
+				"STORMLIGHT_SESSION="+*sessionName,
+				"STORMLIGHT_TMUX_SOCKET="+*socket,
 			)
 
 			runErr := child.Run()
@@ -830,4 +828,8 @@ func envFirstOr(fallback string, names ...string) string {
 		return value
 	}
 	return fallback
+}
+
+func agentIDFromEnv() string {
+	return os.Getenv("STORMLIGHT_ID")
 }

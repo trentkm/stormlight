@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trentkm/runstead/internal/agent"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 func TestStorePublishesListsResolvesAndRemovesAction(t *testing.T) {

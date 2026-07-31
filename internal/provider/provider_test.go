@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trentkm/runstead/internal/agent"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 func TestRegistryRejectsUnknownProvider(t *testing.T) {
@@ -51,9 +51,8 @@ func TestCodexArgsConfigureCompletionNotification(t *testing.T) {
 		!strings.Contains(command[2], "_provider-event codex") {
 		t.Fatalf("unexpected notification command: %#v", command)
 	}
-	if !strings.Contains(command[2], "RUNSTEAD_BIN") ||
-		!strings.Contains(command[2], "AGENTMUX_BIN") {
-		t.Fatalf("notification command lacks compatibility fallback: %q", command[2])
+	if !strings.Contains(command[2], "STORMLIGHT_BIN") {
+		t.Fatalf("notification command lacks Stormlight executable: %q", command[2])
 	}
 }
 
@@ -81,9 +80,8 @@ func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 		if !strings.Contains(groups[0].Hooks[0].Command, "_provider-event claude") {
 			t.Fatalf("%s command = %q", name, groups[0].Hooks[0].Command)
 		}
-		if !strings.Contains(groups[0].Hooks[0].Command, "RUNSTEAD_BIN") ||
-			!strings.Contains(groups[0].Hooks[0].Command, "AGENTMUX_BIN") {
-			t.Fatalf("%s command lacks compatibility fallback: %q",
+		if !strings.Contains(groups[0].Hooks[0].Command, "STORMLIGHT_BIN") {
+			t.Fatalf("%s command lacks Stormlight executable: %q",
 				name,
 				groups[0].Hooks[0].Command,
 			)

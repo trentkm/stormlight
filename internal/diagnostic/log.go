@@ -114,10 +114,7 @@ func Tail(path string, lines int) (string, error) {
 
 func ResolvePath(requested string) (string, error) {
 	if requested == "" {
-		requested = os.Getenv("RUNSTEAD_LOG_FILE")
-	}
-	if requested == "" {
-		requested = os.Getenv("AGENTMUX_LOG_FILE")
+		requested = os.Getenv("STORMLIGHT_LOG_FILE")
 	}
 	if requested != "" {
 		path, err := filepath.Abs(requested)
@@ -132,17 +129,17 @@ func ResolvePath(requested string) (string, error) {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "runstead", "runstead.log"), nil
+		return filepath.Join(stateHome, "stormlight", "stormlight.log"), nil
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(home, "Library", "Logs", "runstead", "runstead.log"), nil
+		return filepath.Join(home, "Library", "Logs", "stormlight", "stormlight.log"), nil
 	case "windows":
 		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			return filepath.Join(localAppData, "runstead", "runstead.log"), nil
+			return filepath.Join(localAppData, "stormlight", "stormlight.log"), nil
 		}
 	}
-	return filepath.Join(home, ".local", "state", "runstead", "runstead.log"), nil
+	return filepath.Join(home, ".local", "state", "stormlight", "stormlight.log"), nil
 }
 
 func parseLevel(value string) (slog.Level, error) {

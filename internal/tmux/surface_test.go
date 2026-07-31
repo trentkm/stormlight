@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/trentkm/runstead/internal/surface"
+	"github.com/trentkm/stormlight/internal/surface"
 )
 
 func TestSurfacePresentsCommandsInTmuxPopup(t *testing.T) {
@@ -26,7 +26,7 @@ func TestSurfacePresentsCommandsInTmuxPopup(t *testing.T) {
 		Popup: &surface.Popup{
 			Width:       "78%",
 			Height:      "76%",
-			Title:       " Runstead · Choose directory ",
+			Title:       " Stormlight · Choose directory ",
 			BorderStyle: "fg=#e5c07b",
 		},
 	})
@@ -43,7 +43,7 @@ func TestSurfacePresentsCommandsInTmuxPopup(t *testing.T) {
 		"-w", "78%",
 		"-h", "76%",
 		"-d", "/workspace/project",
-		"-T", " Runstead · Choose directory ",
+		"-T", " Stormlight · Choose directory ",
 		"-S", "fg=#e5c07b",
 		"/opt/homebrew/bin/yazi",
 		"--chooser-file", "/tmp/choice",

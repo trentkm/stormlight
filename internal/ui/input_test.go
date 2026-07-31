@@ -14,12 +14,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/app"
-	"github.com/trentkm/runstead/internal/pending"
-	"github.com/trentkm/runstead/internal/provider"
-	"github.com/trentkm/runstead/internal/surface"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/pending"
+	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/surface"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 func TestLineInputEditsAtCursor(t *testing.T) {
@@ -224,9 +224,9 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 	model.chooseDispatchDirectory = true
 
 	view := ansi.Strip(model.View())
-	if !strings.Contains(view, "[Codex]") ||
+	if !strings.Contains(view, "Codex") ||
 		!strings.Contains(view, "Claude") ||
-		!strings.Contains(view, "Shell") {
+		strings.Contains(view, "Shell") {
 		t.Fatalf("provider selector is incomplete:\n%s", view)
 	}
 	if !strings.Contains(view, "Working directory") ||
@@ -281,13 +281,14 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 	model = updated.(Model)
 
 	view := ansi.Strip(model.View())
-	if !strings.Contains(view, "[Codex ×]") ||
-		!strings.Contains(view, "Claude ×") ||
-		!strings.Contains(view, "Shell ×") {
+	if !strings.Contains(view, "Codex") ||
+		!strings.Contains(view, "Claude") ||
+		!strings.Contains(view, "not found") ||
+		strings.Contains(view, "Shell") {
 		t.Fatalf("provider availability is unclear:\n%s", view)
 	}
 	if !strings.Contains(view, "Coding agent") ||
-		!strings.Contains(view, "Input") ||
+		!strings.Contains(view, "Task") ||
 		strings.Contains(view, "Working directory") {
 		t.Fatalf("contextual new-agent form is incorrect:\n%s", view)
 	}
@@ -319,7 +320,7 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 		"Interaction",
 		"New agent",
 		"Coding agent",
-		"Input",
+		"Task",
 	} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("modal view is missing %q:\n%s", label, view)
@@ -572,21 +573,21 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 	model := NewModel(backend)
 	model.mode = modeDispatch
 
-	updated, _ := model.updateDispatch(runeKey("l"))
+	updated, _ := model.updateDispatch(runeKey("j"))
 	model = updated.(Model)
 	if model.providerIndex != 1 {
-		t.Fatalf("provider index after l = %d, want 1", model.providerIndex)
+		t.Fatalf("provider index after j = %d, want 1", model.providerIndex)
 	}
 
-	updated, _ = model.updateDispatch(runeKey("h"))
+	updated, _ = model.updateDispatch(runeKey("k"))
 	model = updated.(Model)
 	if model.providerIndex != 0 {
-		t.Fatalf("provider index after h = %d, want 0", model.providerIndex)
+		t.Fatalf("provider index after k = %d, want 0", model.providerIndex)
 	}
-	selector := ansi.Strip(model.renderProviderSelector())
-	if !strings.Contains(selector, "[Codex]") ||
+	selector := ansi.Strip(strings.Join(model.renderProviderRows(56), "\n"))
+	if !strings.Contains(selector, "Codex") ||
 		!strings.Contains(selector, "Claude") ||
-		!strings.Contains(selector, "Shell") {
+		strings.Contains(selector, "Shell") {
 		t.Fatalf("unexpected selector %q", selector)
 	}
 
@@ -606,6 +607,86 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 	}
 	if model.status != "Dispatching Codex" {
 		t.Fatalf("status = %q", model.status)
+	}
+}
+
+func TestNewAgentOnlyOffersCodingAgentProviders(t *testing.T) {
+	backend := &recordingBackend{
+		providers: []provider.Info{
+			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
+			{ID: agent.ProviderClaude, Label: "Claude", Available: true},
+			{ID: agent.ProviderShell, Label: "Shell", Available: true},
+		},
+	}
+	model := NewModel(backend)
+
+	if len(model.providers) != 2 ||
+		model.providers[0].ID != agent.ProviderCodex ||
+		model.providers[1].ID != agent.ProviderClaude {
+		t.Fatalf("coding agent providers = %#v", model.providers)
+	}
+}
+
+func TestTaskComposerWrapsLongPrompts(t *testing.T) {
+	model := NewModel(&recordingBackend{
+		providers: []provider.Info{
+			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
+		},
+	})
+	model.formFocus = dispatchTask
+	model.focusForm()
+	model.taskInput.SetValue(
+		"Review the workspace architecture and identify any unsafe " +
+			"runtime boundaries before making changes. final-marker",
+	)
+
+	rendered := ansi.Strip(model.renderTaskComposer(44, 4))
+	if !strings.Contains(rendered, "Review the workspace") ||
+		!strings.Contains(rendered, "final-marker") ||
+		strings.Contains(rendered, "…") {
+		t.Fatalf("task composer truncated the prompt:\n%s", rendered)
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 6 {
+		t.Fatalf("task composer height = %d, want 6:\n%s", len(lines), rendered)
+	}
+	for index, line := range lines {
+		if width := lipgloss.Width(line); width != 44 {
+			t.Fatalf("line %d width = %d, want 44: %q", index+1, width, line)
+		}
+	}
+}
+
+func TestTaskEditorDelegatesPresentationToSurface(t *testing.T) {
+	start := t.TempDir()
+	current := &recordingSurface{popups: true}
+	command, err := taskEditorCmd(
+		current,
+		"/usr/local/bin/nvim",
+		start,
+		"Review this workspace",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if current.request.Command.Path != "/usr/local/bin/nvim" ||
+		current.request.Command.Dir != start ||
+		len(current.request.Command.Args) != 1 ||
+		!strings.HasSuffix(current.request.Command.Args[0], ".md") {
+		t.Fatalf("editor command request = %#v", current.request.Command)
+	}
+	if current.request.Popup == nil ||
+		current.request.Popup.Width != "82%" ||
+		current.request.Popup.Height != "76%" ||
+		!strings.Contains(current.request.Popup.Title, "Edit task") {
+		t.Fatalf("editor popup request = %#v", current.request.Popup)
+	}
+
+	message := command()
+	result, ok := message.(taskEditedMsg)
+	if !ok || result.err != nil || result.task != "Review this workspace" {
+		t.Fatalf("editor result = %#v", message)
 	}
 }
 
@@ -663,7 +744,7 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 	}
 	rendered := ansi.Strip(model.renderDispatch(80))
 	if !strings.Contains(rendered, "Coding agent") ||
-		!strings.Contains(rendered, "Input") ||
+		!strings.Contains(rendered, "Task") ||
 		strings.Contains(rendered, "Working directory") ||
 		strings.Contains(rendered, "Browse with Yazi") {
 		t.Fatalf("unexpected contextual new-agent form:\n%s", rendered)

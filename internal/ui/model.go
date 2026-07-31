@@ -12,17 +12,18 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/app"
-	"github.com/trentkm/runstead/internal/diagnostic"
-	"github.com/trentkm/runstead/internal/pending"
-	"github.com/trentkm/runstead/internal/provider"
-	"github.com/trentkm/runstead/internal/surface"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/pending"
+	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/surface"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 type Backend interface {
@@ -109,12 +110,13 @@ type Model struct {
 	providers               []provider.Info
 	providerIndex           int
 	cwdInput                lineInput
-	taskInput               lineInput
+	taskInput               textarea.Model
 	sendInput               lineInput
 	initialCwd              string
 	directories             []directoryChoice
 	directoryIndex          int
 	yaziPath                string
+	nvimPath                string
 	pickerStart             string
 	chooseDispatchDirectory bool
 
@@ -167,6 +169,11 @@ type directoryPickedMsg struct {
 	err  error
 }
 
+type taskEditedMsg struct {
+	task string
+	err  error
+}
+
 type workspaceAddedMsg struct {
 	value workspace.Context
 	err   error
@@ -198,9 +205,16 @@ func NewModel(backend Backend) Model {
 	return NewModelWithSurface(backend, surface.NewDirect())
 }
 
+func codingAgentProviders(infos []provider.Info) []provider.Info {
+	return slices.DeleteFunc(slices.Clone(infos), func(info provider.Info) bool {
+		return info.ID == agent.ProviderShell
+	})
+}
+
 func NewModelWithSurface(backend Backend, current surface.Surface) Model {
 	cwd, _ := os.Getwd()
 	yaziPath, _ := exec.LookPath("yazi")
+	nvimPath, _ := exec.LookPath("nvim")
 	if current == nil {
 		current = surface.NewDirect()
 	}
@@ -208,19 +222,20 @@ func NewModelWithSurface(backend Backend, current surface.Surface) Model {
 	cwdInput := newLineInput("")
 	cwdInput.SetValue(cwd)
 
-	taskInput := newLineInput("What should the agent do?")
+	taskInput := newTaskInput("What should the agent do?")
 
 	sendInput := newLineInput("Reply to the selected agent")
 
 	model := Model{
 		backend:      backend,
 		surface:      current,
-		providers:    backend.Providers(),
+		providers:    codingAgentProviders(backend.Providers()),
 		cwdInput:     cwdInput,
 		taskInput:    taskInput,
 		sendInput:    sendInput,
 		initialCwd:   cwd,
 		yaziPath:     yaziPath,
+		nvimPath:     nvimPath,
 		activePane:   paneWorkspaces,
 		rowsExpanded: false,
 		status:       "Ready",
@@ -381,6 +396,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.status = "Directory selected"
+		return m, nil
+
+	case taskEditedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = "Action failed"
+			diagnostic.Logger().Error("task editor failed", "error", msg.err)
+			return m, nil
+		}
+		m.taskInput.SetValue(msg.task)
+		m.formFocus = dispatchTask
+		m.focusForm()
+		m.err = nil
+		m.status = "Task updated"
 		return m, nil
 
 	case workspaceAddedMsg:
@@ -674,6 +703,10 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+s":
 		return m.submitDispatch()
+	case "ctrl+o":
+		if m.formFocus == dispatchTask {
+			return m.openTaskEditor()
+		}
 	case "h", "left":
 		if m.formFocus == dispatchProvider && len(m.providers) > 0 {
 			m.providerIndex = (m.providerIndex + len(m.providers) - 1) % len(m.providers)
@@ -685,12 +718,24 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "j", "down":
-		if m.formFocus == dispatchDirectory {
+		switch m.formFocus {
+		case dispatchProvider:
+			if len(m.providers) > 0 {
+				m.providerIndex = (m.providerIndex + 1) % len(m.providers)
+			}
+			return m, nil
+		case dispatchDirectory:
 			m.selectDirectory(1)
 			return m, nil
 		}
 	case "k", "up":
-		if m.formFocus == dispatchDirectory {
+		switch m.formFocus {
+		case dispatchProvider:
+			if len(m.providers) > 0 {
+				m.providerIndex = (m.providerIndex + len(m.providers) - 1) % len(m.providers)
+			}
+			return m, nil
+		case dispatchDirectory:
 			m.selectDirectory(-1)
 			return m, nil
 		}
@@ -705,7 +750,10 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "e":
-		if m.formFocus == dispatchDirectory {
+		switch m.formFocus {
+		case dispatchProvider:
+			return m.openTaskEditor()
+		case dispatchDirectory:
 			m.editSelectedDirectory()
 			return m, nil
 		}
@@ -754,7 +802,9 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case dispatchCustomPath:
 		m.cwdInput = m.cwdInput.Update(msg)
 	case dispatchTask:
-		m.taskInput = m.taskInput.Update(msg)
+		var cmd tea.Cmd
+		m.taskInput, cmd = m.taskInput.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -901,7 +951,7 @@ func (m Model) renderHeader() string {
 			attention++
 		}
 	}
-	left := titleStyle.Render(" Runstead")
+	left := titleStyle.Render(" Stormlight")
 	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
 	if attention > 0 {
 		attentionLabel := fmt.Sprintf("%d need input", attention)
@@ -1111,10 +1161,10 @@ func replaceStyledCell(
 
 func (m Model) renderDispatchModal(width, height int) string {
 	preferredWidth := 62
-	preferredHeight := 10
+	preferredHeight := 18
 	if m.chooseDispatchDirectory {
 		preferredWidth = 78
-		preferredHeight = 20
+		preferredHeight = 24
 	}
 	modalWidth, modalHeight := modalDimensions(
 		width,
@@ -1378,7 +1428,7 @@ func (m Model) renderWorkspaces(width, height int) string {
 			errorStyle.Render(truncate("Remove "+value.Name+"?", width)),
 			"",
 			mutedStyle.Render(ansi.Wrap(
-				"This removes the workspace from Runstead. Running agents are unchanged.",
+				"This removes the workspace from Stormlight. Running agents are unchanged.",
 				width,
 				"",
 			)),
@@ -2052,7 +2102,6 @@ func (m Model) renderDispatchAt(width, height int) string {
 	}
 	contentWidth := max(1, width-4)
 	m.cwdInput.SetWidth(max(10, contentWidth-2))
-	m.taskInput.SetWidth(max(10, contentWidth-2))
 
 	headerLeft := titleStyle.Render("  New agent")
 	summaryWidth := max(1, width-lipgloss.Width(headerLeft)-3)
@@ -2062,8 +2111,8 @@ func (m Model) renderDispatchAt(width, height int) string {
 		headerLeft + strings.Repeat(" ", gap) + headerRight,
 		"",
 		"  " + providerStyle.Render("Coding agent"),
-		"  " + m.renderProviderSelector(),
 	}
+	lines = append(lines, m.renderProviderRows(contentWidth)...)
 	if m.chooseDispatchDirectory {
 		lines = append(lines,
 			"",
@@ -2074,14 +2123,19 @@ func (m Model) renderDispatchAt(width, height int) string {
 				contentWidth,
 			),
 		)
-		fixedLines := 10
+		customPathLines := 0
 		if selected, ok := m.selectedDirectory(); ok &&
 			selected.kind == directoryCustom {
-			fixedLines = 13
+			customPathLines = 3
 		}
+		directoryRows := clamp(
+			height-len(lines)-customPathLines-6,
+			1,
+			4,
+		)
 		lines = append(lines, m.renderDirectoryRows(
 			contentWidth,
-			clamp(height-fixedLines, 1, 8),
+			directoryRows,
 		)...)
 
 		if selected, ok := m.selectedDirectory(); ok &&
@@ -2098,12 +2152,43 @@ func (m Model) renderDispatchAt(width, height int) string {
 		}
 	}
 
+	taskDetail := fmt.Sprintf(
+		"%d chars",
+		utf8.RuneCountInString(m.taskInput.Value()),
+	)
 	lines = append(lines,
 		"",
-		"  "+taskStyle.Render("Input"),
-		"    "+m.taskInput.View(),
+		"  "+m.renderDispatchSectionTitle(
+			taskStyle,
+			"Task",
+			taskDetail,
+			contentWidth,
+		),
+	)
+	taskHeight := clamp(height-len(lines)-2, 1, 6)
+	lines = append(lines,
+		"  "+m.renderTaskComposer(contentWidth, taskHeight),
 	)
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderTaskComposer(width, height int) string {
+	width = max(3, width)
+	height = max(1, height)
+	innerWidth := max(1, width-2)
+	input := m.taskInput
+	input.SetWidth(innerWidth)
+	input.SetHeight(height)
+
+	style := lipgloss.NewStyle().
+		Width(innerWidth).
+		Height(height).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(colorBorder)
+	if m.formFocus == dispatchTask {
+		style = style.BorderForeground(colorAccent)
+	}
+	return style.Render(input.View())
 }
 
 func (m Model) renderDispatchSectionTitle(
@@ -2277,32 +2362,47 @@ func (m Model) dispatchSummary() string {
 	return strings.Join(parts, "  ·  ")
 }
 
-func (m Model) renderProviderSelector() string {
+func (m Model) renderProviderRows(width int) []string {
 	if len(m.providers) == 0 {
-		return mutedStyle.Render("none")
+		return []string{
+			"    " + mutedStyle.Render("No coding agents available"),
+		}
 	}
 
-	options := make([]string, 0, len(m.providers))
+	rows := make([]string, 0, len(m.providers))
 	for index, info := range m.providers {
-		label := info.Label
+		status := "ready"
 		if !info.Available {
-			label += " ×"
+			status = "not found"
 		}
+		contentWidth := max(1, width-2)
+		statusWidth := min(9, contentWidth)
+		labelWidth := max(1, contentWidth-statusWidth-2)
+		label := lipgloss.NewStyle().
+			Width(labelWidth).
+			Render(truncate(info.Label, labelWidth))
+		status = truncate(status, statusWidth)
+		plain := label + "  " + status
 		if index == m.providerIndex {
-			style := accentStyle
-			if !info.Available {
-				style = errorStyle
-			}
-			options = append(options, style.Render("["+label+"]"))
+			rows = append(rows, "  "+renderSelectableRow(
+				plain,
+				width,
+				m.formFocus == dispatchProvider,
+			))
 			continue
 		}
-		style := mutedStyle
+		statusStyle := successStyle
 		if !info.Available {
-			style = errorStyle
+			statusStyle = errorStyle
 		}
-		options = append(options, style.Render(" "+label+" "))
+		styled := titleStyle.Render(label) +
+			"  " + statusStyle.Render(status)
+		rows = append(rows, "  "+lipgloss.NewStyle().
+			Width(width).
+			MaxWidth(width).
+			Render("  "+styled))
 	}
-	return strings.Join(options, " ")
+	return rows
 }
 
 func (m Model) renderFooter() string {
@@ -2341,10 +2441,27 @@ func (m Model) commandHints() string {
 	case modeDelete:
 		return "d confirm  Esc cancel"
 	case modeDispatch:
-		if m.chooseDispatchDirectory {
-			return "j/k location  Tab next  Ctrl-s launch  Esc cancel"
+		switch m.formFocus {
+		case dispatchProvider:
+			hints := "j/k choose  Enter task"
+			if m.chooseDispatchDirectory {
+				hints = "j/k choose  Enter location"
+			}
+			if m.nvimPath != "" {
+				hints += "  e Neovim"
+			}
+			return hints + "  Esc cancel"
+		case dispatchDirectory:
+			return "j/k location  Enter choose  e edit path  Esc cancel"
+		case dispatchCustomPath:
+			return "Enter accept path  Esc cancel"
+		default:
+			hints := "Enter launch"
+			if m.nvimPath != "" {
+				hints += "  Ctrl-o Neovim"
+			}
+			return hints + "  Esc cancel"
 		}
-		return "h/l choose agent  Tab next  Enter continue/launch  Esc cancel"
 	case modeAddWorkspace:
 		return "j/k select  Enter add  e edit path  Esc cancel"
 	}
@@ -2632,6 +2749,113 @@ func (m Model) selectedDirectory() (directoryChoice, bool) {
 	return m.directories[m.directoryIndex], true
 }
 
+func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
+	if m.nvimPath == "" {
+		m.err = fmt.Errorf("Neovim is not installed or not on PATH")
+		m.status = "Action failed"
+		return m, nil
+	}
+	cwd := strings.TrimSpace(m.cwdInput.Value())
+	if !isDirectory(cwd) {
+		cwd = m.initialCwd
+	}
+	command, err := taskEditorCmd(
+		m.surface,
+		m.nvimPath,
+		cwd,
+		m.taskInput.Value(),
+	)
+	if err != nil {
+		m.err = err
+		m.status = "Action failed"
+		return m, nil
+	}
+	m.status = "Opening Neovim"
+	return m, command
+}
+
+func taskEditorCmd(
+	current surface.Surface,
+	binary string,
+	cwd string,
+	task string,
+) (tea.Cmd, error) {
+	handoff, err := os.CreateTemp("", "stormlight-task-*.md")
+	if err != nil {
+		return nil, fmt.Errorf("create task editor file: %w", err)
+	}
+	handoffPath := handoff.Name()
+	cleanup := func() {
+		_ = os.Remove(handoffPath)
+	}
+	if _, err := handoff.WriteString(task); err != nil {
+		_ = handoff.Close()
+		cleanup()
+		return nil, fmt.Errorf("write task editor file: %w", err)
+	}
+	if err := handoff.Close(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("close task editor file: %w", err)
+	}
+
+	result := func(runErr error) tea.Msg {
+		defer cleanup()
+		if runErr != nil {
+			return taskEditedMsg{err: fmt.Errorf("run Neovim: %w", runErr)}
+		}
+		content, err := os.ReadFile(handoffPath)
+		if err != nil {
+			return taskEditedMsg{err: fmt.Errorf(
+				"read task editor file: %w",
+				err,
+			)}
+		}
+		return taskEditedMsg{
+			task: strings.TrimSuffix(string(content), "\n"),
+		}
+	}
+
+	var popup *surface.Popup
+	if current.Capabilities().Popups {
+		popup = &surface.Popup{
+			Width:       "82%",
+			Height:      "76%",
+			Title:       " Stormlight · Edit task ",
+			BorderStyle: "fg=#e5c07b",
+		}
+	}
+	presentation, err := current.Present(surface.Request{
+		Command: surface.Command{
+			Path: binary,
+			Args: []string{handoffPath},
+			Dir:  cwd,
+		},
+		Popup: popup,
+	})
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	if presentation.Command == nil {
+		cleanup()
+		return nil, fmt.Errorf("surface returned an empty Neovim command")
+	}
+	switch presentation.Mode {
+	case surface.PresentationOverlay:
+		return func() tea.Msg {
+			return result(presentation.Command.Run())
+		}, nil
+	case surface.PresentationSuspend:
+		return tea.ExecProcess(presentation.Command, result), nil
+	default:
+		cleanup()
+		return nil, fmt.Errorf(
+			"surface returned unsupported presentation mode %d",
+			presentation.Mode,
+		)
+	}
+}
+
 func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	if m.yaziPath == "" {
 		m.err = fmt.Errorf("yazi is not installed or not on PATH")
@@ -2704,7 +2928,7 @@ func yaziPickerCmd(
 		popup = &surface.Popup{
 			Width:       "78%",
 			Height:      "76%",
-			Title:       " Runstead · Choose directory ",
+			Title:       " Stormlight · Choose directory ",
 			BorderStyle: "fg=#e5c07b",
 		}
 	}
@@ -2744,7 +2968,7 @@ func yaziPickerCmd(
 }
 
 func createYaziHandoff(kind string) (string, error) {
-	file, err := os.CreateTemp("", "runstead-yazi-"+kind+"-*")
+	file, err := os.CreateTemp("", "stormlight-yazi-"+kind+"-*")
 	if err != nil {
 		return "", fmt.Errorf("create Yazi handoff file: %w", err)
 	}

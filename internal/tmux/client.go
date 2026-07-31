@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trentkm/runstead/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/diagnostic"
 )
 
 type Runner interface {
@@ -27,11 +27,7 @@ func NewClient(socket string) *Client {
 }
 
 func NewClientFromEnv() *Client {
-	socket := os.Getenv("RUNSTEAD_TMUX_SOCKET")
-	if socket == "" {
-		socket = os.Getenv("AGENTMUX_TMUX_SOCKET")
-	}
-	return NewClient(socket)
+	return NewClient(os.Getenv("STORMLIGHT_TMUX_SOCKET"))
 }
 
 func (c *Client) Socket() string {

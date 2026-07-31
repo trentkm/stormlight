@@ -4,8 +4,8 @@ import (
 	"context"
 	"os/exec"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 type Runtime interface {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/trentkm/runstead/internal/agent"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 const maxEventSummaryRunes = 160

@@ -21,7 +21,7 @@ const (
 	maxActionAge         = 24 * time.Hour
 )
 
-var ErrNoController = errors.New("no active Runstead controller")
+var ErrNoController = errors.New("no active Stormlight controller")
 
 type Store struct {
 	dir           string
@@ -358,22 +358,22 @@ func validActionID(value string) bool {
 }
 
 func actionsPath() string {
-	if configured := os.Getenv("RUNSTEAD_ACTIONS_DIR"); configured != "" {
+	if configured := os.Getenv("STORMLIGHT_ACTIONS_DIR"); configured != "" {
 		return configured
 	}
 	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		return filepath.Join(runtimeDir, "runstead", "actions")
+		return filepath.Join(runtimeDir, "stormlight", "actions")
 	}
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "runstead", "actions")
+		return filepath.Join(stateHome, "stormlight", "actions")
 	}
 	home, err := os.UserHomeDir()
 	if err == nil {
-		return filepath.Join(home, ".local", "state", "runstead", "actions")
+		return filepath.Join(home, ".local", "state", "stormlight", "actions")
 	}
 	cache, err := os.UserCacheDir()
 	if err == nil {
-		return filepath.Join(cache, "runstead", "actions")
+		return filepath.Join(cache, "stormlight", "actions")
 	}
 	return ""
 }

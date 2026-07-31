@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/session"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/session"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 func TestParseAgent(t *testing.T) {
 	parts := []string{
-		"runstead-agents",
+		"stormlight-agents",
 		"@7",
 		"2",
 		"cx-fix-parser",
@@ -42,7 +42,6 @@ func TestParseAgent(t *testing.T) {
 		"/tmp/project",
 		"eyJicmFuY2giOiJtYWluIn0",
 	}
-	parts = append(parts, make([]string, metadataFieldCount)...)
 	line := strings.Join(parts, fieldSeparator)
 
 	managedAgent, ok := parseAgent(line)
@@ -68,8 +67,8 @@ func TestParseAgent(t *testing.T) {
 }
 
 func TestParseAgentDerivesCompletedFromDeadPane(t *testing.T) {
-	parts := make([]string, basePaneFieldCount+2*metadataFieldCount)
-	parts[0] = "runstead-agents"
+	parts := make([]string, basePaneFieldCount+metadataFieldCount)
+	parts[0] = "stormlight-agents"
 	parts[1] = "@1"
 	parts[2] = "0"
 	parts[3] = "job"
@@ -98,35 +97,9 @@ func TestParseAgentDerivesCompletedFromDeadPane(t *testing.T) {
 }
 
 func TestParseAgentSkipsUntaggedPane(t *testing.T) {
-	parts := make([]string, basePaneFieldCount+2*metadataFieldCount)
+	parts := make([]string, basePaneFieldCount+metadataFieldCount)
 	if _, ok := parseAgent(strings.Join(parts, fieldSeparator)); ok {
 		t.Fatal("expected untagged pane to be skipped")
-	}
-}
-
-func TestParseAgentDiscoversLegacyAgentmuxMetadata(t *testing.T) {
-	parts := make([]string, basePaneFieldCount+2*metadataFieldCount)
-	legacy := basePaneFieldCount + metadataFieldCount
-	parts[0] = "agentmux-agents"
-	parts[1] = "@3"
-	parts[3] = "cl-legacy"
-	parts[4] = "%4"
-	parts[legacy] = "legacy-id"
-	parts[legacy+1] = "claude"
-	parts[legacy+4] = "/tmp/legacy"
-	parts[legacy+6] = "idle"
-	parts[legacy+8] = "%4"
-
-	managedAgent, ok := parseAgent(strings.Join(parts, fieldSeparator))
-	if !ok {
-		t.Fatal("expected legacy managed agent")
-	}
-	if managedAgent.ID != "legacy-id" ||
-		managedAgent.Provider != agent.ProviderClaude {
-		t.Fatalf("unexpected legacy agent: %#v", managedAgent)
-	}
-	if managedAgent.TmuxSession != "agentmux-agents" {
-		t.Fatalf("tmux session = %q", managedAgent.TmuxSession)
 	}
 }
 
@@ -218,19 +191,19 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 	if result.Command == nil {
 		t.Fatal("expected an interactive attach command")
 	}
-	want := []string{"tmux", "-L", "isolated", "attach-session", "-t", "runstead-agents"}
+	want := []string{"tmux", "-L", "isolated", "attach-session", "-t", "stormlight-agents"}
 	if !slices.Equal(result.Command.Args, want) {
 		t.Fatalf("command = %#v, want %#v", result.Command.Args, want)
 	}
 	wantCalls := [][]string{
 		{"list-panes", "-a", "-F", expectedPaneListFormat()},
 		{"list-keys", "-T", "prefix", "Q"},
-		{"bind-key", "-T", "prefix", "-N", "Return from Runstead", "Q",
+		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
 	}
-	wantCalls = append(wantCalls, prefixFeedbackCalls("runstead-agents")...)
+	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
-		[]string{"set-option", "-w", "-t", "@1", "@runstead_return_target", ""},
+		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
 		[]string{"select-window", "-t", "@1"},
 	)
 	assertCalls(t, runner.calls, wantCalls)
@@ -273,12 +246,12 @@ func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
 				{"list-panes", "-a", "-F", expectedPaneListFormat()},
 				{"display-message", "-p", "-t", "%9", "#{session_id}"},
 				{"list-keys", "-T", "prefix", "Q"},
-				{"bind-key", "-T", "prefix", "-N", "Return from Runstead", "Q",
+				{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 					"run-shell", "-C", returnBindingFormat},
 			}
-			wantCalls = append(wantCalls, prefixFeedbackCalls("runstead-agents")...)
+			wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 			wantCalls = append(wantCalls,
-				[]string{"set-option", "-w", "-t", "@1", "@runstead_return_target", "$7"},
+				[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", "$7"},
 				[]string{"switch-client", "-t", "@1"},
 			)
 			assertCalls(t, runner.calls, wantCalls)
@@ -318,13 +291,13 @@ func TestAttachRefusesToReplaceExistingReturnBinding(t *testing.T) {
 	})
 }
 
-func TestAttachRefreshesLegacyAgentmuxOwnedReturnBinding(t *testing.T) {
+func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
 	runner := &captureRunner{
 		agentLine:   captureAgentLine(false),
-		binding:     "old agentmux binding",
-		bindingNote: "Q Return from agentmux",
+		binding:     "existing Stormlight binding",
+		bindingNote: "Q Return from Stormlight",
 	}
 	runtime := &Runtime{runner: runner}
 
@@ -335,12 +308,12 @@ func TestAttachRefreshesLegacyAgentmuxOwnedReturnBinding(t *testing.T) {
 		{"list-panes", "-a", "-F", expectedPaneListFormat()},
 		{"list-keys", "-T", "prefix", "Q"},
 		{"list-keys", "-N", "-T", "prefix", "Q"},
-		{"bind-key", "-T", "prefix", "-N", "Return from Runstead", "Q",
+		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
 	}
-	wantCalls = append(wantCalls, prefixFeedbackCalls("runstead-agents")...)
+	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
-		[]string{"set-option", "-w", "-t", "@1", "@runstead_return_target", ""},
+		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
 		[]string{"select-window", "-t", "@1"},
 	)
 	assertCalls(t, runner.calls, wantCalls)
@@ -357,11 +330,11 @@ func TestConfigurePrefixFeedbackReusesSavedBaseOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, runner.calls, [][]string{
-		{"show-options", "-qv", "-t", "custom-agents", "@runstead_prefix_feedback"},
-		{"show-options", "-qv", "-t", "custom-agents", "@runstead_status_left_length_base"},
-		{"set-option", "-t", "custom-agents", "@runstead_status_style_prefix",
+		{"show-options", "-qv", "-t", "custom-agents", "@stormlight_prefix_feedback"},
+		{"show-options", "-qv", "-t", "custom-agents", "@stormlight_status_left_length_base"},
+		{"set-option", "-t", "custom-agents", "@stormlight_status_style_prefix",
 			"bg=#e5c07b,fg=#1f2328,bold"},
-		{"set-option", "-t", "custom-agents", "@runstead_status_left_prefix",
+		{"set-option", "-t", "custom-agents", "@stormlight_status_left_prefix",
 			" PREFIX  [Q] return  [?] all keys "},
 		{"set-option", "-t", "custom-agents", "status-style", dynamicStatusStyle},
 		{"set-option", "-t", "custom-agents", "status-left", dynamicStatusLeft},
@@ -369,44 +342,11 @@ func TestConfigurePrefixFeedbackReusesSavedBaseOptions(t *testing.T) {
 	})
 }
 
-func TestConfigurePrefixFeedbackMigratesLegacySavedBaseOptions(t *testing.T) {
-	runner := &captureRunner{
-		legacyFeedbackVersion: "1",
-		legacyStatusStyle:     "fg=white,bg=black",
-		legacyStatusLeft:      " legacy ",
-		legacyStatusLeftWidth: "42",
-	}
+func TestUpdateRestoresMissingStormlightWindowMetadata(t *testing.T) {
+	runner := &captureRunner{agentLine: captureAgentLine(false)}
 	runtime := &Runtime{runner: runner}
 
-	if err := runtime.configurePrefixFeedback(context.Background(), "legacy-agents"); err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, runner.calls, [][]string{
-		{"show-options", "-qv", "-t", "legacy-agents", "@runstead_prefix_feedback"},
-		{"show-options", "-qv", "-t", "legacy-agents", "@agentmux_prefix_feedback"},
-		{"show-options", "-qv", "-t", "legacy-agents", "@agentmux_status_style_base"},
-		{"show-options", "-qv", "-t", "legacy-agents", "@agentmux_status_left_base"},
-		{"show-options", "-qv", "-t", "legacy-agents", "@agentmux_status_left_length_base"},
-		{"set-option", "-t", "legacy-agents", "@runstead_status_style_base",
-			"fg=white,bg=black"},
-		{"set-option", "-t", "legacy-agents", "@runstead_status_left_base", " legacy "},
-		{"set-option", "-t", "legacy-agents", "@runstead_status_left_length_base", "42"},
-		{"set-option", "-t", "legacy-agents", "@runstead_prefix_feedback", "1"},
-		{"set-option", "-t", "legacy-agents", "@runstead_status_style_prefix",
-			"bg=#e5c07b,fg=#1f2328,bold"},
-		{"set-option", "-t", "legacy-agents", "@runstead_status_left_prefix",
-			" PREFIX  [Q] return  [?] all keys "},
-		{"set-option", "-t", "legacy-agents", "status-style", dynamicStatusStyle},
-		{"set-option", "-t", "legacy-agents", "status-left", dynamicStatusLeft},
-		{"set-option", "-t", "legacy-agents", "status-left-length", "42"},
-	})
-}
-
-func TestUpdateMigratesLegacyWindowMetadata(t *testing.T) {
-	runner := &captureRunner{agentLine: legacyCaptureAgentLine()}
-	runtime := &Runtime{runner: runner}
-
-	if err := runtime.Update(context.Background(), "legacy-id", session.Update{
+	if err := runtime.Update(context.Background(), "capture-id", session.Update{
 		Activity: agent.ActivityIdle,
 	}); err != nil {
 		t.Fatal(err)
@@ -421,19 +361,14 @@ func TestUpdateMigratesLegacyWindowMetadata(t *testing.T) {
 	if len(written) != metadataFieldCount {
 		t.Fatalf("wrote %d metadata options: %#v", len(written), written)
 	}
-	if written["@runstead_id"] != "legacy-id" {
-		t.Fatalf("runstead id = %q", written["@runstead_id"])
+	if written["@stormlight_id"] != "capture-id" {
+		t.Fatalf("stormlight id = %q", written["@stormlight_id"])
 	}
-	if written["@runstead_activity"] != string(agent.ActivityIdle) {
-		t.Fatalf("activity = %q", written["@runstead_activity"])
+	if written["@stormlight_activity"] != string(agent.ActivityIdle) {
+		t.Fatalf("activity = %q", written["@stormlight_activity"])
 	}
-	if written["@runstead_attention"] != "" {
-		t.Fatalf("attention was not cleared: %q", written["@runstead_attention"])
-	}
-	for key := range written {
-		if strings.HasPrefix(key, "@agentmux_") {
-			t.Fatalf("wrote legacy option %q", key)
-		}
+	if written["@stormlight_attention"] != "" {
+		t.Fatalf("attention was not cleared: %q", written["@stormlight_attention"])
 	}
 }
 
@@ -465,17 +400,13 @@ func TestSetWorkspaceResolvesRuntimeHandleFromAgentID(t *testing.T) {
 }
 
 type captureRunner struct {
-	agentLine             string
-	sourceSessionID       string
-	binding               string
-	bindingNote           string
-	feedbackVersion       string
-	legacyFeedbackVersion string
-	savedStatusLeftWidth  string
-	legacyStatusStyle     string
-	legacyStatusLeft      string
-	legacyStatusLeftWidth string
-	calls                 [][]string
+	agentLine            string
+	sourceSessionID      string
+	binding              string
+	bindingNote          string
+	feedbackVersion      string
+	savedStatusLeftWidth string
+	calls                [][]string
 }
 
 func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string, error) {
@@ -512,14 +443,6 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 		switch args[len(args)-1] {
 		case prefixFeedbackOption:
 			return r.feedbackVersion, nil
-		case "@agentmux_prefix_feedback":
-			return r.legacyFeedbackVersion, nil
-		case "@agentmux_status_style_base":
-			return r.legacyStatusStyle, nil
-		case "@agentmux_status_left_base":
-			return r.legacyStatusLeft, nil
-		case "@agentmux_status_left_length_base":
-			return r.legacyStatusLeftWidth, nil
 		case statusLeftLengthOption:
 			return r.savedStatusLeftWidth, nil
 		default:
@@ -531,20 +454,19 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 
 func prefixFeedbackCalls(sessionName string) [][]string {
 	return [][]string{
-		{"show-options", "-qv", "-t", sessionName, "@runstead_prefix_feedback"},
-		{"show-options", "-qv", "-t", sessionName, "@agentmux_prefix_feedback"},
+		{"show-options", "-qv", "-t", sessionName, "@stormlight_prefix_feedback"},
 		{"display-message", "-p", "-t", sessionName, "|#{status-style}|"},
 		{"display-message", "-p", "-t", sessionName, "|#{status-left}|"},
 		{"display-message", "-p", "-t", sessionName, "|#{status-left-length}|"},
-		{"set-option", "-t", sessionName, "@runstead_status_style_base",
+		{"set-option", "-t", sessionName, "@stormlight_status_style_base",
 			"fg=terminal,bg=terminal"},
-		{"set-option", "-t", sessionName, "@runstead_status_left_base",
+		{"set-option", "-t", sessionName, "@stormlight_status_left_base",
 			" #[bold] #{session_name} "},
-		{"set-option", "-t", sessionName, "@runstead_status_left_length_base", "30"},
-		{"set-option", "-t", sessionName, "@runstead_prefix_feedback", "1"},
-		{"set-option", "-t", sessionName, "@runstead_status_style_prefix",
+		{"set-option", "-t", sessionName, "@stormlight_status_left_length_base", "30"},
+		{"set-option", "-t", sessionName, "@stormlight_prefix_feedback", "1"},
+		{"set-option", "-t", sessionName, "@stormlight_status_style_prefix",
 			"bg=#e5c07b,fg=#1f2328,bold"},
-		{"set-option", "-t", sessionName, "@runstead_status_left_prefix",
+		{"set-option", "-t", sessionName, "@stormlight_status_left_prefix",
 			" PREFIX  [Q] return  [?] all keys "},
 		{"set-option", "-t", sessionName, "status-style", dynamicStatusStyle},
 		{"set-option", "-t", sessionName, "status-left", dynamicStatusLeft},
@@ -577,17 +499,15 @@ func expectedPaneListFormat() string {
 		"#{pane_dead}",
 		"#{pane_dead_status}",
 	}
-	for _, namespace := range []string{"runstead", "agentmux"} {
-		for _, name := range agentMetadataFields {
-			fields = append(fields, "#{@"+namespace+"_"+name+"}")
-		}
+	for _, name := range agentMetadataFields {
+		fields = append(fields, "#{@stormlight_"+name+"}")
 	}
 	return strings.Join(fields, fieldSeparator)
 }
 
 func captureAgentLine(dead bool) string {
-	parts := make([]string, basePaneFieldCount+2*metadataFieldCount)
-	parts[0] = "runstead-agents"
+	parts := make([]string, basePaneFieldCount+metadataFieldCount)
+	parts[0] = "stormlight-agents"
 	parts[1] = "@1"
 	parts[2] = "0"
 	parts[3] = "cx-capture"
@@ -601,30 +521,5 @@ func captureAgentLine(dead bool) string {
 		parts[8] = "1"
 		parts[9] = "0"
 	}
-	return strings.Join(parts, fieldSeparator)
-}
-
-func legacyCaptureAgentLine() string {
-	parts := make([]string, basePaneFieldCount+2*metadataFieldCount)
-	legacy := basePaneFieldCount + metadataFieldCount
-	parts[0] = "agentmux-agents"
-	parts[1] = "@9"
-	parts[2] = "1"
-	parts[3] = "cl-legacy"
-	parts[4] = "%9"
-	parts[legacy] = "legacy-id"
-	parts[legacy+1] = "claude"
-	parts[legacy+2] = "Review the branch"
-	parts[legacy+3] = "Waiting for approval"
-	parts[legacy+4] = "/tmp/project"
-	parts[legacy+5] = "1700000000"
-	parts[legacy+6] = "working"
-	parts[legacy+7] = "approval"
-	parts[legacy+8] = "%9"
-	parts[legacy+9] = "git:/tmp/project/.git"
-	parts[legacy+10] = "git"
-	parts[legacy+11] = "project"
-	parts[legacy+12] = "/tmp/project"
-	parts[legacy+13] = "/tmp/project"
 	return strings.Join(parts, fieldSeparator)
 }

@@ -14,32 +14,31 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/diagnostic"
-	"github.com/trentkm/runstead/internal/session"
-	"github.com/trentkm/runstead/internal/workspace"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/session"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 const (
-	defaultSession          = "runstead-agents"
+	defaultSession          = "stormlight-agents"
 	fieldSeparator          = "\x1f"
 	cleanupTimeout          = 5 * time.Second
 	returnBindingKey        = "Q"
-	returnBindingNote       = "Return from Runstead"
-	legacyReturnBindingNote = "Return from agentmux"
-	returnTargetOption      = "@runstead_return_target"
-	returnBindingFormat     = `#{?#{==:#{@runstead_id},},#{?#{==:#{@agentmux_id},},display-message "Not a Runstead window",#{?#{==:#{@agentmux_return_target},},detach-client,switch-client -t "#{@agentmux_return_target}"}},#{?#{==:#{@runstead_return_target},},detach-client,switch-client -t "#{@runstead_return_target}"}}`
-	statusStyleBaseOption   = "@runstead_status_style_base"
-	statusStylePrefixOption = "@runstead_status_style_prefix"
-	statusLeftBaseOption    = "@runstead_status_left_base"
-	statusLeftPrefixOption  = "@runstead_status_left_prefix"
-	statusLeftLengthOption  = "@runstead_status_left_length_base"
-	prefixFeedbackOption    = "@runstead_prefix_feedback"
+	returnBindingNote       = "Return from Stormlight"
+	returnTargetOption      = "@stormlight_return_target"
+	returnBindingFormat     = `#{?#{==:#{@stormlight_id},},display-message "Not a Stormlight window",#{?#{==:#{@stormlight_return_target},},detach-client,switch-client -t "#{@stormlight_return_target}"}}`
+	statusStyleBaseOption   = "@stormlight_status_style_base"
+	statusStylePrefixOption = "@stormlight_status_style_prefix"
+	statusLeftBaseOption    = "@stormlight_status_left_base"
+	statusLeftPrefixOption  = "@stormlight_status_left_prefix"
+	statusLeftLengthOption  = "@stormlight_status_left_length_base"
+	prefixFeedbackOption    = "@stormlight_prefix_feedback"
 	prefixFeedbackVersion   = "1"
 	prefixStatusStyle       = "bg=#e5c07b,fg=#1f2328,bold"
 	prefixStatusLeft        = " PREFIX  [Q] return  [?] all keys "
-	dynamicStatusStyle      = `#{?client_prefix,#{E:@runstead_status_style_prefix},#{E:@runstead_status_style_base}}`
-	dynamicStatusLeft       = `#{?client_prefix,#{E:@runstead_status_left_prefix},#{E:@runstead_status_left_base}}`
+	dynamicStatusStyle      = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
+	dynamicStatusLeft       = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
 	basePaneFieldCount      = 10
 	metadataFieldCount      = 17
 )
@@ -79,7 +78,7 @@ func NewRuntime(runner Runner, sessionName string) (*Runtime, error) {
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("resolve Runstead executable: %w", err)
+		return nil, fmt.Errorf("resolve Stormlight executable: %w", err)
 	}
 	runtime := &Runtime{
 		runner:      runner,
@@ -128,10 +127,8 @@ func paneListFormat() string {
 		"#{pane_dead}",
 		"#{pane_dead_status}",
 	}
-	for _, namespace := range []string{"runstead", "agentmux"} {
-		for _, name := range agentMetadataFields {
-			fields = append(fields, "#{@"+namespace+"_"+name+"}")
-		}
+	for _, name := range agentMetadataFields {
+		fields = append(fields, "#{@stormlight_"+name+"}")
 	}
 	return strings.Join(fields, fieldSeparator)
 }
@@ -165,15 +162,15 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 
 	createdAt := time.Now().UTC()
 	options := map[string]string{
-		"@runstead_id":         id,
-		"@runstead_provider":   string(req.Provider),
-		"@runstead_task":       metadataValue(req.Task),
-		"@runstead_summary":    metadataValue(req.Task),
-		"@runstead_cwd":        cwd,
-		"@runstead_created_at": strconv.FormatInt(createdAt.Unix(), 10),
-		"@runstead_activity":   string(agent.ActivityStarting),
-		"@runstead_attention":  "",
-		"@runstead_pane":       target.paneID,
+		"@stormlight_id":         id,
+		"@stormlight_provider":   string(req.Provider),
+		"@stormlight_task":       metadataValue(req.Task),
+		"@stormlight_summary":    metadataValue(req.Task),
+		"@stormlight_cwd":        cwd,
+		"@stormlight_created_at": strconv.FormatInt(createdAt.Unix(), 10),
+		"@stormlight_activity":   string(agent.ActivityStarting),
+		"@stormlight_attention":  "",
+		"@stormlight_pane":       target.paneID,
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(req.Workspace)
 	if err != nil {
@@ -337,11 +334,10 @@ func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, ta
 		note, noteErr := r.runner.Run(ctx, nil,
 			"list-keys", "-N", "-T", "prefix", returnBindingKey,
 		)
-		ownedNote := note == returnBindingKey+" "+returnBindingNote ||
-			note == returnBindingKey+" "+legacyReturnBindingNote
+		ownedNote := note == returnBindingKey+" "+returnBindingNote
 		if noteErr != nil || !ownedNote {
 			return fmt.Errorf(
-				"tmux prefix %s is already bound; Runstead will not replace it (%s)",
+				"tmux prefix %s is already bound; Stormlight will not replace it (%s)",
 				returnBindingKey,
 				binding,
 			)
@@ -377,47 +373,21 @@ func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName strin
 
 	baseLength := 0
 	if version != prefixFeedbackVersion {
-		baseStyle := ""
-		baseLeft := ""
-		baseLengthText := ""
-		legacyVersion, legacyErr := r.runner.Run(ctx, nil,
-			"show-options", "-qv", "-t", sessionName, "@agentmux_prefix_feedback",
-		)
-		if legacyErr != nil {
-			return fmt.Errorf("read legacy prefix feedback version: %w", legacyErr)
+		baseStyle, err := r.readSessionOption(ctx, sessionName, "status-style")
+		if err != nil {
+			return err
 		}
-		if legacyVersion == prefixFeedbackVersion {
-			baseStyle, err = r.runner.Run(ctx, nil,
-				"show-options", "-qv", "-t", sessionName, "@agentmux_status_style_base",
-			)
-			if err != nil {
-				return fmt.Errorf("read legacy saved status style: %w", err)
-			}
-			baseLeft, err = r.runner.Run(ctx, nil,
-				"show-options", "-qv", "-t", sessionName, "@agentmux_status_left_base",
-			)
-			if err != nil {
-				return fmt.Errorf("read legacy saved status left: %w", err)
-			}
-			baseLengthText, err = r.runner.Run(ctx, nil,
-				"show-options", "-qv", "-t", sessionName, "@agentmux_status_left_length_base",
-			)
-			if err != nil {
-				return fmt.Errorf("read legacy saved status left length: %w", err)
-			}
-		} else {
-			baseStyle, err = r.readSessionOption(ctx, sessionName, "status-style")
-			if err != nil {
-				return err
-			}
-			baseLeft, err = r.readSessionOption(ctx, sessionName, "status-left")
-			if err != nil {
-				return err
-			}
-			baseLengthText, err = r.readSessionOption(ctx, sessionName, "status-left-length")
-			if err != nil {
-				return err
-			}
+		baseLeft, err := r.readSessionOption(ctx, sessionName, "status-left")
+		if err != nil {
+			return err
+		}
+		baseLengthText, err := r.readSessionOption(
+			ctx,
+			sessionName,
+			"status-left-length",
+		)
+		if err != nil {
+			return err
 		}
 		baseLength, err = strconv.Atoi(baseLengthText)
 		if err != nil {
@@ -495,7 +465,7 @@ func (r *Runtime) Send(ctx context.Context, id, message string) error {
 	if !managedAgent.ProcessLive {
 		return fmt.Errorf("agent %s is not running", id)
 	}
-	buffer := "runstead-" + id
+	buffer := "stormlight-" + id
 	if _, err := r.runner.Run(ctx, []byte(message), "load-buffer", "-b", buffer, "-"); err != nil {
 		return err
 	}
@@ -557,26 +527,26 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 		return err
 	}
 	values := map[string]string{}
-	runsteadID, err := r.runner.Run(ctx, nil,
-		"show-options", "-qv", "-w", "-t", managedAgent.WindowID, "@runstead_id",
+	stormlightID, err := r.runner.Run(ctx, nil,
+		"show-options", "-qv", "-w", "-t", managedAgent.WindowID, "@stormlight_id",
 	)
 	if err != nil {
-		return fmt.Errorf("inspect Runstead metadata: %w", err)
+		return fmt.Errorf("inspect Stormlight metadata: %w", err)
 	}
-	if runsteadID == "" {
+	if stormlightID == "" {
 		values, err = encodeAgentOptions(managedAgent)
 		if err != nil {
 			return err
 		}
 	}
 	if update.Activity != "" {
-		values["@runstead_activity"] = string(update.Activity)
+		values["@stormlight_activity"] = string(update.Activity)
 	}
 	if update.Attention != "" || update.Activity != "" {
-		values["@runstead_attention"] = string(update.Attention)
+		values["@stormlight_attention"] = string(update.Attention)
 	}
 	if strings.TrimSpace(update.Summary) != "" {
-		values["@runstead_summary"] = metadataValue(update.Summary)
+		values["@stormlight_summary"] = metadataValue(update.Summary)
 	}
 	for key, value := range values {
 		if _, err := r.runner.Run(ctx, nil,
@@ -630,33 +600,23 @@ func (r *Runtime) createWindow(ctx context.Context, name, cwd string) (windowTar
 			"-s", r.sessionName, "-n", name, "-c", cwd,
 		)
 		if err == nil {
-			_, err = r.runner.Run(ctx, nil, "set-option", "-t", r.sessionName, "@runstead_managed", "1")
+			_, err = r.runner.Run(ctx, nil, "set-option", "-t", r.sessionName, "@stormlight_managed", "1")
 			if err != nil {
 				r.cleanupSession()
 			}
 		}
 	} else {
 		marker, markerErr := r.runner.Run(ctx, nil,
-			"show-options", "-qv", "-t", r.sessionName, "@runstead_managed",
+			"show-options", "-qv", "-t", r.sessionName, "@stormlight_managed",
 		)
 		if markerErr != nil {
 			return windowTarget{}, fmt.Errorf("inspect managed tmux session: %w", markerErr)
 		}
 		if marker != "1" {
-			legacyMarker, legacyErr := r.runner.Run(ctx, nil,
-				"show-options", "-qv", "-t", r.sessionName, "@agentmux_managed",
+			return windowTarget{}, fmt.Errorf(
+				"tmux session %q already exists and is not managed by Stormlight; choose another with --session",
+				r.sessionName,
 			)
-			if legacyErr != nil || legacyMarker != "1" {
-				return windowTarget{}, fmt.Errorf(
-					"tmux session %q already exists and is not managed by Runstead; choose another with --session",
-					r.sessionName,
-				)
-			}
-			if _, err := r.runner.Run(ctx, nil,
-				"set-option", "-t", r.sessionName, "@runstead_managed", "1",
-			); err != nil {
-				return windowTarget{}, fmt.Errorf("migrate managed tmux session marker: %w", err)
-			}
 		}
 		out, err = r.runner.Run(ctx, nil,
 			"new-window", "-d", "-P", "-F", format,
@@ -692,17 +652,12 @@ func (r *Runtime) cleanupSession() {
 
 func parseAgent(line string) (agent.Agent, bool) {
 	parts := strings.Split(line, fieldSeparator)
-	expectedFields := basePaneFieldCount + 2*metadataFieldCount
+	expectedFields := basePaneFieldCount + metadataFieldCount
 	if len(parts) != expectedFields {
 		return agent.Agent{}, false
 	}
 
-	runstead := parts[basePaneFieldCount : basePaneFieldCount+metadataFieldCount]
-	legacy := parts[basePaneFieldCount+metadataFieldCount:]
-	core := runstead
-	if core[0] == "" {
-		core = legacy
-	}
+	core := parts[basePaneFieldCount:]
 	if core[0] == "" || parts[4] != core[8] {
 		return agent.Agent{}, false
 	}
@@ -737,11 +692,6 @@ func parseAgent(line string) (agent.Agent, bool) {
 		activity = agent.ActivityWorking
 	}
 
-	workspaceMetadata := runstead
-	if workspaceMetadata[9] == "" {
-		workspaceMetadata = legacy
-	}
-
 	return agent.Agent{
 		ID:          core[0],
 		Provider:    agent.Provider(core[1]),
@@ -761,14 +711,14 @@ func parseAgent(line string) (agent.Agent, bool) {
 		ProcessLive: !paneDead,
 		ExitCode:    exitCode,
 		Workspace: workspace.Context{
-			ID:            workspaceMetadata[9],
-			Kind:          workspaceMetadata[10],
-			Name:          workspaceMetadata[11],
-			Root:          workspaceMetadata[12],
-			ExecutionRoot: workspaceMetadata[13],
-			ComponentName: workspaceMetadata[14],
-			ComponentRoot: workspaceMetadata[15],
-			Metadata:      decodeWorkspaceMetadata(workspaceMetadata[16]),
+			ID:            core[9],
+			Kind:          core[10],
+			Name:          core[11],
+			Root:          core[12],
+			ExecutionRoot: core[13],
+			ComponentName: core[14],
+			ComponentRoot: core[15],
+			Metadata:      decodeWorkspaceMetadata(core[16]),
 		},
 	}, true
 }
@@ -779,15 +729,15 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		createdAt = strconv.FormatInt(managedAgent.CreatedAt.Unix(), 10)
 	}
 	options := map[string]string{
-		"@runstead_id":         managedAgent.ID,
-		"@runstead_provider":   string(managedAgent.Provider),
-		"@runstead_task":       metadataValue(managedAgent.Task),
-		"@runstead_summary":    metadataValue(managedAgent.Summary),
-		"@runstead_cwd":        managedAgent.Cwd,
-		"@runstead_created_at": createdAt,
-		"@runstead_activity":   string(managedAgent.Activity),
-		"@runstead_attention":  string(managedAgent.Attention),
-		"@runstead_pane":       managedAgent.PaneID,
+		"@stormlight_id":         managedAgent.ID,
+		"@stormlight_provider":   string(managedAgent.Provider),
+		"@stormlight_task":       metadataValue(managedAgent.Task),
+		"@stormlight_summary":    metadataValue(managedAgent.Summary),
+		"@stormlight_cwd":        managedAgent.Cwd,
+		"@stormlight_created_at": createdAt,
+		"@stormlight_activity":   string(managedAgent.Activity),
+		"@stormlight_attention":  string(managedAgent.Attention),
+		"@stormlight_pane":       managedAgent.PaneID,
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(managedAgent.Workspace)
 	if err != nil {
@@ -809,14 +759,14 @@ func encodeWorkspaceOptions(value workspace.Context) (map[string]string, error) 
 		metadata = base64.RawURLEncoding.EncodeToString(encoded)
 	}
 	return map[string]string{
-		"@runstead_workspace_id":       value.ID,
-		"@runstead_workspace_kind":     value.Kind,
-		"@runstead_workspace_name":     value.Name,
-		"@runstead_workspace_root":     value.Root,
-		"@runstead_execution_root":     value.ExecutionRoot,
-		"@runstead_component_name":     value.ComponentName,
-		"@runstead_component_root":     value.ComponentRoot,
-		"@runstead_workspace_metadata": metadata,
+		"@stormlight_workspace_id":       value.ID,
+		"@stormlight_workspace_kind":     value.Kind,
+		"@stormlight_workspace_name":     value.Name,
+		"@stormlight_workspace_root":     value.Root,
+		"@stormlight_execution_root":     value.ExecutionRoot,
+		"@stormlight_component_name":     value.ComponentName,
+		"@stormlight_component_root":     value.ComponentRoot,
+		"@stormlight_workspace_metadata": metadata,
 	}, nil
 }
 

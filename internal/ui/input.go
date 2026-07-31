@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -22,6 +23,33 @@ func newLineInput(placeholder string) lineInput {
 		width:       40,
 		placeholder: placeholder,
 	}
+}
+
+func newTaskInput(placeholder string) textarea.Model {
+	input := textarea.New()
+	input.Placeholder = placeholder
+	input.Prompt = ""
+	input.ShowLineNumbers = false
+	input.EndOfBufferCharacter = ' '
+	input.MaxHeight = 1000
+	input.SetWidth(40)
+	input.SetHeight(4)
+
+	focused := textarea.Style{
+		Base:        lipgloss.NewStyle().Foreground(colorText),
+		CursorLine:  lipgloss.NewStyle().Foreground(colorText),
+		EndOfBuffer: lipgloss.NewStyle().Foreground(colorText),
+		Placeholder: lipgloss.NewStyle().Foreground(colorMuted),
+		Prompt:      lipgloss.NewStyle().Foreground(colorAccent),
+		Text:        lipgloss.NewStyle().Foreground(colorText),
+	}
+	blurred := focused
+	blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
+	input.FocusedStyle = focused
+	input.BlurredStyle = blurred
+	input.Cursor.Style = lipgloss.NewStyle().Reverse(true)
+	input.Cursor.TextStyle = lipgloss.NewStyle().Foreground(colorText)
+	return input
 }
 
 func (i *lineInput) SetValue(value string) {

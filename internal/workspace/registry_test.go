@@ -80,8 +80,8 @@ func TestGitResolverGroupsLinkedWorktrees(t *testing.T) {
 	mainCheckout := filepath.Join(root, "main")
 	worktree := filepath.Join(root, "feature")
 	runGit(t, root, "init", mainCheckout)
-	runGit(t, mainCheckout, "config", "user.email", "runstead@example.invalid")
-	runGit(t, mainCheckout, "config", "user.name", "runstead test")
+	runGit(t, mainCheckout, "config", "user.email", "stormlight@example.invalid")
+	runGit(t, mainCheckout, "config", "user.name", "stormlight test")
 	if err := os.WriteFile(filepath.Join(mainCheckout, "README"), []byte("test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -141,33 +141,20 @@ printf '{"kind":"custom","name":"external","root":"%s","execution_root":"%s"}\n'
 	}
 }
 
-func TestResolverDirectoryFallsBackToLegacyLocation(t *testing.T) {
+func TestResolverDirectoryUsesStormlightConfigLocation(t *testing.T) {
 	configHome := t.TempDir()
-	legacy := filepath.Join(configHome, "agentmux", "resolvers")
-	if err := os.MkdirAll(legacy, 0755); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("RUNSTEAD_RESOLVERS_DIR", "")
-	t.Setenv("AGENTMUX_RESOLVERS_DIR", "")
+	t.Setenv("STORMLIGHT_RESOLVERS_DIR", "")
 
-	if got := resolverDirectory(); got != legacy {
-		t.Fatalf("resolver directory = %q, want %q", got, legacy)
-	}
-
-	current := filepath.Join(configHome, "runstead", "resolvers")
-	if err := os.MkdirAll(current, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if got := resolverDirectory(); got != current {
-		t.Fatalf("resolver directory = %q, want %q", got, current)
+	want := filepath.Join(configHome, "stormlight", "resolvers")
+	if got := resolverDirectory(); got != want {
+		t.Fatalf("resolver directory = %q, want %q", got, want)
 	}
 }
 
-func TestResolverDirectoryPrefersRunsteadEnvironment(t *testing.T) {
-	t.Setenv("RUNSTEAD_RESOLVERS_DIR", "/tmp/runstead-resolvers")
-	t.Setenv("AGENTMUX_RESOLVERS_DIR", "/tmp/agentmux-resolvers")
-	if got := resolverDirectory(); got != "/tmp/runstead-resolvers" {
+func TestResolverDirectoryUsesStormlightEnvironment(t *testing.T) {
+	t.Setenv("STORMLIGHT_RESOLVERS_DIR", "/tmp/stormlight-resolvers")
+	if got := resolverDirectory(); got != "/tmp/stormlight-resolvers" {
 		t.Fatalf("resolver directory = %q", got)
 	}
 }

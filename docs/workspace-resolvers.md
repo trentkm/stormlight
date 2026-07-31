@@ -1,6 +1,6 @@
 # Workspace resolvers
 
-Runstead resolves every working directory into three levels:
+Stormlight resolves every working directory into three levels:
 
 ```text
 workspace group
@@ -16,17 +16,13 @@ describes a package inside a larger workspace.
 
 Resolvers run in this order:
 
-1. Executable resolvers from `~/.config/runstead/resolvers`, sorted by filename.
+1. Executable resolvers from `~/.config/stormlight/resolvers`, sorted by filename.
 2. The built-in Git resolver.
 3. A canonical-directory fallback.
 
-Set `RUNSTEAD_RESOLVERS_DIR` to use a different executable directory. External
+Set `STORMLIGHT_RESOLVERS_DIR` to use a different executable directory. External
 resolvers run first so a monorepo or proprietary workspace can take precedence
 over Git repositories nested inside it.
-
-For migration, `AGENTMUX_RESOLVERS_DIR` is accepted as a fallback. When neither
-variable is set and `~/.config/runstead/resolvers` does not exist, Runstead
-uses an existing `~/.config/agentmux/resolvers` directory.
 
 The Git resolver derives the workspace ID from the canonical
 `git rev-parse --git-common-dir` path. Linked worktrees therefore appear in one
@@ -69,6 +65,6 @@ defaults to the root directory name, and `execution_root` defaults to `root`.
 All returned paths must exist and be directories. IDs must remain stable for
 directories that belong in the same workspace group.
 
-Resolvers are trusted local executables and run during dispatch, workspace
-catalog loading, and legacy agent discovery. Runstead caches successful results
-for the life of the process.
+Resolvers are trusted local executables and run during dispatch and workspace
+catalog loading. Stormlight caches successful results for the life of the
+process.

@@ -144,15 +144,21 @@ func (c *Catalog) write(data catalogData) error {
 }
 
 func catalogPath() string {
-	if configured := os.Getenv("RUNSTEAD_WORKSPACES_FILE"); configured != "" {
+	if configured := os.Getenv("STORMLIGHT_WORKSPACES_FILE"); configured != "" {
 		return configured
 	}
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "runstead", "workspaces.json")
+		return filepath.Join(stateHome, "stormlight", "workspaces.json")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".local", "state", "runstead", "workspaces.json")
+	return filepath.Join(
+		home,
+		".local",
+		"state",
+		"stormlight",
+		"workspaces.json",
+	)
 }

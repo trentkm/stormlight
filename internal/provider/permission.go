@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/trentkm/runstead/internal/agent"
-	"github.com/trentkm/runstead/internal/pending"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/pending"
 )
 
 const maxPermissionDetailRunes = 6000
@@ -56,7 +56,7 @@ func (p PermissionBridge) Response(
 		decision.UpdatedPermissions = []json.RawMessage{p.suggestions[index]}
 	case resolution.OptionID == pending.OptionDeny:
 		decision.Behavior = "deny"
-		decision.Message = "The user denied this request in Runstead."
+		decision.Message = "The user denied this request in Stormlight."
 	case resolution.OptionID == pending.OptionTerminal:
 		return nil, false, nil
 	default:
