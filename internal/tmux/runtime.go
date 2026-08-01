@@ -626,12 +626,15 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 	if update.Activity != "" {
 		values["@stormlight_activity"] = string(update.Activity)
 	}
-	if update.Attention != "" || update.Activity != "" {
+	switch {
+	case update.ClearAttention:
+		values["@stormlight_attention"] = ""
+	case update.Attention != "" || update.Activity != "":
 		attention := update.Attention
 		if attention == agent.AttentionWaiting && managedAgent.Attention.Urgent() {
-			// Waiting is a floor, not a ceiling: the delayed idle signal
-			// must never downgrade an urgent question/approval/auth state
-			// set when the turn ended.
+			// Waiting is a floor, not a ceiling: a late soft signal must
+			// never downgrade an urgent question/approval/auth state set
+			// when the turn ended.
 			attention = managedAgent.Attention
 		}
 		values["@stormlight_attention"] = string(attention)

@@ -42,10 +42,11 @@ func TestParseClaudeLifecycle(t *testing.T) {
 			summary:   "Permission required",
 		},
 		{
-			name:     "stop",
-			payload:  `{"hook_event_name":"Stop","last_assistant_message":"Implementation complete"}`,
-			activity: agent.ActivityIdle,
-			summary:  "Implementation complete",
+			name:      "stop",
+			payload:   `{"hook_event_name":"Stop","last_assistant_message":"Implementation complete"}`,
+			activity:  agent.ActivityIdle,
+			attention: agent.AttentionWaiting,
+			summary:   "Implementation complete",
 		},
 	}
 
@@ -87,10 +88,11 @@ func TestStopClassifiesQuestionsAsUrgentAttention(t *testing.T) {
 		{"Ready to help — what would you like to work on?", agent.AttentionQuestion},
 		{"Should I proceed with the refactor?**", agent.AttentionQuestion},
 		{"All tests pass.\n\nWant me to commit?", agent.AttentionQuestion},
-		{"Done, all tests pass.", agent.AttentionNone},
-		{"Fixed the bug. See `internal/ui`.", agent.AttentionNone},
-		{"Is it a bug? I checked — it is, and it's fixed now.", agent.AttentionNone},
-		{"", agent.AttentionNone},
+		// Finished turns without a question are unseen results.
+		{"Done, all tests pass.", agent.AttentionWaiting},
+		{"Fixed the bug. See `internal/ui`.", agent.AttentionWaiting},
+		{"Is it a bug? I checked — it is, and it's fixed now.", agent.AttentionWaiting},
+		{"", agent.AttentionWaiting},
 	}
 	for _, c := range cases {
 		payload := map[string]string{
@@ -108,22 +110,21 @@ func TestStopClassifiesQuestionsAsUrgentAttention(t *testing.T) {
 	}
 }
 
-func TestIdlePromptNotificationIsSoftWaiting(t *testing.T) {
+func TestIdlePromptNotificationIsIgnored(t *testing.T) {
+	// Unseen results are marked the moment the turn ends; the delayed idle
+	// echo must not re-raise attention the human already cleared.
 	payload := []byte(`{"hook_event_name":"Notification",` +
 		`"message":"Claude is waiting for your input",` +
 		`"notification_type":"idle_prompt"}`)
-	event, handled, err := ParseEvent(agent.ProviderClaude, payload)
-	if err != nil || !handled {
-		t.Fatalf("handled=%v err=%v", handled, err)
-	}
-	if event.Attention != agent.AttentionWaiting || event.Summary != "" {
-		t.Fatalf("event = %#v, want waiting with no summary", event)
+	_, handled, err := ParseEvent(agent.ProviderClaude, payload)
+	if err != nil || handled {
+		t.Fatalf("handled=%v err=%v, want ignored", handled, err)
 	}
 
 	permission := []byte(`{"hook_event_name":"Notification",` +
 		`"message":"Claude needs your permission to use Bash",` +
 		`"notification_type":"permission_prompt"}`)
-	event, handled, err = ParseEvent(agent.ProviderClaude, permission)
+	event, handled, err := ParseEvent(agent.ProviderClaude, permission)
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)
 	}

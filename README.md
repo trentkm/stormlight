@@ -145,6 +145,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `d` or `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
 | `R` | Rename the selected workspace or agent |
 | `,` then `a` / `n` / `c` | Sort by attention, name, or newest (applies to both lists) |
+| `M` | Mark the selected agent — or workspace — seen |
 | `r` / `Ctrl-l` | Refresh |
 | `q` | Close the dashboard |
 
@@ -212,13 +213,16 @@ Attention has two tiers, and it always outranks the working glow:
 | Signal | Meaning | Look |
 |---|---|---|
 | working | agent is running | cyan glow sweeping the name |
-| waiting | turn ended and the agent has idled on you (~60s) | soft amber `○` marker and count |
+| waiting | finished with a result you haven't seen | soft amber `○` marker and count |
 | question / approval / auth | agent is blocked on an explicit decision | loud amber `!` — the whole row |
 
-Questions are detected from the final message of a turn (providers emit the
-same event for "done" and "asked you something", so the content is the
-discriminator); the waiting tier comes from the provider's idle
-notification and never downgrades an urgent state. Replying clears both.
+Every finished turn is classified from its final message (providers emit
+the same event for "done" and "asked you something", so the content is the
+discriminator): a closing question goes loud, anything else is an unseen
+result. Amber is an inbox — it clears when you engage: replying or opening
+the terminal clears any tier, viewing the result (a keypress while it's
+selected with its transcript on screen) clears unseen, and `M` marks the
+selected agent — or every agent in the selected workspace — seen manually.
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/stormlight/resolvers`. The protocol is public and does not require

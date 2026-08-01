@@ -39,6 +39,7 @@ type Backend interface {
 	Attach(context.Context, string) (app.AttachResult, error)
 	Send(context.Context, string, string) error
 	Interrupt(context.Context, string) error
+	ClearAttention(context.Context, string) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
@@ -615,7 +616,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case modeRename:
 			return m.updateRename(msg)
 		default:
-			return m.updateNormal(msg)
+			// The keypress is the presence proof: if an unseen result is
+			// on screen right now (selected, transcript loaded) and the
+			// human acts, it has been seen.
+			seenID := ""
+			if selected, ok := m.selectedAgent(); ok &&
+				selected.ProcessLive &&
+				selected.Attention == agent.AttentionWaiting &&
+				m.interactionID == selected.ID {
+				seenID = selected.ID
+			}
+			updated, cmd := m.updateNormal(msg)
+			model, isModel := updated.(Model)
+			if seenID == "" || !isModel {
+				return updated, cmd
+			}
+			model.markAttentionSeen(seenID)
+			return model, tea.Batch(cmd, clearAttentionCmd(model.backend, seenID))
 		}
 	}
 
@@ -799,6 +816,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
+	case "M":
+		return m.clearAttention()
 	}
 
 	if m.activePane != paneInteraction {
@@ -1253,6 +1272,9 @@ func (m Model) renderHeader() string {
 		if managedAgent.Activity == agent.ActivityWorking ||
 			managedAgent.Activity == agent.ActivityStarting {
 			working++
+		}
+		if !managedAgent.ProcessLive {
+			continue
 		}
 		switch {
 		case managedAgent.Attention.Urgent():
@@ -2080,7 +2102,7 @@ func renderAgentRowWithDensity(
 	renderedTitle := titleStyle.Render(displayTitle)
 	detailStyle := mutedStyle
 	switch {
-	case managedAgent.Attention.Urgent():
+	case managedAgent.ProcessLive && managedAgent.Attention.Urgent():
 		// Urgent attention outranks the working glow: the row goes loud
 		// amber. The waiting tier keeps its calm row and speaks through
 		// the amber status symbol alone.
@@ -2246,12 +2268,13 @@ func (m Model) renderInteraction(width, height int) string {
 	metaParts = append(metaParts, shortPath(managedAgent.Cwd))
 	metaText := strings.TrimSpace(strings.Join(metaParts, "  "))
 	meta := mutedStyle.Render(truncate(metaText, width))
-	if managedAgent.Attention.Urgent() {
+	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
 			Render(truncate("Needs "+string(managedAgent.Attention), width))
-	} else if managedAgent.Attention == agent.AttentionWaiting {
+	} else if managedAgent.ProcessLive &&
+		managedAgent.Attention == agent.AttentionWaiting {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).
-			Render(truncate("Waiting for your reply", width))
+			Render(truncate("Unseen result", width))
 	}
 	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
 	if action, ok := m.selectedPendingAction(); ok {
@@ -2967,7 +2990,7 @@ func (m Model) commandHints() string {
 	switch m.activePane {
 	case paneAgents:
 		return strings.TrimSpace(
-			"h/l panes  j/k select  n new  o choose path  , sort  " + rowMode + "  Enter open",
+			"h/l panes  j/k select  n new  M seen  , sort  " + rowMode + "  Enter open",
 		)
 	case paneInteraction:
 		return strings.TrimSpace(
@@ -3903,6 +3926,69 @@ func (m *Model) applyDispatchOverrides(directory string) {
 	}
 }
 
+// markAttentionSeen clears attention locally so the amber drops on the very
+// next frame; the backend write follows asynchronously.
+func (m *Model) markAttentionSeen(ids ...string) {
+	member := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		member[id] = true
+	}
+	for index := range m.agents {
+		if member[m.agents[index].ID] {
+			m.agents[index].Attention = agent.AttentionNone
+		}
+	}
+	for g := range m.groups {
+		for index := range m.groups[g].agents {
+			if member[m.groups[g].agents[index].ID] {
+				m.groups[g].agents[index].Attention = agent.AttentionNone
+			}
+		}
+	}
+}
+
+func clearAttentionCmd(backend Backend, ids ...string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var failures []error
+		for _, id := range ids {
+			if err := backend.ClearAttention(ctx, id); err != nil {
+				failures = append(failures, err)
+			}
+		}
+		if err := errors.Join(failures...); err != nil {
+			return actionMsg{status: "Attention cleared", err: err}
+		}
+		// No actionMsg on success: seen-clearing is ambient, not an
+		// action worth announcing or refreshing over.
+		return nil
+	}
+}
+
+// clearAttention handles the M hotkey: mark the selected agent — or every
+// agent in the selected workspace — as seen, regardless of tier.
+func (m Model) clearAttention() (tea.Model, tea.Cmd) {
+	ids := []string{}
+	if m.activePane == paneWorkspaces {
+		for _, managedAgent := range m.agentsForSelectedWorkspace() {
+			if managedAgent.ProcessLive &&
+				managedAgent.Attention != agent.AttentionNone {
+				ids = append(ids, managedAgent.ID)
+			}
+		}
+	} else if selected, ok := m.selectedAgent(); ok &&
+		selected.ProcessLive && selected.Attention != agent.AttentionNone {
+		ids = append(ids, selected.ID)
+	}
+	if len(ids) == 0 {
+		return m, nil
+	}
+	m.markAttentionSeen(ids...)
+	m.status = "Marked seen"
+	return m, clearAttentionCmd(m.backend, ids...)
+}
+
 func (m Model) beginRename() (tea.Model, tea.Cmd) {
 	m.renameAgentID = ""
 	m.renameWorkspace = workspace.Context{}
@@ -4017,6 +4103,11 @@ func workspaceStats(agents []agent.Agent) (active, urgent, waiting int) {
 		if managedAgent.Activity == agent.ActivityWorking ||
 			managedAgent.Activity == agent.ActivityStarting {
 			active++
+		}
+		if !managedAgent.ProcessLive {
+			// A dead pane can't be waiting on anyone; its exit status is
+			// the story.
+			continue
 		}
 		switch {
 		case managedAgent.Attention.Urgent():
@@ -4193,10 +4284,10 @@ func dispatchCmd(backend Backend, request app.DispatchRequest) tea.Cmd {
 }
 
 func statusVisual(managedAgent agent.Agent) (string, lipgloss.Style) {
-	if managedAgent.Attention.Urgent() {
+	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
 		return "!", lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
 	}
-	if managedAgent.Attention == agent.AttentionWaiting {
+	if managedAgent.ProcessLive && managedAgent.Attention == agent.AttentionWaiting {
 		return "○", lipgloss.NewStyle().Foreground(colorWaiting)
 	}
 	switch managedAgent.Activity {

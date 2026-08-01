@@ -281,10 +281,6 @@ func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
 					Matcher: "permission_prompt",
 					Hooks:   []claudeHook{{Type: "command", Command: eventCommand, Timeout: 5}},
 				},
-				{
-					Matcher: "idle_prompt",
-					Hooks:   []claudeHook{{Type: "command", Command: eventCommand, Timeout: 5}},
-				},
 			},
 			"PermissionRequest": {
 				{
