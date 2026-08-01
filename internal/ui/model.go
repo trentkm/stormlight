@@ -687,9 +687,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.activePane = (m.activePane + 2) % 3
 		return m, m.loadInteractionCmd()
 	case "z":
-		if m.width >= 72 {
-			m.rowsExpanded = !m.rowsExpanded
-		}
+		m.rowsExpanded = !m.rowsExpanded
 		return m, nil
 	case "enter":
 		if m.activePane == paneWorkspaces {
@@ -3882,7 +3880,7 @@ func (m Model) interactionDimensions() (int, int) {
 }
 
 func (m Model) expandedRows() bool {
-	return m.width < 72 || m.rowsExpanded
+	return m.rowsExpanded
 }
 
 func (m Model) visibleRows() int {

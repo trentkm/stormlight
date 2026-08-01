@@ -504,20 +504,22 @@ func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 	}
 }
 
-func TestNarrowLayoutForcesExpandedRowsAndShowsNavigationCue(t *testing.T) {
+func TestNarrowLayoutHonorsRowDensityAndShowsNavigationCue(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 40
 	model.height = 20
 	model.rowsExpanded = false
 
-	if !model.expandedRows() {
-		t.Fatal("narrow layout did not force expanded rows")
+	if model.expandedRows() {
+		t.Fatal("narrow layout overrode the compact preference")
 	}
 	updated, _ := model.updateNormal(runeKey("z"))
 	model = updated.(Model)
-	if model.rowsExpanded {
-		t.Fatal("narrow-layout z changed the stored row density")
+	if !model.rowsExpanded {
+		t.Fatal("narrow-layout z did not toggle row density")
 	}
+	updated, _ = model.updateNormal(runeKey("z"))
+	model = updated.(Model)
 	header := strings.Split(ansi.Strip(model.renderBody()), "\n")[0]
 	if !strings.Contains(header, "Workspaces") ||
 		!strings.Contains(header, "Agents ›") {
@@ -1225,6 +1227,7 @@ func TestAgentRowsShowWorkspaceComponent(t *testing.T) {
 		},
 	}}
 	model.rebuildGroups("monorepo:/workspace", "one")
+	model.rowsExpanded = true
 	rendered := ansi.Strip(model.renderAgents(52, 20))
 	if !strings.Contains(rendered, "ParserPackage") {
 		t.Fatalf("workspace component missing from agent pane:\n%s", rendered)

@@ -200,8 +200,8 @@ that still has agents, the confirmation demands a deliberate capital `X`,
 which deletes the workspace and every agent in it.
 
 Compact rows are the default and show the primary workspace or agent line.
-Press `z` to reveal the path and resolver or provider details. Narrow terminals
-always use expanded rows and show one full-width pane at a time.
+Press `z` to reveal the path and resolver or provider details. Narrow
+terminals show one full-width pane at a time and honor the same row density.
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/stormlight/resolvers`. The protocol is public and does not require
