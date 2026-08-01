@@ -317,7 +317,7 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 	for _, label := range []string{
 		"Workspaces",
 		"Agents",
-		"Interaction",
+		"Spanreed",
 		"New agent",
 		"Coding agent",
 		"Task",
@@ -410,7 +410,7 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	model.interaction.SetContent("agent response")
 
 	view := ansi.Strip(model.View())
-	for _, label := range []string{"Workspaces", "Agents", "Interaction", "agent response"} {
+	for _, label := range []string{"Workspaces", "Agents", "Spanreed", "agent response"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("dashboard is missing %q:\n%s", label, view)
 		}
@@ -427,12 +427,9 @@ func TestWideDashboardRendersPhysicalPaneDividers(t *testing.T) {
 	for _, line := range strings.Split(body, "\n") {
 		if strings.Contains(line, "Workspaces") &&
 			strings.Contains(line, "Agents") &&
-			strings.Contains(line, "Interaction") {
+			strings.Contains(line, "Spanreed") {
 			if strings.Count(line, "│") < 2 {
 				t.Fatalf("pane headers have no physical dividers: %q", line)
-			}
-			if !strings.Contains(line, "▌ Workspaces") {
-				t.Fatalf("active pane header has no focus rail: %q", line)
 			}
 			return
 		}
@@ -462,11 +459,17 @@ func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
 	}
 }
 
-func TestActivePaneAndRowRailsShareTheFirstColumn(t *testing.T) {
-	header := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true))
-	row := ansi.Strip(renderSelectableRow("project", 24, true))
-	if !strings.HasPrefix(header, "▌ ") || !strings.HasPrefix(row, "▌ ") {
-		t.Fatalf("rails are not aligned:\nheader: %q\nrow:    %q", header, row)
+func TestPaneHeaderKeepsLabelAlignmentAcrossFocusStates(t *testing.T) {
+	active := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true))
+	inactive := ansi.Strip(renderPaneHeader("Workspaces", "", 24, false))
+	if !strings.HasPrefix(active, "Workspaces") ||
+		!strings.HasPrefix(inactive, "Workspaces") {
+		t.Fatalf("labels shifted between focus states:\nactive:   %q\ninactive: %q",
+			active, inactive)
+	}
+	if lipgloss.Width(active) != 24 || lipgloss.Width(inactive) != 24 {
+		t.Fatalf("header width changed with focus: %d vs %d",
+			lipgloss.Width(active), lipgloss.Width(inactive))
 	}
 }
 
@@ -487,7 +490,7 @@ func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 	header := strings.Split(body, "\n")[0]
 	if !strings.Contains(header, "Workspaces") ||
 		!strings.Contains(header, "Agents") ||
-		!strings.Contains(header, "Interaction") {
+		!strings.Contains(header, "Spanreed") {
 		t.Fatalf("density toggle hid dashboard panes: %q", header)
 	}
 	if !strings.Contains(model.commandHints(), "z compact rows") {
@@ -1077,10 +1080,11 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 	}
 }
 
-func TestWorkspacePulseKeepsStableWidth(t *testing.T) {
+func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {
 	value := workspace.DirectoryContext("/workspace/project")
 	model := NewModel(stubBackend{})
 	model.width = 120
+	model.shimmerRunning = true
 	group := workspaceGroup{
 		context: value,
 		agents: []agent.Agent{{
@@ -1088,25 +1092,29 @@ func TestWorkspacePulseKeepsStableWidth(t *testing.T) {
 		}},
 	}
 
-	model.pulseOn = false
-	quiet := ansi.Strip(model.renderWorkspaceRow(group, true, true, 30))
-	model.pulseOn = true
-	pulse := ansi.Strip(model.renderWorkspaceRow(group, true, true, 30))
-	if !strings.Contains(quiet, "○") || !strings.Contains(pulse, "●") {
-		t.Fatalf(
-			"workspace activity did not pulse:\nquiet:\n%s\npulse:\n%s",
-			quiet,
-			pulse,
-		)
+	model.shimmerPhase = 4
+	early := model.renderWorkspaceRow(group, true, true, 30, false)
+	model.shimmerPhase = 7
+	late := model.renderWorkspaceRow(group, true, true, 30, false)
+	if !strings.Contains(ansi.Strip(early), "●") {
+		t.Fatalf("active marker missing:\n%s", ansi.Strip(early))
 	}
-	quietLines := strings.Split(quiet, "\n")
-	pulseLines := strings.Split(pulse, "\n")
-	if len(quietLines) != len(pulseLines) {
-		t.Fatalf("pulse changed row height: %d != %d", len(quietLines), len(pulseLines))
+	// Colors are unavailable under the test color profile, so the sweep
+	// itself is asserted via the band math.
+	if shimmerBand(7, 4) == shimmerBand(7, 7) {
+		t.Fatal("shimmer band did not move between phases")
 	}
-	for index := range quietLines {
-		if lipgloss.Width(quietLines[index]) != lipgloss.Width(pulseLines[index]) {
-			t.Fatalf("pulse changed line %d width", index+1)
+	if band := shimmerBand(7, -1); band > -4 {
+		t.Fatalf("resting band %d still touches the text", band)
+	}
+	earlyLines := strings.Split(ansi.Strip(early), "\n")
+	lateLines := strings.Split(ansi.Strip(late), "\n")
+	if len(earlyLines) != len(lateLines) {
+		t.Fatalf("shimmer changed row height: %d != %d", len(earlyLines), len(lateLines))
+	}
+	for index := range earlyLines {
+		if lipgloss.Width(earlyLines[index]) != lipgloss.Width(lateLines[index]) {
+			t.Fatalf("shimmer changed line %d width", index+1)
 		}
 	}
 }
@@ -1612,6 +1620,14 @@ func (stubBackend) Send(context.Context, string, string) error {
 }
 
 func (stubBackend) Interrupt(context.Context, string) error {
+	return nil
+}
+
+func (stubBackend) Rename(context.Context, string, string) error {
+	return nil
+}
+
+func (stubBackend) RenameWorkspace(context.Context, workspace.Context, string) error {
 	return nil
 }
 
