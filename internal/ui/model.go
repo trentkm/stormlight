@@ -229,6 +229,7 @@ var (
 	colorSelect       = lipgloss.AdaptiveColor{Light: "#E1E4E6", Dark: "#3D4245"}
 	colorSelectedText = lipgloss.AdaptiveColor{Light: "#172027", Dark: "#F3F5F6"}
 	colorDangerBg     = lipgloss.AdaptiveColor{Light: "#F2D5D1", Dark: "#552B29"}
+	colorHeaderBand   = lipgloss.AdaptiveColor{Light: "#D9EAF0", Dark: "#1D3540"}
 
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
@@ -1283,10 +1284,15 @@ func (m Model) renderHeader() string {
 			waiting++
 		}
 	}
-	left := " " + shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), nil)
-	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
+	// The header is a solid band from edge to edge; the title glow and the
+	// counters ride on it.
+	band := lipgloss.NewStyle().Background(colorHeaderBand)
+	left := band.Render(" ") +
+		shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), colorHeaderBand)
+	right := band.Foreground(colorMuted).
+		Render(fmt.Sprintf("%d active", working))
 	if waiting > 0 {
-		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).
+		right += band.Render("  ") + band.Foreground(colorWaiting).
 			Render(fmt.Sprintf("%d waiting", waiting))
 	}
 	if urgent > 0 {
@@ -1294,11 +1300,11 @@ func (m Model) renderHeader() string {
 		if urgent == 1 {
 			attentionLabel = "1 needs input"
 		}
-		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
+		right += band.Render("  ") + band.Foreground(colorWaiting).Bold(true).
 			Render(attentionLabel)
 	}
-	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", gap) + right
+	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right)-1)
+	return left + band.Render(strings.Repeat(" ", gap)) + right + band.Render(" ")
 }
 
 func (m Model) renderBody() string {
