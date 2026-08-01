@@ -141,8 +141,8 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `o` | Create an agent with an explicit directory picker |
 | `i` / `s` | Write a reply in Spanreed |
 | `x` | Interrupt the selected agent |
-| `d` or `Ctrl-x`, then `d` / `x` / `y` / `Enter` | Remove a workspace or delete an agent |
-| `d` or `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
+| `Ctrl-x`, then `x` / `y` / `Enter` | Remove a workspace or delete an agent |
+| `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
 | `R` | Rename the selected workspace or agent |
 | `,` then `a` / `n` / `c` | Sort by attention, name, or newest (applies to both lists) |
 | `M` | Mark the selected agent — or workspace — seen |

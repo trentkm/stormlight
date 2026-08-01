@@ -786,7 +786,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.backend.Interrupt(ctx, selected.ID)
 			})
 		}
-	case "d", "ctrl+x":
+	case "ctrl+x":
 		if m.activePane == paneWorkspaces {
 			selected, ok := m.selectedWorkspace()
 			if !ok {
@@ -1178,7 +1178,7 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "d", "x", "ctrl+x", "y", "enter":
+	case "x", "ctrl+x", "y", "enter":
 		if m.activePane == paneWorkspaces {
 			selected, ok := m.selectedWorkspace()
 			if !ok {
@@ -2938,7 +2938,7 @@ func (m Model) commandHints() string {
 			len(m.groups[m.workspaceCursor].agents) > 0 {
 			return "X delete workspace and agents  Esc cancel"
 		}
-		return "d/x confirm  Esc cancel"
+		return "x confirm  Esc cancel"
 	case modeDispatch:
 		switch m.formFocus {
 		case dispatchProvider:
@@ -2998,7 +2998,7 @@ func (m Model) commandHints() string {
 		)
 	default:
 		return strings.TrimSpace(
-			"j/k select  l agents  n add  d remove  , sort  " + rowMode + "  r refresh  q quit",
+			"j/k select  l agents  n add  Ctrl-x remove  , sort  " + rowMode + "  r refresh  q quit",
 		)
 	}
 }
