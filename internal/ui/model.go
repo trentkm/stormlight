@@ -1228,7 +1228,7 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderBody() string {
-	contentHeight := max(1, m.height-3)
+	contentHeight := max(1, m.height-4)
 	width := max(1, m.width-1)
 	dashboard := m.renderDashboardBody(width, contentHeight)
 	switch m.mode {
@@ -2453,17 +2453,20 @@ func (m Model) renderDispatchAt(width, height int) string {
 		}
 	}
 
-	lines = append(lines,
-		"",
-		"  "+m.renderDispatchModeLine(contentWidth),
-	)
+	roomy := height >= 15
+	if roomy {
+		lines = append(lines, "")
+	}
+	lines = append(lines, "  "+m.renderDispatchModeLine(contentWidth))
 
 	taskDetail := fmt.Sprintf(
 		"%d chars",
 		utf8.RuneCountInString(m.taskInput.Value()),
 	)
+	if roomy {
+		lines = append(lines, "")
+	}
 	lines = append(lines,
-		"",
 		"  "+m.renderDispatchSectionTitle(
 			taskStyle,
 			"Task",
@@ -2782,7 +2785,12 @@ func (m Model) renderFooter() string {
 	} else if m.status != "Ready" {
 		content = renderFooterStatus(width, m.status, hints, successStyle)
 	}
-	return lipgloss.NewStyle().Width(width).MaxHeight(1).Render(content)
+	rule := lipgloss.NewStyle().
+		Foreground(colorBorder).
+		Render(strings.Repeat("─", width))
+	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
+		rule + "\n" + content,
+	)
 }
 
 func renderFooterStatus(
@@ -3858,7 +3866,7 @@ func agentLocation(managedAgent agent.Agent) string {
 }
 
 func (m Model) interactionDimensions() (int, int) {
-	contentHeight := max(1, m.height-8)
+	contentHeight := max(1, m.height-9)
 	width := max(1, m.width-1)
 	if width < 72 {
 		return max(1, width-2), contentHeight
