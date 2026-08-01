@@ -1785,7 +1785,7 @@ func (m Model) renderWorkspaceRow(
 
 	marker := "  "
 	if selected {
-		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("▏ ")
+		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("› ")
 	}
 	activityStyle := mutedStyle
 	renderedName := titleStyle.Render(name)
@@ -1998,7 +1998,7 @@ func renderAgentRowWithDensity(
 	}
 	marker := "  "
 	if selected {
-		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("▏ ")
+		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("› ")
 	}
 	top := marker + statusStyle.Render(symbol) + " " +
 		renderedTitle +

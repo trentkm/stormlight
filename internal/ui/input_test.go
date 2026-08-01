@@ -1196,8 +1196,8 @@ func TestHierarchyKeepsParentRowsSelected(t *testing.T) {
 
 	workspaces := ansi.Strip(model.renderWorkspaces(30, 12))
 	agents := ansi.Strip(model.renderAgents(40, 12))
-	if !strings.Contains(workspaces, "▏") ||
-		!strings.Contains(agents, "▏") ||
+	if !strings.Contains(workspaces, "›") ||
+		!strings.Contains(agents, "›") ||
 		strings.Contains(workspaces, "▌") ||
 		strings.Contains(agents, "▌") {
 		t.Fatalf(
