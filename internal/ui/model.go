@@ -1247,21 +1247,29 @@ func (m Model) shimmerPhaseOrRest() int {
 func (m Model) renderHeader() string {
 	width := max(1, m.width-1)
 	working := 0
-	attention := 0
+	urgent := 0
+	waiting := 0
 	for _, managedAgent := range m.agents {
 		if managedAgent.Activity == agent.ActivityWorking ||
 			managedAgent.Activity == agent.ActivityStarting {
 			working++
 		}
-		if managedAgent.NeedsAttention() {
-			attention++
+		switch {
+		case managedAgent.Attention.Urgent():
+			urgent++
+		case managedAgent.Attention == agent.AttentionWaiting:
+			waiting++
 		}
 	}
 	left := " " + shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), nil)
 	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
-	if attention > 0 {
-		attentionLabel := fmt.Sprintf("%d need input", attention)
-		if attention == 1 {
+	if waiting > 0 {
+		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).
+			Render(fmt.Sprintf("%d waiting", waiting))
+	}
+	if urgent > 0 {
+		attentionLabel := fmt.Sprintf("%d need input", urgent)
+		if urgent == 1 {
 			attentionLabel = "1 needs input"
 		}
 		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
@@ -1768,14 +1776,17 @@ func (m Model) renderWorkspaceRow(
 	width int,
 	danger bool,
 ) string {
-	active, attention := workspaceStats(group.agents)
+	active, urgent, waiting := workspaceStats(group.agents)
 	countLabel := fmt.Sprintf("%d agents", len(group.agents))
 	if len(group.agents) == 1 {
 		countLabel = "1 agent"
 	}
 	suffixes := []string{}
-	if attention > 0 {
-		suffixes = append(suffixes, fmt.Sprintf("%d input", attention))
+	if urgent > 0 {
+		suffixes = append(suffixes, fmt.Sprintf("%d input", urgent))
+	}
+	if waiting > 0 {
+		suffixes = append(suffixes, fmt.Sprintf("%d waiting", waiting))
 	}
 	if active > 0 {
 		suffixes = append(suffixes, fmt.Sprintf("%d active", active))
@@ -1795,11 +1806,13 @@ func (m Model) renderWorkspaceRow(
 		}
 	}
 	activityMarker := "  "
-	if active > 0 {
-		activityMarker = "● "
-	}
-	if attention > 0 {
+	switch {
+	case urgent > 0:
 		activityMarker = "! "
+	case waiting > 0:
+		activityMarker = "○ "
+	case active > 0:
+		activityMarker = "● "
 	}
 	nameWidth := max(
 		1,
@@ -1815,6 +1828,7 @@ func (m Model) renderWorkspaceRow(
 	)
 	path, kind, detailGap := workspaceDetail(group.context, contentWidth)
 	bottomContent := path + strings.Repeat(" ", detailGap) + kind
+	tier := attentionTierOf(urgent, waiting)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
 			activityMarker,
@@ -1826,7 +1840,7 @@ func (m Model) renderWorkspaceRow(
 			focused,
 			m.expandedRows(),
 			active > 0,
-			attention > 0,
+			tier,
 			m.shimmerPhaseOrRest(),
 			rowThemeFor(danger),
 		)
@@ -1840,12 +1854,18 @@ func (m Model) renderWorkspaceRow(
 	renderedName := titleStyle.Render(name)
 	suffixStyle := mutedStyle
 	switch {
-	case attention > 0:
-		// Attention outranks the working glow: the whole row goes amber.
+	case tier == tierUrgent:
+		// Urgent attention outranks the working glow: the whole row goes
+		// loud amber.
 		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
 		activityStyle = attentionStyle
 		renderedName = attentionStyle.Render(name)
 		suffixStyle = attentionStyle
+	case tier == tierWaiting:
+		// Soft tier: amber marker and count only; the row stays calm.
+		softStyle := lipgloss.NewStyle().Foreground(colorWaiting)
+		activityStyle = softStyle
+		suffixStyle = softStyle
 	case active > 0:
 		activityStyle = lipgloss.NewStyle().
 			Foreground(colorWorking).
@@ -1875,7 +1895,7 @@ func renderSelectedWorkspaceRow(
 	focused bool,
 	expanded bool,
 	active bool,
-	attention bool,
+	tier attentionTier,
 	shimmerPhase int,
 	theme rowTheme,
 ) string {
@@ -1909,11 +1929,13 @@ func renderSelectedWorkspaceRow(
 	activityStyle := baseStyle.Copy()
 	renderedName := baseStyle.Copy().Bold(true).Render(name)
 	switch {
-	case attention:
+	case tier == tierUrgent:
 		activityStyle = activityStyle.
 			Foreground(colorWaiting).
 			Bold(true)
 		renderedName = activityStyle.Render(name)
+	case tier == tierWaiting:
+		activityStyle = activityStyle.Foreground(colorWaiting)
 	case active:
 		activityStyle = activityStyle.
 			Foreground(colorWorking).
@@ -2058,8 +2080,10 @@ func renderAgentRowWithDensity(
 	renderedTitle := titleStyle.Render(displayTitle)
 	detailStyle := mutedStyle
 	switch {
-	case managedAgent.NeedsAttention():
-		// Attention outranks the working glow: the row goes amber.
+	case managedAgent.Attention.Urgent():
+		// Urgent attention outranks the working glow: the row goes loud
+		// amber. The waiting tier keeps its calm row and speaks through
+		// the amber status symbol alone.
 		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
 		renderedTitle = attentionStyle.Render(displayTitle)
 		detailStyle = attentionStyle
@@ -2222,9 +2246,12 @@ func (m Model) renderInteraction(width, height int) string {
 	metaParts = append(metaParts, shortPath(managedAgent.Cwd))
 	metaText := strings.TrimSpace(strings.Join(metaParts, "  "))
 	meta := mutedStyle.Render(truncate(metaText, width))
-	if managedAgent.Attention != agent.AttentionNone {
+	if managedAgent.Attention.Urgent() {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
 			Render(truncate("Needs "+string(managedAgent.Attention), width))
+	} else if managedAgent.Attention == agent.AttentionWaiting {
+		meta = lipgloss.NewStyle().Foreground(colorWaiting).
+			Render(truncate("Waiting for your reply", width))
 	}
 	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
 	if action, ok := m.selectedPendingAction(); ok {
@@ -3643,9 +3670,12 @@ func (m *Model) applySort() {
 		})
 	case sortByAttention:
 		slices.SortStableFunc(m.groups, func(a, b workspaceGroup) int {
-			_, attentionA := workspaceStats(a.agents)
-			_, attentionB := workspaceStats(b.agents)
-			return attentionB - attentionA
+			_, urgentA, waitingA := workspaceStats(a.agents)
+			_, urgentB, waitingB := workspaceStats(b.agents)
+			if d := urgentB - urgentA; d != 0 {
+				return d
+			}
+			return waitingB - waitingA
 		})
 	}
 }
@@ -3661,23 +3691,23 @@ func sortAgentList(agents []agent.Agent, mode sortMode) {
 		})
 	case sortByAttention:
 		slices.SortStableFunc(agents, func(a, b agent.Agent) int {
-			attentionA, attentionB := 0, 0
-			if a.NeedsAttention() {
-				attentionA = 1
+			if d := a.Attention.Rank() - b.Attention.Rank(); d != 0 {
+				return d
 			}
-			if b.NeedsAttention() {
-				attentionB = 1
-			}
-			if attentionA != attentionB {
-				return attentionB - attentionA
-			}
-			return b.CreatedAt.Compare(a.CreatedAt)
+			return newestFirst(a, b)
 		})
 	default:
-		slices.SortStableFunc(agents, func(a, b agent.Agent) int {
-			return b.CreatedAt.Compare(a.CreatedAt)
-		})
+		slices.SortStableFunc(agents, newestFirst)
 	}
+}
+
+// newestFirst orders by creation time; window index breaks same-second
+// ties deterministically (later windows are newer within a session).
+func newestFirst(a, b agent.Agent) int {
+	if d := b.CreatedAt.Compare(a.CreatedAt); d != 0 {
+		return d
+	}
+	return b.WindowIndex - a.WindowIndex
 }
 
 func buildWorkspaceGroups(
@@ -3961,17 +3991,41 @@ func (m Model) submitAddWorkspace(path string) (tea.Model, tea.Cmd) {
 	return m, addWorkspaceCmd(m.backend, path)
 }
 
-func workspaceStats(agents []agent.Agent) (active int, attention int) {
+// attentionTier is the visual triage level of a row: urgent is loud amber,
+// waiting is a soft amber accent, none defers to activity styling.
+type attentionTier int
+
+const (
+	tierNone attentionTier = iota
+	tierWaiting
+	tierUrgent
+)
+
+func attentionTierOf(urgent, waiting int) attentionTier {
+	switch {
+	case urgent > 0:
+		return tierUrgent
+	case waiting > 0:
+		return tierWaiting
+	default:
+		return tierNone
+	}
+}
+
+func workspaceStats(agents []agent.Agent) (active, urgent, waiting int) {
 	for _, managedAgent := range agents {
 		if managedAgent.Activity == agent.ActivityWorking ||
 			managedAgent.Activity == agent.ActivityStarting {
 			active++
 		}
-		if managedAgent.NeedsAttention() {
-			attention++
+		switch {
+		case managedAgent.Attention.Urgent():
+			urgent++
+		case managedAgent.Attention == agent.AttentionWaiting:
+			waiting++
 		}
 	}
-	return active, attention
+	return active, urgent, waiting
 }
 
 func agentLocation(managedAgent agent.Agent) string {
@@ -4139,8 +4193,11 @@ func dispatchCmd(backend Backend, request app.DispatchRequest) tea.Cmd {
 }
 
 func statusVisual(managedAgent agent.Agent) (string, lipgloss.Style) {
-	if managedAgent.NeedsAttention() {
+	if managedAgent.Attention.Urgent() {
 		return "!", lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+	}
+	if managedAgent.Attention == agent.AttentionWaiting {
+		return "○", lipgloss.NewStyle().Foreground(colorWaiting)
 	}
 	switch managedAgent.Activity {
 	case agent.ActivityStarting, agent.ActivityWorking:

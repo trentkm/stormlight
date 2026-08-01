@@ -206,9 +206,19 @@ terminals show one full-width pane at a time and honor the same row density.
 
 Rows never rearrange on their own: the default order is newest first, and
 `,` opens a yazi-style sort chord (`a` attention, `n` name, `c` newest).
-Anything waiting on you is amber and unmissable either way — workspaces show
-an `!` marker with an amber name and input count, and agents needing
-approval render their whole row in amber.
+
+Attention has two tiers, and it always outranks the working glow:
+
+| Signal | Meaning | Look |
+|---|---|---|
+| working | agent is running | cyan glow sweeping the name |
+| waiting | turn ended and the agent has idled on you (~60s) | soft amber `○` marker and count |
+| question / approval / auth | agent is blocked on an explicit decision | loud amber `!` — the whole row |
+
+Questions are detected from the final message of a turn (providers emit the
+same event for "done" and "asked you something", so the content is the
+discriminator); the waiting tier comes from the provider's idle
+notification and never downgrades an urgent state. Replying clears both.
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/stormlight/resolvers`. The protocol is public and does not require

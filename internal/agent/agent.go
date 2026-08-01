@@ -29,6 +29,9 @@ const (
 	ActivityStopped   Activity = "stopped"
 )
 
+// Attention is what an agent needs from a human, in two tiers: the urgent
+// kinds block on an explicit decision, while AttentionWaiting only means
+// the agent is paused until the next prompt.
 type Attention string
 
 const (
@@ -36,7 +39,30 @@ const (
 	AttentionQuestion Attention = "question"
 	AttentionApproval Attention = "approval"
 	AttentionAuth     Attention = "auth"
+	AttentionWaiting  Attention = "waiting"
 )
+
+// Urgent reports whether the attention kind blocks the agent on an explicit
+// human decision, as opposed to merely waiting for the next prompt.
+func (a Attention) Urgent() bool {
+	switch a {
+	case AttentionQuestion, AttentionApproval, AttentionAuth:
+		return true
+	}
+	return false
+}
+
+// Rank orders attention for triage sorting: urgent, then waiting, then none.
+func (a Attention) Rank() int {
+	switch {
+	case a.Urgent():
+		return 0
+	case a == AttentionWaiting:
+		return 1
+	default:
+		return 2
+	}
+}
 
 // PermissionMode controls how much a dispatched agent may do without asking.
 // The names are provider-neutral; each provider adapter maps them to its own

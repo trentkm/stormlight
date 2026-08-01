@@ -131,10 +131,20 @@ separate:
 
 - Process: live or exited, with an optional exit code.
 - Activity: starting, working, idle, completed, failed, or stopped.
-- Attention: question, approval, authentication, or none.
+- Attention: question, approval, authentication, waiting, or none.
+
+Attention is tiered. Question, approval, and authentication are urgent — the
+agent is blocked on an explicit human decision. Waiting is soft — the turn
+ended and the provider's delayed idle notification reported that the agent
+is paused on the human. Urgent states are classified at turn end from the
+final assistant message (providers emit one event for both "done" and
+"asked a question", so content is the only instant discriminator); the
+waiting signal arrives later and never downgrades an urgent state. A new
+prompt clears attention.
 
 This prevents a resumable completed conversation from being conflated with a
-currently running process.
+currently running process, and keeps "needs me now" distinct from "idle on
+me" and from "just idle".
 
 ## Persistence
 

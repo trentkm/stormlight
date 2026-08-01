@@ -627,7 +627,14 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 		values["@stormlight_activity"] = string(update.Activity)
 	}
 	if update.Attention != "" || update.Activity != "" {
-		values["@stormlight_attention"] = string(update.Attention)
+		attention := update.Attention
+		if attention == agent.AttentionWaiting && managedAgent.Attention.Urgent() {
+			// Waiting is a floor, not a ceiling: the delayed idle signal
+			// must never downgrade an urgent question/approval/auth state
+			// set when the turn ended.
+			attention = managedAgent.Attention
+		}
+		values["@stormlight_attention"] = string(attention)
 	}
 	if strings.TrimSpace(update.Summary) != "" {
 		values["@stormlight_summary"] = metadataValue(update.Summary)

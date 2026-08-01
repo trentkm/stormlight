@@ -616,3 +616,37 @@ func TestIsNoServerError(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateNeverDowngradesUrgentAttentionToWaiting(t *testing.T) {
+	line := captureAgentLine(false)
+	parts := strings.Split(line, fieldSeparator)
+	parts[17] = "approval"
+	runner := &captureRunner{agentLine: strings.Join(parts, fieldSeparator)}
+	runtime := &Runtime{runner: runner}
+
+	err := runtime.Update(context.Background(), "capture-id", session.Update{
+		Activity:  agent.ActivityIdle,
+		Attention: agent.AttentionWaiting,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, demoted := false, false
+	for _, call := range runner.calls {
+		if len(call) < 2 || call[0] != "set-option" {
+			continue
+		}
+		key, value := call[len(call)-2], call[len(call)-1]
+		if key == "@stormlight_attention" {
+			if value == "approval" {
+				kept = true
+			}
+			if value == "waiting" {
+				demoted = true
+			}
+		}
+	}
+	if !kept || demoted {
+		t.Fatalf("attention writes kept=%v demoted=%v:\n%#v", kept, demoted, runner.calls)
+	}
+}
