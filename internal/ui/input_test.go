@@ -1160,6 +1160,42 @@ func TestHierarchyConnectorRowsFollowDensity(t *testing.T) {
 	}
 }
 
+func TestSortModesOrderAgentsExplicitly(t *testing.T) {
+	older := time.Now().Add(-time.Hour)
+	newer := time.Now()
+	agents := []agent.Agent{
+		{ID: "b", Name: "bravo", CreatedAt: newer},
+		{ID: "a", Name: "alpha", CreatedAt: older, Attention: agent.AttentionApproval},
+	}
+
+	sortAgentList(agents, sortByCreated)
+	if agents[0].ID != "b" {
+		t.Fatalf("newest-first order = %s,%s", agents[0].ID, agents[1].ID)
+	}
+	sortAgentList(agents, sortByAttention)
+	if agents[0].ID != "a" {
+		t.Fatalf("attention-first order = %s,%s", agents[0].ID, agents[1].ID)
+	}
+	sortAgentList(agents, sortByName)
+	if agents[0].ID != "a" {
+		t.Fatalf("name order = %s,%s", agents[0].ID, agents[1].ID)
+	}
+}
+
+func TestSortChordChangesMode(t *testing.T) {
+	model := NewModel(stubBackend{})
+	updated, _ := model.updateNormal(runeKey(","))
+	model = updated.(Model)
+	updated, _ = model.updateNormal(runeKey("a"))
+	model = updated.(Model)
+	if model.sortMode != sortByAttention {
+		t.Fatalf("sort mode = %v, want attention", model.sortMode)
+	}
+	if !strings.Contains(model.status, "attention") {
+		t.Fatalf("status = %q", model.status)
+	}
+}
+
 func TestHierarchyConnectorBridgesDifferentRows(t *testing.T) {
 	pane := strings.Join([]string{
 		"header │",

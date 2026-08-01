@@ -144,6 +144,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `d` or `Ctrl-x`, then `d` / `x` / `y` / `Enter` | Remove a workspace or delete an agent |
 | `d` or `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
 | `R` | Rename the selected workspace or agent |
+| `,` then `a` / `n` / `c` | Sort by attention, name, or newest (applies to both lists) |
 | `r` / `Ctrl-l` | Refresh |
 | `q` | Close the dashboard |
 
@@ -202,6 +203,12 @@ which deletes the workspace and every agent in it.
 Compact rows are the default and show the primary workspace or agent line.
 Press `z` to reveal the path and resolver or provider details. Narrow
 terminals show one full-width pane at a time and honor the same row density.
+
+Rows never rearrange on their own: the default order is newest first, and
+`,` opens a yazi-style sort chord (`a` attention, `n` name, `c` newest).
+Anything waiting on you is amber and unmissable either way — workspaces show
+an `!` marker with an amber name and input count, and agents needing
+approval render their whole row in amber.
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/stormlight/resolvers`. The protocol is public and does not require
