@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/pending"
 	"github.com/trentkm/stormlight/internal/provider"
@@ -47,6 +50,8 @@ func newRootCommand() *cobra.Command {
 	var logFile string
 	var logLevel string
 
+	cfg, configWarnings, configErr := config.Load()
+
 	root := &cobra.Command{
 		Use:          "stormlight",
 		Short:        "A workspace-native control surface for coding agents",
@@ -65,6 +70,14 @@ func newRootCommand() *cobra.Command {
 				"version", version,
 				"log_path", path,
 			)
+			if configErr != nil {
+				diagnostic.Logger().Warn("configuration unavailable; using defaults",
+					"error", configErr,
+				)
+			}
+			for _, warning := range configWarnings {
+				diagnostic.Logger().Warn("configuration value ignored", "detail", warning)
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -79,40 +92,111 @@ func newRootCommand() *cobra.Command {
 				)
 			}
 			configureHostedDashboard(socket)
-			return runDashboard(socket, sessionName)
+			return runDashboard(socket, sessionName, cfg)
 		},
 	}
 	root.PersistentFlags().StringVar(&socket, "tmux-socket",
-		os.Getenv("STORMLIGHT_TMUX_SOCKET"),
-		"tmux socket name",
+		envFirstOr(cfg.SocketOr(tmux.DefaultSocket), "STORMLIGHT_TMUX_SOCKET"),
+		"tmux socket name; empty targets the default tmux server",
 	)
 	root.PersistentFlags().StringVar(&sessionName, "session",
-		envFirstOr("stormlight-agents", "STORMLIGHT_SESSION"),
+		envFirstOr(configValueOr(cfg.Defaults.Session, "stormlight-agents"),
+			"STORMLIGHT_SESSION"),
 		"managed tmux session name",
 	)
 	root.PersistentFlags().StringVar(&logFile, "log-file",
-		os.Getenv("STORMLIGHT_LOG_FILE"),
+		envFirstOr(cfg.Log.File, "STORMLIGHT_LOG_FILE"),
 		"diagnostic log file",
 	)
 	root.PersistentFlags().StringVar(&logLevel, "log-level",
-		envFirstOr("info", "STORMLIGHT_LOG_LEVEL"),
+		envFirstOr(configValueOr(cfg.Log.Level, "info"), "STORMLIGHT_LOG_LEVEL"),
 		"diagnostic log level",
 	)
 
 	root.AddCommand(
-		newDispatchCommand(&socket, &sessionName),
-		newListCommand(&socket, &sessionName),
-		newAttachCommand(&socket, &sessionName),
-		newSendCommand(&socket, &sessionName),
-		newStopCommand(&socket, &sessionName),
-		newDeleteCommand(&socket, &sessionName),
-		newEventCommand(&socket, &sessionName),
-		newProviderEventCommand(&socket, &sessionName),
-		newProviderPermissionCommand(&socket, &sessionName),
+		newDispatchCommand(&socket, &sessionName, cfg),
+		newListCommand(&socket, &sessionName, cfg),
+		newAttachCommand(&socket, &sessionName, cfg),
+		newSendCommand(&socket, &sessionName, cfg),
+		newRenameCommand(&socket, &sessionName, cfg),
+		newStopCommand(&socket, &sessionName, cfg),
+		newDeleteCommand(&socket, &sessionName, cfg),
+		newEventCommand(&socket, &sessionName, cfg),
+		newProviderEventCommand(&socket, &sessionName, cfg),
+		newProviderPermissionCommand(&socket, &sessionName, cfg),
 		newLogsCommand(&logFile),
-		newRunCommand(&socket, &sessionName),
+		newRunCommand(&socket, &sessionName, cfg),
+		newConfigCommand(&socket, &sessionName, cfg),
 	)
 	return root
+}
+
+func configValueOr(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func providerSpecs(cfg config.Config) []provider.Spec {
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	specs := make([]provider.Spec, 0, len(names))
+	for _, name := range names {
+		entry := cfg.Providers[name]
+		modeArgs := make(map[agent.PermissionMode][]string, len(entry.ModeArgs))
+		for mode, args := range entry.ModeArgs {
+			parsed, err := agent.ParseMode(mode)
+			if err != nil {
+				continue
+			}
+			modeArgs[parsed] = args
+		}
+		specs = append(specs, provider.Spec{
+			ID:        agent.Provider(name),
+			Label:     entry.Label,
+			Binary:    entry.Binary,
+			Args:      entry.Args,
+			ExtraArgs: entry.ExtraArgs,
+			ModeArgs:  modeArgs,
+		})
+	}
+	return specs
+}
+
+func newConfigCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "config",
+		Short: "Show the effective configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), "# "+config.Path())
+			rendered, err := cfg.EffectiveTOML(*socket, *sessionName)
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), rendered)
+			return nil
+		},
+	}
+	var force bool
+	initCommand := &cobra.Command{
+		Use:   "init",
+		Short: "Write a commented configuration template",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := config.WriteTemplate(force)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), path)
+			return nil
+		},
+	}
+	initCommand.Flags().BoolVar(&force, "force", false, "overwrite an existing config file")
+	command.AddCommand(initCommand)
+	return command
 }
 
 func shouldHostDashboard() bool {
@@ -123,8 +207,8 @@ func dashboardIsHosted() bool {
 	return os.Getenv(dashboardHostedEnv) != ""
 }
 
-func runDashboard(socket, sessionName string) error {
-	service, err := newService(socket, sessionName)
+func runDashboard(socket, sessionName string, cfg config.Config) error {
+	service, err := newService(socket, sessionName, cfg)
 	if err != nil {
 		return err
 	}
@@ -134,8 +218,20 @@ func runDashboard(socket, sessionName string) error {
 			currentSurface = tmux.NewSurface(tmuxPath)
 		}
 	}
+	defaultMode, err := agent.ParseMode(cfg.Defaults.Mode)
+	if err != nil {
+		defaultMode = agent.DefaultMode
+	}
 	program := tea.NewProgram(
-		ui.NewModelWithSurface(service, currentSurface),
+		ui.NewModelWithOptions(service, currentSurface, ui.Options{
+			YaziPath:        cfg.Tools.Yazi,
+			NvimPath:        cfg.Tools.Nvim,
+			DefaultMode:     defaultMode,
+			DefaultProvider: agent.Provider(cfg.Defaults.Provider),
+			ExpandedRows:    cfg.UI.Rows == "expanded",
+			ModeForDir:      cfg.ModeForDir,
+			ProviderForDir:  cfg.ProviderForDir,
+		}),
 		tea.WithAltScreen(),
 	)
 	_, err = program.Run()
@@ -154,7 +250,13 @@ func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
 
 	session := dashboardSessionName(os.Getpid(), time.Now())
 	shellCommand := dashboardShellCommand(executable, os.Args[1:])
-	args := dashboardHostArgs(socket, session, cwd, shellCommand)
+	args := dashboardHostArgs(
+		socket,
+		stormlightServerConfig(socket),
+		session,
+		cwd,
+		shellCommand,
+	)
 	process := exec.Command(tmuxPath, args...)
 	process.Stdin = command.InOrStdin()
 	process.Stdout = command.OutOrStdout()
@@ -180,10 +282,13 @@ func dashboardShellCommand(executable string, args []string) string {
 	return dashboardHostedEnv + "=1 exec " + shellJoinCommand(command)
 }
 
-func dashboardHostArgs(socket, session, cwd, shellCommand string) []string {
-	args := make([]string, 0, 10)
+func dashboardHostArgs(socket, config, session, cwd, shellCommand string) []string {
+	args := make([]string, 0, 12)
 	if socket != "" {
 		args = append(args, "-L", socket)
+	}
+	if config != "" {
+		args = append(args, "-f", config)
 	}
 	return append(
 		args,
@@ -287,19 +392,45 @@ func newLogsCommand(logFile *string) *cobra.Command {
 	return command
 }
 
-func newService(socket, sessionName string) (*app.Service, error) {
+func newService(socket, sessionName string, cfg config.Config) (*app.Service, error) {
 	client := tmux.NewClient(socket)
+	if serverConfig := stormlightServerConfig(socket); serverConfig != "" {
+		client = tmux.NewClientWithConfig(socket, serverConfig)
+	}
 	runtime, err := tmux.NewRuntime(client, sessionName)
 	if err != nil {
 		return nil, err
 	}
-	return app.NewService(runtime, provider.NewRegistry(), workspace.NewRegistry()), nil
+	if len(cfg.Tmux.ReturnKeys) > 0 {
+		runtime.SetReturnKeys(cfg.Tmux.ReturnKeys)
+	}
+	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
+	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
 }
 
-func newDispatchCommand(socket, sessionName *string) *cobra.Command {
+// stormlightServerConfig resolves the config for Stormlight-owned tmux
+// servers. An empty socket targets the user's default server, which keeps
+// their own configuration; Stormlight's config is never applied there.
+func stormlightServerConfig(socket string) string {
+	if socket == "" {
+		return ""
+	}
+	path, err := tmux.EnsureServerConfig(config.Dir())
+	if err != nil {
+		diagnostic.Logger().Warn(
+			"cannot prepare Stormlight tmux config; using tmux defaults",
+			"error", err,
+		)
+		return ""
+	}
+	return path
+}
+
+func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	var providerName string
 	var cwd string
 	var name string
+	var modeName string
 
 	command := &cobra.Command{
 		Use:   "dispatch [task]",
@@ -310,7 +441,23 @@ func newDispatchCommand(socket, sessionName *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := newService(*socket, *sessionName)
+			mode, err := agent.ParseMode(modeName)
+			if err != nil {
+				return err
+			}
+			if overrideDir, dirErr := dispatchDirectory(cwd); dirErr == nil {
+				if !cmd.Flags().Changed("mode") {
+					if override, ok := cfg.ModeForDir(overrideDir); ok {
+						mode = override
+					}
+				}
+				if !cmd.Flags().Changed("provider") {
+					if override, ok := cfg.ProviderForDir(overrideDir); ok {
+						providerName = string(override)
+					}
+				}
+			}
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -321,6 +468,7 @@ func newDispatchCommand(socket, sessionName *string) *cobra.Command {
 				Name:     name,
 				Task:     task,
 				Cwd:      cwd,
+				Mode:     mode,
 			})
 			if err != nil {
 				return err
@@ -329,19 +477,33 @@ func newDispatchCommand(socket, sessionName *string) *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVarP(&providerName, "provider", "p", string(agent.ProviderCodex), "provider: codex, claude, or shell")
+	command.Flags().StringVarP(&providerName, "provider", "p",
+		configValueOr(cfg.Defaults.Provider, string(agent.ProviderCodex)),
+		"provider: codex, claude, shell, or a configured provider")
 	command.Flags().StringVarP(&cwd, "cwd", "C", "", "working directory")
 	command.Flags().StringVarP(&name, "name", "n", "", "tmux window name")
+	command.Flags().StringVarP(&modeName, "mode", "m",
+		configValueOr(cfg.Defaults.Mode, string(agent.DefaultMode)),
+		"permission mode: ask, edits, or auto")
 	return command
 }
 
-func newListCommand(socket, sessionName *string) *cobra.Command {
+// dispatchDirectory resolves the directory a dispatch will run in, for
+// matching per-workspace config overrides.
+func dispatchDirectory(cwd string) (string, error) {
+	if strings.TrimSpace(cwd) == "" {
+		return os.Getwd()
+	}
+	return filepath.Abs(cwd)
+}
+
+func newListCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List managed agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -377,13 +539,13 @@ func newListCommand(socket, sessionName *string) *cobra.Command {
 	return command
 }
 
-func newAttachCommand(socket, sessionName *string) *cobra.Command {
+func newAttachCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <id>",
 		Short: "Switch the current tmux client to an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -405,13 +567,28 @@ func newAttachCommand(socket, sessionName *string) *cobra.Command {
 	}
 }
 
-func newSendCommand(socket, sessionName *string) *cobra.Command {
+func newRenameCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <id> <name>",
+		Short: "Rename an agent",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := newService(*socket, *sessionName, cfg)
+			if err != nil {
+				return err
+			}
+			return service.Rename(cmd.Context(), args[0], strings.Join(args[1:], " "))
+		},
+	}
+}
+
+func newSendCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "send <id> <message>",
 		Short: "Send a message to an agent",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -420,13 +597,13 @@ func newSendCommand(socket, sessionName *string) *cobra.Command {
 	}
 }
 
-func newStopCommand(socket, sessionName *string) *cobra.Command {
+func newStopCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <id>",
 		Short: "Interrupt an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -435,13 +612,13 @@ func newStopCommand(socket, sessionName *string) *cobra.Command {
 	}
 }
 
-func newDeleteCommand(socket, sessionName *string) *cobra.Command {
+func newDeleteCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete an agent tmux window",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -450,7 +627,7 @@ func newDeleteCommand(socket, sessionName *string) *cobra.Command {
 	}
 }
 
-func newEventCommand(socket, sessionName *string) *cobra.Command {
+func newEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	var id string
 	var state string
 	var attention string
@@ -474,7 +651,7 @@ func newEventCommand(socket, sessionName *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
@@ -492,7 +669,7 @@ func newEventCommand(socket, sessionName *string) *cobra.Command {
 	return command
 }
 
-func newProviderEventCommand(socket, sessionName *string) *cobra.Command {
+func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:    "_provider-event <provider> [payload]",
 		Hidden: true,
@@ -517,7 +694,7 @@ func newProviderEventCommand(socket, sessionName *string) *cobra.Command {
 			if err != nil || !handled {
 				return nil
 			}
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return nil
 			}
@@ -533,7 +710,7 @@ func newProviderEventCommand(socket, sessionName *string) *cobra.Command {
 	}
 }
 
-func newProviderPermissionCommand(socket, sessionName *string) *cobra.Command {
+func newProviderPermissionCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:    "_provider-permission <provider>",
 		Hidden: true,
@@ -586,7 +763,7 @@ func newProviderPermissionCommand(socket, sessionName *string) *cobra.Command {
 				}
 			}()
 
-			service, serviceErr := newService(*socket, *sessionName)
+			service, serviceErr := newService(*socket, *sessionName, cfg)
 			if serviceErr == nil {
 				updatePermissionAgent(
 					service,
@@ -682,7 +859,7 @@ func updatePermissionAgent(
 	}
 }
 
-func newRunCommand(socket, sessionName *string) *cobra.Command {
+func newRunCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	var id string
 	var window string
 	var cwd string
@@ -699,7 +876,7 @@ func newRunCommand(socket, sessionName *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := newService(*socket, *sessionName)
+			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
 				return err
 			}
