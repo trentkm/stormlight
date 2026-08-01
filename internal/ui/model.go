@@ -1272,7 +1272,9 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	workspaces := m.renderPane(
 		"Workspaces",
 		"",
-		m.renderWorkspaces(max(1, workspaceWidth-2), contentHeight-1),
+		// One extra column of slack keeps row text from touching the
+		// hierarchy connector drawn in the pane's padding column.
+		m.renderWorkspaces(max(1, workspaceWidth-3), contentHeight-1),
 		workspaceWidth,
 		contentHeight,
 		m.activePane == paneWorkspaces,
