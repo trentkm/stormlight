@@ -58,12 +58,14 @@ func TestDashboardHostingOnlyWrapsOutsideTmuxLaunches(t *testing.T) {
 func TestDashboardHostArgsPreserveSocketAndDirectory(t *testing.T) {
 	got := dashboardHostArgs(
 		"isolated",
+		"/config/stormlight/tmux.conf",
 		"stormlight-ui-42",
 		"/workspace/project",
 		"STORMLIGHT_UI_HOSTED=1 exec '/bin/stormlight'",
 	)
 	want := []string{
 		"-L", "isolated",
+		"-f", "/config/stormlight/tmux.conf",
 		"new-session",
 		"-s", "stormlight-ui-42",
 		"-c", "/workspace/project",
