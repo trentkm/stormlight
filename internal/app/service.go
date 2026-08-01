@@ -20,6 +20,7 @@ type DispatchRequest struct {
 	Name     string
 	Task     string
 	Cwd      string
+	Mode     agent.PermissionMode
 }
 
 type AttachResult = session.AttachResult
@@ -115,12 +116,23 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 			)
 		}
 	}
+	contexts := make([]workspace.Context, len(agents))
+	for index := range agents {
+		contexts[index] = agents[index].Workspace
+	}
+	s.applyWorkspaceNames(contexts)
+	for index := range agents {
+		agents[index].Workspace = contexts[index]
+	}
 	return agents, nil
 }
 
 func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agent, error) {
 	req.Task = strings.TrimSpace(req.Task)
-	launch, err := s.providers.Resolve(req.Provider, req.Task)
+	if req.Mode == "" {
+		req.Mode = agent.DefaultMode
+	}
+	launch, err := s.providers.Resolve(req.Provider, req.Task, req.Mode)
 	if err != nil {
 		return agent.Agent{}, err
 	}
@@ -133,6 +145,7 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 		Name:      req.Name,
 		Task:      req.Task,
 		Cwd:       req.Cwd,
+		Mode:      req.Mode,
 		Launch:    launch,
 		Workspace: workspaceContext,
 	})
@@ -170,10 +183,28 @@ func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, erro
 		seen[value.ID] = true
 		values = append(values, value)
 	}
+	s.applyWorkspaceNames(values)
 	slices.SortStableFunc(values, func(a, b workspace.Context) int {
 		return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 	})
 	return values, nil
+}
+
+// applyWorkspaceNames overlays user-chosen display names from the catalog.
+func (s *Service) applyWorkspaceNames(values []workspace.Context) {
+	names, err := s.catalog.Names()
+	if err != nil {
+		diagnostic.Logger().Warn("workspace names unavailable", "error", err)
+		return
+	}
+	if len(names) == 0 {
+		return
+	}
+	for index := range values {
+		if name, ok := names[values[index].Root]; ok {
+			values[index].Name = name
+		}
+	}
 }
 
 func (s *Service) AddWorkspace(ctx context.Context, path string) (workspace.Context, error) {
@@ -189,6 +220,18 @@ func (s *Service) AddWorkspace(ctx context.Context, path string) (workspace.Cont
 
 func (s *Service) RemoveWorkspace(_ context.Context, value workspace.Context) error {
 	return s.catalog.Remove(value.Root)
+}
+
+func (s *Service) RenameWorkspace(
+	_ context.Context,
+	value workspace.Context,
+	name string,
+) error {
+	return s.catalog.SetName(value.Root, name)
+}
+
+func (s *Service) Rename(ctx context.Context, id, name string) error {
+	return s.runtime.Rename(ctx, id, name)
 }
 
 func (s *Service) Capture(ctx context.Context, id string, lines int) (string, error) {

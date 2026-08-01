@@ -28,6 +28,8 @@ const (
 	returnBindingNote       = "Return from Stormlight"
 	returnTargetOption      = "@stormlight_return_target"
 	returnBindingFormat     = `#{?#{==:#{@stormlight_id},},display-message "Not a Stormlight window",#{?#{==:#{@stormlight_return_target},},detach-client,switch-client -t "#{@stormlight_return_target}"}}`
+	returnMouseKey          = "MouseDown1StatusRight"
+	returnAction            = `#{?#{==:#{@stormlight_return_target},},detach-client,switch-client -t "#{@stormlight_return_target}"}`
 	statusStyleBaseOption   = "@stormlight_status_style_base"
 	statusStylePrefixOption = "@stormlight_status_style_prefix"
 	statusLeftBaseOption    = "@stormlight_status_left_base"
@@ -40,7 +42,7 @@ const (
 	dynamicStatusStyle      = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
 	dynamicStatusLeft       = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
 	basePaneFieldCount      = 10
-	metadataFieldCount      = 17
+	metadataFieldCount      = 18
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -61,6 +63,7 @@ var agentMetadataFields = [metadataFieldCount]string{
 	"component_name",
 	"component_root",
 	"workspace_metadata",
+	"mode",
 }
 
 type Runtime struct {
@@ -68,6 +71,7 @@ type Runtime struct {
 	sessionName string
 	executable  string
 	socket      string
+	returnKeys  []string
 }
 
 var _ session.Runtime = (*Runtime)(nil)
@@ -89,6 +93,28 @@ func NewRuntime(runner Runner, sessionName string) (*Runtime, error) {
 		runtime.socket = source.Socket()
 	}
 	return runtime, nil
+}
+
+// SetReturnKeys overrides the single-press return-to-dashboard keys
+// installed in tmux's root table (default C-6 and C-^).
+func (r *Runtime) SetReturnKeys(keys []string) {
+	r.returnKeys = keys
+}
+
+type rootBinding struct {
+	key         string
+	passthrough string
+}
+
+func (r *Runtime) effectiveReturnKeys() []string {
+	if len(r.returnKeys) > 0 {
+		return r.returnKeys
+	}
+	return []string{"C-6", "C-^"}
+}
+
+func (r *Runtime) statusRightHint() string {
+	return " " + r.effectiveReturnKeys()[0] + " ⏎ dashboard "
 }
 
 func (r *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
@@ -171,6 +197,7 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 		"@stormlight_activity":   string(agent.ActivityStarting),
 		"@stormlight_attention":  "",
 		"@stormlight_pane":       target.paneID,
+		"@stormlight_mode":       string(req.Mode),
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(req.Workspace)
 	if err != nil {
@@ -326,24 +353,22 @@ func insideTmuxServer(socket string) bool {
 }
 
 func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, target string) error {
-	binding, err := r.runner.Run(ctx, nil,
-		"list-keys", "-T", "prefix", returnBindingKey,
-	)
-	switch {
-	case err == nil:
-		note, noteErr := r.runner.Run(ctx, nil,
-			"list-keys", "-N", "-T", "prefix", returnBindingKey,
-		)
-		ownedNote := note == returnBindingKey+" "+returnBindingNote
-		if noteErr != nil || !ownedNote {
-			return fmt.Errorf(
-				"tmux prefix %s is already bound; Stormlight will not replace it (%s)",
-				returnBindingKey,
-				binding,
-			)
-		}
-	case !isUnknownKeyError(err):
+	// Querying a single key (list-keys -T prefix Q) silently returns nothing
+	// on tmux 3.6, so list the whole table and find the key ourselves.
+	listing, err := r.runner.Run(ctx, nil, "list-keys", "-T", "prefix")
+	if err != nil {
 		return fmt.Errorf("inspect tmux return binding: %w", err)
+	}
+	if binding, bound := tableBinding(listing, "prefix", returnBindingKey); bound &&
+		!strings.Contains(binding, "@stormlight_") {
+		diagnostic.Logger().Warn("foreign tmux return binding",
+			"key", returnBindingKey,
+			"binding", binding,
+		)
+		return fmt.Errorf(
+			"tmux prefix %s is bound outside Stormlight; not replacing it",
+			returnBindingKey,
+		)
 	}
 
 	if _, err := r.runner.Run(ctx, nil,
@@ -352,6 +377,7 @@ func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, ta
 	); err != nil {
 		return fmt.Errorf("install tmux return binding: %w", err)
 	}
+	r.configureRootReturn(ctx)
 	if err := r.configurePrefixFeedback(ctx, sessionName); err != nil {
 		diagnostic.Logger().Warn("tmux prefix feedback unavailable", "error", err)
 	}
@@ -361,6 +387,47 @@ func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, ta
 		return fmt.Errorf("set tmux return target: %w", err)
 	}
 	return nil
+}
+
+// configureRootReturn installs single-press escapes from agent windows: C-6
+// and C-^ (the same physical Ctrl-6 press under extended-keys and legacy
+// terminals — vim's alternate-buffer toggle), plus a click on the
+// status-right hint. Root-table keys reach tmux before the pane application,
+// so no prefix is needed; in non-Stormlight windows the key or mouse event
+// is forwarded to the pane untouched. Failures are non-fatal because prefix
+// Q still works.
+func (r *Runtime) configureRootReturn(ctx context.Context) {
+	listing, err := r.runner.Run(ctx, nil, "list-keys", "-T", "root")
+	if err != nil {
+		diagnostic.Logger().Warn("cannot inspect tmux root bindings", "error", err)
+		return
+	}
+	bindings := make([]rootBinding, 0, len(r.effectiveReturnKeys())+1)
+	for _, key := range r.effectiveReturnKeys() {
+		bindings = append(bindings, rootBinding{key, "send-keys " + key})
+	}
+	bindings = append(bindings, rootBinding{returnMouseKey, "send-keys -M"})
+	for _, binding := range bindings {
+		if current, bound := tableBinding(listing, "root", binding.key); bound &&
+			!strings.Contains(current, "@stormlight_") {
+			diagnostic.Logger().Warn("foreign tmux root binding left in place",
+				"key", binding.key,
+				"binding", current,
+			)
+			continue
+		}
+		format := `#{?#{==:#{@stormlight_id},},` +
+			binding.passthrough + `,` + returnAction + `}`
+		if _, err := r.runner.Run(ctx, nil,
+			"bind-key", "-T", "root", "-N", returnBindingNote,
+			binding.key, "run-shell", "-C", format,
+		); err != nil {
+			diagnostic.Logger().Warn("cannot install tmux return binding",
+				"key", binding.key,
+				"error", err,
+			)
+		}
+	}
 }
 
 func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName string) error {
@@ -431,6 +498,8 @@ func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName strin
 		{"status-style", dynamicStatusStyle},
 		{"status-left", dynamicStatusLeft},
 		{"status-left-length", strconv.Itoa(max(baseLength, len(prefixStatusLeft)))},
+		{"status-right", r.statusRightHint()},
+		{"status-right-length", strconv.Itoa(len(r.statusRightHint()))},
 	}
 	for _, option := range options {
 		if _, err := r.runner.Run(ctx, nil,
@@ -498,6 +567,21 @@ func (r *Runtime) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	return r.killWindow(ctx, managedAgent.WindowID)
+}
+
+func (r *Runtime) Rename(ctx context.Context, id, name string) error {
+	name = metadataValue(name)
+	if name == "" {
+		return fmt.Errorf("agent name cannot be empty")
+	}
+	managedAgent, err := r.FindAgent(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = r.runner.Run(ctx, nil,
+		"rename-window", "-t", managedAgent.WindowID, name,
+	)
+	return err
 }
 
 func (r *Runtime) FindAgent(ctx context.Context, id string) (agent.Agent, error) {
@@ -710,6 +794,7 @@ func parseAgent(line string) (agent.Agent, bool) {
 		PaneTitle:   parts[7],
 		ProcessLive: !paneDead,
 		ExitCode:    exitCode,
+		Mode:        agent.PermissionMode(core[17]),
 		Workspace: workspace.Context{
 			ID:            core[9],
 			Kind:          core[10],
@@ -738,6 +823,7 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		"@stormlight_activity":   string(managedAgent.Activity),
 		"@stormlight_attention":  string(managedAgent.Attention),
 		"@stormlight_pane":       managedAgent.PaneID,
+		"@stormlight_mode":       string(managedAgent.Mode),
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(managedAgent.Workspace)
 	if err != nil {
@@ -898,9 +984,24 @@ func isNoServerError(err error) bool {
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "no server running") ||
 		strings.Contains(text, "failed to connect to server") ||
+		strings.Contains(text, "error connecting to") ||
 		strings.Contains(text, "no sessions")
 }
 
-func isUnknownKeyError(err error) bool {
-	return strings.Contains(strings.ToLower(err.Error()), "unknown key")
+// tableBinding finds the bind-key line for a key in `list-keys -T <table>`
+// output. Lines look like `bind-key [-r] -T <table> <key> <command...>`.
+func tableBinding(listing, table, key string) (string, bool) {
+	for _, line := range strings.Split(listing, "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+2 < len(fields); i++ {
+			if fields[i] != "-T" {
+				continue
+			}
+			if fields[i+1] == table && fields[i+2] == key {
+				return strings.TrimSpace(line), true
+			}
+			break
+		}
+	}
+	return "", false
 }

@@ -20,14 +20,29 @@ type Runner interface {
 type Client struct {
 	binary string
 	socket string
+	config string
 }
 
 func NewClient(socket string) *Client {
 	return &Client{binary: "tmux", socket: socket}
 }
 
+// NewClientWithConfig returns a client that passes a tmux configuration file
+// on every invocation. tmux only reads it when a command starts the server,
+// so the Stormlight server always boots with Stormlight's config regardless
+// of which command happens to start it.
+func NewClientWithConfig(socket, config string) *Client {
+	client := NewClient(socket)
+	client.config = config
+	return client
+}
+
 func NewClientFromEnv() *Client {
-	return NewClient(os.Getenv("STORMLIGHT_TMUX_SOCKET"))
+	socket := os.Getenv("STORMLIGHT_TMUX_SOCKET")
+	if socket == "" {
+		socket = DefaultSocket
+	}
+	return NewClient(socket)
 }
 
 func (c *Client) Socket() string {
@@ -40,10 +55,7 @@ func (c *Client) Run(ctx context.Context, stdin []byte, args ...string) (string,
 	if len(args) > 0 {
 		operation = args[0]
 	}
-	commandArgs := args
-	if c.socket != "" {
-		commandArgs = append([]string{"-L", c.socket}, args...)
-	}
+	commandArgs := c.commandArgs(args)
 
 	cmd := exec.CommandContext(ctx, c.binary, commandArgs...)
 	if c.socket != "" {
@@ -78,6 +90,17 @@ func (c *Client) Run(ctx context.Context, stdin []byte, args ...string) (string,
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (c *Client) commandArgs(args []string) []string {
+	prefix := make([]string, 0, 4+len(args))
+	if c.socket != "" {
+		prefix = append(prefix, "-L", c.socket)
+	}
+	if c.config != "" {
+		prefix = append(prefix, "-f", c.config)
+	}
+	return append(prefix, args...)
 }
 
 func logTmuxFailure(operation, detail string, duration time.Duration) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,6 +42,7 @@ func TestParseAgent(t *testing.T) {
 		"project",
 		"/tmp/project",
 		"eyJicmFuY2giOiJtYWluIn0",
+		"auto",
 	}
 	line := strings.Join(parts, fieldSeparator)
 
@@ -63,6 +65,9 @@ func TestParseAgent(t *testing.T) {
 	if managedAgent.Workspace.ID != "git:/tmp/project/.git" ||
 		managedAgent.Workspace.Metadata["branch"] != "main" {
 		t.Fatalf("workspace = %#v", managedAgent.Workspace)
+	}
+	if managedAgent.Mode != agent.ModeAuto {
+		t.Fatalf("mode = %q", managedAgent.Mode)
 	}
 }
 
@@ -197,10 +202,11 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 	}
 	wantCalls := [][]string{
 		{"list-panes", "-a", "-F", expectedPaneListFormat()},
-		{"list-keys", "-T", "prefix", "Q"},
+		{"list-keys", "-T", "prefix"},
 		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
 	}
+	wantCalls = append(wantCalls, rootReturnCalls()...)
 	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
@@ -245,10 +251,11 @@ func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
 			wantCalls := [][]string{
 				{"list-panes", "-a", "-F", expectedPaneListFormat()},
 				{"display-message", "-p", "-t", "%9", "#{session_id}"},
-				{"list-keys", "-T", "prefix", "Q"},
+				{"list-keys", "-T", "prefix"},
 				{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 					"run-shell", "-C", returnBindingFormat},
 			}
+			wantCalls = append(wantCalls, rootReturnCalls()...)
 			wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 			wantCalls = append(wantCalls,
 				[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", "$7"},
@@ -276,18 +283,19 @@ func TestAttachRefusesToReplaceExistingReturnBinding(t *testing.T) {
 	t.Setenv("TMUX_PANE", "")
 	runner := &captureRunner{
 		agentLine: captureAgentLine(false),
-		binding:   "bind-key -T prefix Q display-panes",
+		binding: "bind-key    -T prefix !       break-pane\n" +
+			"bind-key    -T prefix Q       display-panes\n" +
+			"bind-key -r -T prefix Up      select-pane -U",
 	}
 	runtime := &Runtime{runner: runner}
 
 	_, err := runtime.Attach(context.Background(), "capture-id")
-	if err == nil || !strings.Contains(err.Error(), "already bound") {
+	if err == nil || !strings.Contains(err.Error(), "bound outside Stormlight") {
 		t.Fatalf("error = %v", err)
 	}
 	assertCalls(t, runner.calls, [][]string{
 		{"list-panes", "-a", "-F", expectedPaneListFormat()},
-		{"list-keys", "-T", "prefix", "Q"},
-		{"list-keys", "-N", "-T", "prefix", "Q"},
+		{"list-keys", "-T", "prefix"},
 	})
 }
 
@@ -295,9 +303,9 @@ func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
 	runner := &captureRunner{
-		agentLine:   captureAgentLine(false),
-		binding:     "existing Stormlight binding",
-		bindingNote: "Q Return from Stormlight",
+		agentLine: captureAgentLine(false),
+		binding: "bind-key    -T prefix Q       run-shell -C \"" +
+			returnBindingFormat + "\"",
 	}
 	runtime := &Runtime{runner: runner}
 
@@ -306,17 +314,41 @@ func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 	}
 	wantCalls := [][]string{
 		{"list-panes", "-a", "-F", expectedPaneListFormat()},
-		{"list-keys", "-T", "prefix", "Q"},
-		{"list-keys", "-N", "-T", "prefix", "Q"},
+		{"list-keys", "-T", "prefix"},
 		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
 	}
+	wantCalls = append(wantCalls, rootReturnCalls()...)
 	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
 		[]string{"select-window", "-t", "@1"},
 	)
 	assertCalls(t, runner.calls, wantCalls)
+}
+
+func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	runner := &captureRunner{
+		agentLine:   captureAgentLine(false),
+		rootBinding: "bind-key    -T root C-6       select-window -n",
+	}
+	runtime := &Runtime{runner: runner}
+
+	if _, err := runtime.Attach(context.Background(), "capture-id"); err != nil {
+		t.Fatal(err)
+	}
+	var boundKeys []string
+	for _, call := range runner.calls {
+		if len(call) > 5 && call[0] == "bind-key" && call[2] == "root" {
+			boundKeys = append(boundKeys, call[5])
+		}
+	}
+	want := []string{"C-^", returnMouseKey}
+	if !slices.Equal(boundKeys, want) {
+		t.Fatalf("root keys bound = %#v, want %#v", boundKeys, want)
+	}
 }
 
 func TestConfigurePrefixFeedbackReusesSavedBaseOptions(t *testing.T) {
@@ -339,6 +371,9 @@ func TestConfigurePrefixFeedbackReusesSavedBaseOptions(t *testing.T) {
 		{"set-option", "-t", "custom-agents", "status-style", dynamicStatusStyle},
 		{"set-option", "-t", "custom-agents", "status-left", dynamicStatusLeft},
 		{"set-option", "-t", "custom-agents", "status-left-length", "48"},
+		{"set-option", "-t", "custom-agents", "status-right", (&Runtime{}).statusRightHint()},
+		{"set-option", "-t", "custom-agents", "status-right-length",
+			strconv.Itoa(len((&Runtime{}).statusRightHint()))},
 	})
 }
 
@@ -403,7 +438,7 @@ type captureRunner struct {
 	agentLine            string
 	sourceSessionID      string
 	binding              string
-	bindingNote          string
+	rootBinding          string
 	feedbackVersion      string
 	savedStatusLeftWidth string
 	calls                [][]string
@@ -429,16 +464,10 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 			return r.sourceSessionID, nil
 		}
 	case "list-keys":
-		if len(args) > 1 && args[1] == "-N" {
-			if r.bindingNote != "" {
-				return r.bindingNote, nil
-			}
-			return "", errors.New("tmux list-keys: unknown key: Q")
+		if slices.Contains(args, "root") {
+			return r.rootBinding, nil
 		}
-		if r.binding != "" {
-			return r.binding, nil
-		}
-		return "", errors.New("tmux list-keys: unknown key: Q")
+		return r.binding, nil
 	case "show-options":
 		switch args[len(args)-1] {
 		case prefixFeedbackOption:
@@ -471,7 +500,27 @@ func prefixFeedbackCalls(sessionName string) [][]string {
 		{"set-option", "-t", sessionName, "status-style", dynamicStatusStyle},
 		{"set-option", "-t", sessionName, "status-left", dynamicStatusLeft},
 		{"set-option", "-t", sessionName, "status-left-length", "34"},
+		{"set-option", "-t", sessionName, "status-right", (&Runtime{}).statusRightHint()},
+		{"set-option", "-t", sessionName, "status-right-length",
+			strconv.Itoa(len((&Runtime{}).statusRightHint()))},
 	}
+}
+
+func rootReturnCalls() [][]string {
+	calls := [][]string{{"list-keys", "-T", "root"}}
+	for _, binding := range []struct{ key, passthrough string }{
+		{"C-6", "send-keys C-6"},
+		{"C-^", "send-keys C-^"},
+		{returnMouseKey, "send-keys -M"},
+	} {
+		format := `#{?#{==:#{@stormlight_id},},` +
+			binding.passthrough + `,` + returnAction + `}`
+		calls = append(calls, []string{
+			"bind-key", "-T", "root", "-N", returnBindingNote,
+			binding.key, "run-shell", "-C", format,
+		})
+	}
+	return calls
 }
 
 func assertCalls(t *testing.T, got, want [][]string) {
@@ -522,4 +571,48 @@ func captureAgentLine(dead bool) string {
 		parts[9] = "0"
 	}
 	return strings.Join(parts, fieldSeparator)
+}
+
+func TestTableBindingFindsKeyInTableListing(t *testing.T) {
+	listing := "bind-key    -T prefix !       break-pane\n" +
+		"bind-key -r -T prefix Up      select-pane -U\n" +
+		"bind-key    -T prefix Q       run-shell -C \"#{?…}\"\n" +
+		"bind-key    -T root   Q       send-keys Q"
+
+	binding, bound := tableBinding(listing, "prefix", "Q")
+	if !bound || !strings.Contains(binding, "run-shell") {
+		t.Fatalf("binding = %q, bound = %v", binding, bound)
+	}
+	if _, bound := tableBinding(listing, "prefix", "Z"); bound {
+		t.Fatal("unbound key reported as bound")
+	}
+	if binding, bound := tableBinding(listing, "prefix", "Up"); !bound ||
+		!strings.Contains(binding, "select-pane") {
+		t.Fatalf("repeat-flag binding = %q, bound = %v", binding, bound)
+	}
+	if binding, bound := tableBinding(listing, "root", "Q"); !bound ||
+		!strings.Contains(binding, "send-keys") {
+		t.Fatalf("root binding = %q, bound = %v", binding, bound)
+	}
+	if _, bound := tableBinding("", "prefix", "Q"); bound {
+		t.Fatal("empty listing reported a binding")
+	}
+}
+
+func TestIsNoServerError(t *testing.T) {
+	cases := []struct {
+		message string
+		matches bool
+	}{
+		{"tmux list-panes: no server running on /tmp/tmux-501/default", true},
+		{"tmux list-panes: error connecting to /private/tmp/tmux-501/default (No such file or directory)", true},
+		{"tmux: failed to connect to server", true},
+		{"no sessions", true},
+		{"tmux list-panes: unknown option", false},
+	}
+	for _, tc := range cases {
+		if got := isNoServerError(errors.New(tc.message)); got != tc.matches {
+			t.Errorf("isNoServerError(%q) = %v, want %v", tc.message, got, tc.matches)
+		}
+	}
 }
