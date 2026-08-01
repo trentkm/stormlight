@@ -24,3 +24,28 @@ func TestNewClientFromEnvUsesStormlightSocket(t *testing.T) {
 		t.Fatalf("socket = %q", got)
 	}
 }
+
+func TestNewClientFromEnvDefaultsToPrivateServer(t *testing.T) {
+	t.Setenv("STORMLIGHT_TMUX_SOCKET", "")
+	if got := NewClientFromEnv().Socket(); got != DefaultSocket {
+		t.Fatalf("socket = %q, want %q", got, DefaultSocket)
+	}
+}
+
+func TestClientAppliesSocketAndConfigToEveryCommand(t *testing.T) {
+	client := NewClientWithConfig("stormlight", "/config/tmux.conf")
+	got := client.commandArgs([]string{"list-panes", "-a"})
+	want := []string{
+		"-L", "stormlight",
+		"-f", "/config/tmux.conf",
+		"list-panes", "-a",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+
+	bare := NewClient("").commandArgs([]string{"list-panes"})
+	if !slices.Equal(bare, []string{"list-panes"}) {
+		t.Fatalf("bare args = %#v", bare)
+	}
+}

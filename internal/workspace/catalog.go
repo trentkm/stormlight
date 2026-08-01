@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,8 +20,9 @@ type Catalog struct {
 }
 
 type catalogData struct {
-	Version int      `json:"version"`
-	Paths   []string `json:"paths"`
+	Version int               `json:"version"`
+	Paths   []string          `json:"paths"`
+	Names   map[string]string `json:"names,omitempty"`
 }
 
 func NewCatalog() *Catalog {
@@ -78,7 +80,51 @@ func (c *Catalog) Remove(path string) error {
 	data.Paths = slices.DeleteFunc(data.Paths, func(candidate string) bool {
 		return candidate == canonical
 	})
+	delete(data.Names, canonical)
 	return c.write(data)
+}
+
+// SetName stores a display-name override for a workspace root. An empty
+// name removes the override. The path is added to the catalog if missing so
+// the name survives even for workspaces discovered through their agents.
+func (c *Catalog) SetName(path, name string) error {
+	canonical, err := canonicalDirectory(path)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	data, err := c.read()
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(data.Paths, canonical) {
+		data.Paths = append(data.Paths, canonical)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		delete(data.Names, canonical)
+	} else {
+		if data.Names == nil {
+			data.Names = map[string]string{}
+		}
+		data.Names[canonical] = name
+	}
+	return c.write(data)
+}
+
+// Names returns the display-name overrides keyed by canonical root path.
+func (c *Catalog) Names() (map[string]string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	data, err := c.read()
+	if err != nil {
+		return nil, err
+	}
+	return maps.Clone(data.Names), nil
 }
 
 func (c *Catalog) read() (catalogData, error) {

@@ -16,6 +16,7 @@ type Runtime interface {
 	Send(context.Context, string, string) error
 	Interrupt(context.Context, string) error
 	Delete(context.Context, string) error
+	Rename(context.Context, string, string) error
 	Update(context.Context, string, Update) error
 	SetWorkspace(context.Context, string, workspace.Context) error
 }
@@ -25,6 +26,7 @@ type DispatchRequest struct {
 	Name      string
 	Task      string
 	Cwd       string
+	Mode      agent.PermissionMode
 	Launch    Launch
 	Workspace workspace.Context
 }

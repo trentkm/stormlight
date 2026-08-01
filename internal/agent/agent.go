@@ -2,6 +2,7 @@ package agent
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -37,6 +38,35 @@ const (
 	AttentionAuth     Attention = "auth"
 )
 
+// PermissionMode controls how much a dispatched agent may do without asking.
+// The names are provider-neutral; each provider adapter maps them to its own
+// flags.
+type PermissionMode string
+
+const (
+	// ModeAsk keeps the provider's cautious default: consequential actions
+	// request approval (bridged into the dashboard where supported).
+	ModeAsk PermissionMode = "ask"
+	// ModeEdits applies workspace file edits without asking and still asks
+	// for shell, network, and anything outside the workspace.
+	ModeEdits PermissionMode = "edits"
+	// ModeAuto never asks.
+	ModeAuto PermissionMode = "auto"
+)
+
+// DefaultMode is used when a dispatch does not specify a permission mode.
+const DefaultMode = ModeEdits
+
+func ParseMode(value string) (PermissionMode, error) {
+	switch PermissionMode(value) {
+	case "":
+		return DefaultMode, nil
+	case ModeAsk, ModeEdits, ModeAuto:
+		return PermissionMode(value), nil
+	}
+	return "", fmt.Errorf("invalid permission mode %q (ask, edits, or auto)", value)
+}
+
 type Agent struct {
 	ID          string            `json:"id"`
 	Provider    Provider          `json:"provider"`
@@ -55,6 +85,7 @@ type Agent struct {
 	Command     string            `json:"command,omitempty"`
 	ProcessLive bool              `json:"process_live"`
 	ExitCode    *int              `json:"exit_code,omitempty"`
+	Mode        PermissionMode    `json:"mode,omitempty"`
 	Workspace   workspace.Context `json:"workspace"`
 }
 

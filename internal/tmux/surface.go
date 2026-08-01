@@ -3,12 +3,15 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
 
 	"github.com/trentkm/stormlight/internal/surface"
 )
 
 type Surface struct {
 	binary string
+	popups bool
 }
 
 var _ surface.Surface = (*Surface)(nil)
@@ -17,12 +20,47 @@ func NewSurface(binary string) *Surface {
 	if binary == "" {
 		binary = "tmux"
 	}
-	return &Surface{binary: binary}
+	version := ""
+	if out, err := exec.Command(binary, "-V").Output(); err == nil {
+		version = string(out)
+	}
+	return newSurfaceWithVersion(binary, version)
 }
+
+func newSurfaceWithVersion(binary, version string) *Surface {
+	return &Surface{
+		binary: binary,
+		popups: popupsSupported(version),
+	}
+}
+
+// popupsSupported reports whether tmux popups are safe to use. Before tmux
+// 3.7, a program that queries cursor state with DECRQM (as Yazi and Neovim
+// do) makes the popup's option lookup hit "fatal: missing option
+// cursor-style", killing the whole tmux server (tmux/tmux#4942).
+func popupsSupported(version string) bool {
+	matches := tmuxVersionPattern.FindStringSubmatch(version)
+	if matches == nil {
+		return false
+	}
+	major, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return false
+	}
+	minor, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return false
+	}
+	return major > 3 || (major == 3 && minor >= 7)
+}
+
+var tmuxVersionPattern = regexp.MustCompile(
+	`^tmux (?:next-)?(\d+)\.(\d+)`,
+)
 
 func (s *Surface) Capabilities() surface.Capabilities {
 	return surface.Capabilities{
-		Popups:       true,
+		Popups:       s.popups,
 		ClientSwitch: true,
 	}
 }
@@ -35,8 +73,10 @@ func (s *Surface) Present(
 			"interactive command path is empty",
 		)
 	}
-	if request.Popup == nil {
-		return surface.NewDirect().Present(request)
+	if request.Popup == nil || !s.popups {
+		direct := request
+		direct.Popup = nil
+		return surface.NewDirect().Present(direct)
 	}
 
 	popup := request.Popup
