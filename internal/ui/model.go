@@ -56,6 +56,28 @@ const (
 	modeRename
 )
 
+// sortMode orders workspaces and agents. Sorting is always an explicit
+// user choice (the yazi-style `,` chord) — rows never rearrange on their
+// own; the default is stable newest-first.
+type sortMode int
+
+const (
+	sortByCreated sortMode = iota
+	sortByName
+	sortByAttention
+)
+
+func (s sortMode) label() string {
+	switch s {
+	case sortByName:
+		return "name"
+	case sortByAttention:
+		return "attention"
+	default:
+		return "newest"
+	}
+}
+
 type pane int
 
 const (
@@ -139,6 +161,7 @@ type Model struct {
 	shimmerRunning bool
 
 	normalPrefix   string
+	sortMode       sortMode
 	dispatchPrefix string
 }
 
@@ -617,6 +640,25 @@ func (m Model) View() string {
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.normalPrefix == "," {
+		m.normalPrefix = ""
+		mode := m.sortMode
+		switch key {
+		case "a":
+			mode = sortByAttention
+		case "n":
+			mode = sortByName
+		case "c":
+			mode = sortByCreated
+		default:
+			m.status = "Sort unchanged"
+			return m, nil
+		}
+		m.sortMode = mode
+		m.rebuildGroups(m.selectedWorkspaceID(), m.selectedAgentID())
+		m.status = "Sorted by " + mode.label()
+		return m, m.loadInteractionCmd()
+	}
 	if m.normalPrefix == "g" {
 		m.normalPrefix = ""
 		if key == "g" {
@@ -643,6 +685,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "g":
 		m.normalPrefix = "g"
+		return m, nil
+	case ",":
+		m.normalPrefix = ","
+		m.status = "Sort: a attention  n name  c newest"
 		return m, nil
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -1752,6 +1798,9 @@ func (m Model) renderWorkspaceRow(
 	if active > 0 {
 		activityMarker = "● "
 	}
+	if attention > 0 {
+		activityMarker = "! "
+	}
 	nameWidth := max(
 		1,
 		contentWidth-lipgloss.Width(activityMarker)-lipgloss.Width(suffix)-1,
@@ -1777,6 +1826,7 @@ func (m Model) renderWorkspaceRow(
 			focused,
 			m.expandedRows(),
 			active > 0,
+			attention > 0,
 			m.shimmerPhaseOrRest(),
 			rowThemeFor(danger),
 		)
@@ -1788,7 +1838,15 @@ func (m Model) renderWorkspaceRow(
 	}
 	activityStyle := mutedStyle
 	renderedName := titleStyle.Render(name)
-	if active > 0 {
+	suffixStyle := mutedStyle
+	switch {
+	case attention > 0:
+		// Attention outranks the working glow: the whole row goes amber.
+		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+		activityStyle = attentionStyle
+		renderedName = attentionStyle.Render(name)
+		suffixStyle = attentionStyle
+	case active > 0:
 		activityStyle = lipgloss.NewStyle().
 			Foreground(colorWorking).
 			Bold(true)
@@ -1797,7 +1855,7 @@ func (m Model) renderWorkspaceRow(
 	top := marker + activityStyle.Render(activityMarker) +
 		renderedName +
 		strings.Repeat(" ", gap) +
-		mutedStyle.Render(suffix)
+		suffixStyle.Render(suffix)
 	bottom := marker + mutedStyle.Render(path) +
 		strings.Repeat(" ", detailGap) +
 		mutedStyle.Render(kind)
@@ -1817,6 +1875,7 @@ func renderSelectedWorkspaceRow(
 	focused bool,
 	expanded bool,
 	active bool,
+	attention bool,
 	shimmerPhase int,
 	theme rowTheme,
 ) string {
@@ -1849,7 +1908,13 @@ func renderSelectedWorkspaceRow(
 		Background(theme.background)
 	activityStyle := baseStyle.Copy()
 	renderedName := baseStyle.Copy().Bold(true).Render(name)
-	if active {
+	switch {
+	case attention:
+		activityStyle = activityStyle.
+			Foreground(colorWaiting).
+			Bold(true)
+		renderedName = activityStyle.Render(name)
+	case active:
 		activityStyle = activityStyle.
 			Foreground(colorWorking).
 			Bold(true)
@@ -1991,8 +2056,15 @@ func renderAgentRowWithDensity(
 	}
 
 	renderedTitle := titleStyle.Render(displayTitle)
-	if managedAgent.Activity == agent.ActivityWorking ||
-		managedAgent.Activity == agent.ActivityStarting {
+	detailStyle := mutedStyle
+	switch {
+	case managedAgent.NeedsAttention():
+		// Attention outranks the working glow: the row goes amber.
+		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+		renderedTitle = attentionStyle.Render(displayTitle)
+		detailStyle = attentionStyle
+	case managedAgent.Activity == agent.ActivityWorking,
+		managedAgent.Activity == agent.ActivityStarting:
 		renderedTitle = shimmerText(displayTitle, shimmerPhase, nil)
 	}
 	marker := "  "
@@ -2002,8 +2074,8 @@ func renderAgentRowWithDensity(
 	top := marker + statusStyle.Render(symbol) + " " +
 		renderedTitle +
 		strings.Repeat(" ", gap) +
-		mutedStyle.Render(age)
-	bottom := marker + mutedStyle.Render(bottomContent)
+		detailStyle.Render(age)
+	bottom := marker + detailStyle.Render(bottomContent)
 	if !expanded {
 		return top
 	}
@@ -2868,7 +2940,7 @@ func (m Model) commandHints() string {
 	switch m.activePane {
 	case paneAgents:
 		return strings.TrimSpace(
-			"h/l panes  j/k select  n new  o choose path  " + rowMode + "  Enter open",
+			"h/l panes  j/k select  n new  o choose path  , sort  " + rowMode + "  Enter open",
 		)
 	case paneInteraction:
 		return strings.TrimSpace(
@@ -2876,7 +2948,7 @@ func (m Model) commandHints() string {
 		)
 	default:
 		return strings.TrimSpace(
-			"j/k select  l agents  n add  d remove  " + rowMode + "  r refresh  q quit",
+			"j/k select  l agents  n add  d remove  , sort  " + rowMode + "  r refresh  q quit",
 		)
 	}
 }
@@ -3523,6 +3595,7 @@ func (m *Model) rebuildGroups(preferredWorkspaceID, preferredAgentID string) {
 	previousWorkspaceCursor := m.workspaceCursor
 	previousAgentCursor := m.agentCursor
 	m.groups = buildWorkspaceGroups(m.catalogWorkspaces, m.agents)
+	m.applySort()
 	if len(m.groups) == 0 {
 		m.workspaceCursor = 0
 		m.agentCursor = 0
@@ -3550,6 +3623,60 @@ func (m *Model) rebuildGroups(preferredWorkspaceID, preferredAgentID string) {
 				break
 			}
 		}
+	}
+}
+
+// applySort orders groups and their agents by the user-chosen mode. The
+// backend delivers agents attention-first; the UI re-sorts so nothing
+// rearranges unless the user asked for it.
+func (m *Model) applySort() {
+	for index := range m.groups {
+		sortAgentList(m.groups[index].agents, m.sortMode)
+	}
+	switch m.sortMode {
+	case sortByName:
+		slices.SortStableFunc(m.groups, func(a, b workspaceGroup) int {
+			return strings.Compare(
+				strings.ToLower(a.context.Name),
+				strings.ToLower(b.context.Name),
+			)
+		})
+	case sortByAttention:
+		slices.SortStableFunc(m.groups, func(a, b workspaceGroup) int {
+			_, attentionA := workspaceStats(a.agents)
+			_, attentionB := workspaceStats(b.agents)
+			return attentionB - attentionA
+		})
+	}
+}
+
+func sortAgentList(agents []agent.Agent, mode sortMode) {
+	switch mode {
+	case sortByName:
+		slices.SortStableFunc(agents, func(a, b agent.Agent) int {
+			return strings.Compare(
+				strings.ToLower(agentDisplayTitle(a)),
+				strings.ToLower(agentDisplayTitle(b)),
+			)
+		})
+	case sortByAttention:
+		slices.SortStableFunc(agents, func(a, b agent.Agent) int {
+			attentionA, attentionB := 0, 0
+			if a.NeedsAttention() {
+				attentionA = 1
+			}
+			if b.NeedsAttention() {
+				attentionB = 1
+			}
+			if attentionA != attentionB {
+				return attentionB - attentionA
+			}
+			return b.CreatedAt.Compare(a.CreatedAt)
+		})
+	default:
+		slices.SortStableFunc(agents, func(a, b agent.Agent) int {
+			return b.CreatedAt.Compare(a.CreatedAt)
+		})
 	}
 }
 
