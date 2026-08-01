@@ -3,17 +3,25 @@
 A workspace-native control surface for coding agents.
 
 `stormlight` dispatches Claude, Codex, and arbitrary shell tasks into isolated
-windows on your existing tmux server. Each agent is one provider conversation.
-The dashboard organizes them as `Workspaces | Agents | Interaction`, showing
+windows on a private, Stormlight-owned tmux server. Each agent is one provider
+conversation.
+The dashboard organizes them as `Workspaces | Agents | Spanreed`, showing
 live process state, recent interaction, and agents that need attention without
-nesting another tmux instance or owning your terminal.
+nesting another tmux instance or owning your terminal. The Spanreed pane is
+your written link to the selected agent — its transcript, your replies, and
+its requests — named for the long-distance writing instrument in the books
+Stormlight itself is named after.
 
 Workspace-aware grouping keeps agents from the same repository together while
 preserving the checkout or worktree each agent is using.
 
 ## Design
 
-- tmux owns process and terminal lifetime.
+- tmux owns process and terminal lifetime, and nothing else.
+- Stormlight runs tmux as a private appliance: a dedicated server
+  (`tmux -L stormlight`) with Stormlight's own configuration. User dotfiles,
+  plugins, and session-restore tools never load there, so behavior is
+  identical on every machine.
 - Each agent is one tagged tmux window in the `stormlight-agents` session.
 - The dashboard can exit without stopping any agent.
 - Metadata is stored as tmux window options, not inferred from window names.
@@ -21,18 +29,32 @@ preserving the checkout or worktree each agent is using.
 - Agent runtimes and dashboard presentation surfaces are separate interfaces.
 - Workspace resolvers are provider-neutral and external resolvers are supported.
 - Pane messages use tmux buffers, avoiding command interpolation.
-- The Interaction pane combines structured actions with sampled terminal output.
+- The Spanreed pane combines structured actions with sampled terminal output.
 - Claude permission requests can be resolved without leaving the dashboard.
 - The shell adapter gives unsupported CLIs a generic fallback.
 
-No nested tmux server is created. An outside-tmux launch transparently hosts
-the dashboard in a temporary session on the existing tmux server; an
-inside-tmux launch uses the current client directly. Selecting an agent
-switches that client to its window. Press your tmux prefix followed by `Q` to
-return to the dashboard. Stormlight installs this binding only when `Q` is
-unbound or already owned by Stormlight. While the prefix is active, the managed
-session highlights the tmux status bar and shows `Q` for return and `?` for the
-full tmux key list. Closing the dashboard removes only its temporary session.
+An outside-tmux launch transparently hosts the dashboard in a temporary
+session on the Stormlight server; a launch from inside your own tmux uses the
+current pane directly and reaches agents through a nested client. Selecting an
+agent switches to its window. Press the tmux prefix followed by `Q` to return
+to the dashboard. Stormlight installs this binding only when `Q` is unbound or
+already owned by Stormlight. While the prefix is active, the managed session
+highlights the tmux status bar and shows `Q` for return and `?` for the full
+tmux key list. Closing the dashboard removes only its temporary session;
+agents keep running on the Stormlight server.
+
+## Requirements
+
+- tmux 3.3 or newer. tmux 3.7+ is strongly recommended: Yazi and Neovim
+  overlays open as tmux popups only on 3.7+, because `display-popup` in older
+  tmux crashes the whole tmux server when the hosted program queries cursor
+  state ([tmux/tmux#4942](https://github.com/tmux/tmux/issues/4942), fixed in
+  3.7). Stormlight detects the version and falls back to full-screen takeover
+  on older tmux instead of risking the server.
+- Optional: `yazi` for the directory picker, `nvim` for task editing.
+
+The future Homebrew formula must declare `depends_on "tmux"` so installs get
+a popup-safe tmux (>= 3.7) without users thinking about any of this.
 
 ## Build
 
@@ -70,7 +92,17 @@ stormlight dispatch --provider claude --cwd ~/src/project \
 
 stormlight dispatch --provider shell --cwd ~/src/project \
   "go test ./..."
+
+stormlight dispatch --provider claude --mode auto --cwd ~/src/project \
+  "Fix every lint warning"
 ```
+
+Each agent launches with a permission mode that maps onto the provider's own
+flags — `ask` (approvals for consequential actions), `edits` (the default:
+file edits apply immediately, shell and network still ask), or `auto` (never
+asks). In the New Agent form, press `m` to cycle the mode; `auto` agents are
+marked with an `AUTO` badge in the agent list. Claude approval requests keep
+arriving in the Spanreed pane in `ask` and `edits` modes.
 
 Inspect and control agents:
 
@@ -79,10 +111,16 @@ stormlight list
 stormlight list --json
 stormlight attach <id>
 stormlight send <id> "Run the focused test before wrapping up"
+stormlight rename <id> "focused test fixer"
 stormlight stop <id>
 stormlight delete <id>
 stormlight logs
 ```
+
+Agent renames set the tmux window name, which the dashboard prefers over the
+generated task title. Workspace renames (press `R` in the Workspaces pane)
+are display-name overrides stored in the workspace catalog; the directory on
+disk is untouched.
 
 IDs may be shortened as long as the prefix remains unambiguous.
 
@@ -90,25 +128,29 @@ IDs may be shortened as long as the prefix remains unambiguous.
 
 | Key | Action |
 |---|---|
-| `h` / `l` | Move between Workspaces, Agents, and Interaction |
-| `j` / `k` | Move in the active pane; scroll Interaction |
+| `h` / `l` | Move between Workspaces, Agents, and Spanreed |
+| `j` / `k` | Move in the active pane; scroll Spanreed |
 | `gg` / `G` | Move to the first or last item |
 | `Ctrl-d` / `Ctrl-u` | Move down or up half a page |
 | `Ctrl-f` / `Ctrl-b` | Move down or up a full page |
 | `z` | Toggle compact and expanded list rows |
 | `Enter` | Enter Agents from Workspaces, or open the selected agent terminal |
-| tmux prefix, then `Q` | Return from an agent to the dashboard |
+| `Ctrl-6` | Return from an agent to the dashboard (vim's alternate-buffer toggle; also shown in the agent status bar, which is clickable) |
+| tmux prefix, then `Q` | Return from an agent to the dashboard (tmux-native fallback) |
 | `n` | Add a workspace in Workspaces; create an agent in the selected workspace elsewhere |
 | `o` | Create an agent with an explicit directory picker |
-| `i` / `s` | Compose a message in Interaction |
+| `i` / `s` | Write a reply in Spanreed |
 | `x` | Interrupt the selected agent |
-| `d`, then `d` / `y` / `Enter` | Remove a workspace or delete an agent |
+| `d` or `Ctrl-x`, then `d` / `x` / `y` / `Enter` | Remove a workspace or delete an agent |
+| `d` or `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
+| `R` | Rename the selected workspace or agent |
 | `r` / `Ctrl-l` | Refresh |
 | `q` | Close the dashboard |
 
-In Interaction, press `i` or `s`, type a message, and press `Enter` to send it.
-Press `Esc` to cancel composition. Normal-mode `Enter` opens the complete
-provider terminal for controls that cannot be represented inline.
+In Spanreed, press `i` or `s` to open the reply box — it wraps and grows
+with your message. Press `Enter` to send, `Esc` to cancel. Normal-mode
+`Enter` opens the complete provider terminal for controls that cannot be
+represented inline.
 
 Claude permission requests replace the transcript with an inline action. Use
 `j` / `k` and `Enter`, or press `y` to allow once, `a` to accept Claude's
@@ -116,7 +158,7 @@ persisted permission suggestion, `n` to deny, or `t` to review the request in
 the native terminal. If the dashboard closes while a request is pending,
 Stormlight stops handling it and Claude presents its native prompt.
 
-Pressing `n` in Agents or Interaction inherits the current workspace context.
+Pressing `n` in Agents or Spanreed inherits the current workspace context.
 The centered form contains a vertical `Coding agent` picker and a wrapping task
 composer. Use `j` / `k` to choose Codex, Claude, or another configured coding
 agent, then press `Enter` to compose and `Enter` again to launch. Shell remains
@@ -137,7 +179,7 @@ directory, and `Q` cancels. Yazi opens as a tmux popup over the dashboard,
 including when Stormlight was launched from a regular shell. Direct terminal
 takeover remains a fallback when the dashboard cannot be hosted in tmux.
 
-The Interaction pane retains provider terminal colors while removing startup
+The Spanreed pane retains provider terminal colors while removing startup
 chrome and the inactive prompt/status area for Claude and Codex. Shell agent
 output remains unfiltered.
 
@@ -151,7 +193,10 @@ Press `n` in the Workspaces pane to open the Add Workspace modal. Yazi and
 manual path entry are the only actions; current workspaces appear below as
 read-only context. The catalog is stored at
 `~/.local/state/stormlight/workspaces.json` by default. Workspaces containing
-active agents remain visible even when they are not in the catalog.
+active agents remain visible even when they are not in the catalog, so the
+ordinary confirmation only removes agent-free workspaces. For a workspace
+that still has agents, the confirmation demands a deliberate capital `X`,
+which deletes the workspace and every agent in it.
 
 Compact rows are the default and show the primary workspace or agent line.
 Press `z` to reveal the path and resolver or provider details. Narrow terminals
@@ -168,7 +213,7 @@ Stormlight injects agent-scoped lifecycle integration for managed providers:
 - Codex uses its external `agent-turn-complete` notification to become idle and
   publish the latest response summary.
 - Claude uses `UserPromptSubmit`, `PermissionRequest`, permission notification,
-  and `Stop` hooks to report state and bridge approval choices into Interaction.
+  and `Stop` hooks to report state and bridge approval choices into Spanreed.
 - Replies sent from the dashboard mark any provider working immediately.
 
 The runtime also exposes an `event` command so other provider hooks can report
@@ -184,6 +229,55 @@ stormlight event --state idle --attention approval \
 Managed processes receive `STORMLIGHT_ID`, so `--id` is optional inside a
 provider hook.
 
+## Configuration
+
+Stormlight runs with no configuration. An optional
+`~/.config/stormlight/config.toml` (honoring `$XDG_CONFIG_HOME`) supplies
+defaults; precedence is always flags > environment > config file > built-in
+defaults.
+
+```bash
+stormlight config init   # write a fully commented template
+stormlight config        # print the effective merged configuration
+```
+
+```toml
+[defaults]
+provider = "claude"        # what the New Agent form starts on
+mode     = "edits"         # ask | edits | auto
+
+[tmux]
+socket      = "stormlight"
+return_keys = ["C-6", "C-^"]
+
+[workspaces."~/repos/trusted-project"]
+mode = "auto"              # per-directory dispatch defaults (matches subdirs)
+```
+
+A workspace is a directory. How agents behave inside it belongs to the tree
+itself (`CLAUDE.md` / `AGENTS.md`, read natively by the provider CLIs);
+config only holds preferences about Stormlight's own behavior.
+
+### Custom providers
+
+First-class providers (Claude, Codex) keep in-tree adapters that integrate
+with their extension surfaces — hooks, notifications, permission bridging.
+Any other agent CLI can be declared in config:
+
+```toml
+[providers.aider]
+label  = "Aider"
+binary = "aider"
+args   = ["--message", "{task}"]   # exec-style; {task} is replaced verbatim
+[providers.aider.mode_args]
+auto   = ["--yes-always"]          # prepended per permission mode
+```
+
+Declared providers appear in the New Agent picker and dispatch like any
+other. Lifecycle integration is the public contract: managed processes
+receive `STORMLIGHT_ID` and can report state with `stormlight event` from
+any hook mechanism the CLI provides. Stormlight never reimplements an agent.
+
 ## Diagnostics
 
 Stormlight writes structured JSON Lines diagnostics without prompt text or pane
@@ -198,13 +292,23 @@ stormlight --log-level debug
 
 Override the location with `--log-file` or `STORMLIGHT_LOG_FILE`.
 
-## Isolated tmux socket
+## The Stormlight tmux server
 
-Tests or alternate tmux servers can be targeted without changing the default
-server:
+Stormlight talks to `tmux -L stormlight` by default and boots that server with
+its own managed configuration (rewritten at startup at
+`~/.config/stormlight/tmux.conf`). Power users can inspect it directly:
+
+```bash
+tmux -L stormlight list-sessions
+tmux -L stormlight attach -t stormlight-agents
+```
+
+Tests or parallel Stormlight instances can target an alternate server:
 
 ```bash
 STORMLIGHT_TMUX_SOCKET=stormlight-test stormlight list
 ```
 
-The value maps to `tmux -L <name>`.
+The value maps to `tmux -L <name>`. Setting `--tmux-socket ""` targets the
+default tmux server with your own configuration; Stormlight never applies its
+managed config there.
