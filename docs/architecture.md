@@ -39,14 +39,21 @@ environment-specific workspace semantics outside the public runtime.
 
 ### tmux runtime
 
-tmux is the process supervisor and terminal transport. `stormlight` never starts
-a nested tmux server.
+tmux is the process supervisor and terminal transport, run as a private
+appliance: agents and the hosted dashboard live on a dedicated Stormlight
+server (`tmux -L stormlight`) that boots with Stormlight's own configuration
+and never loads user dotfiles. User tmux sessions, plugins, and
+session-restore tools cannot observe or disturb Stormlight, and Stormlight
+behaves identically on every machine. The managed configuration is rewritten
+at startup under the user config directory (`stormlight/tmux.conf`).
 
 When launched from a regular shell, the dashboard re-enters a uniquely named
-temporary session on the selected tmux server. That gives overlays and agent
+temporary session on the Stormlight server. That gives overlays and agent
 switching the same semantics as an inside-tmux launch. The supervising process
 removes the temporary session when its client exits; managed agent sessions
-remain independent.
+remain independent. When launched from inside the user's own tmux, the
+dashboard runs directly in that pane and reaches agents on the Stormlight
+server through a nested client with `$TMUX` stripped.
 
 The application layer depends on `session.Runtime`, not the tmux implementation.
 That contract owns conversation dispatch, discovery, capture, input, lifecycle,
@@ -95,7 +102,7 @@ The window uses `remain-on-exit`, allowing completed output and exit status to
 remain reviewable. Messages are loaded into tmux buffers and pasted into the
 target pane; they are not interpolated into shell command strings.
 
-The Interaction pane is layered. A pending structured action has priority,
+The Spanreed pane is layered. A pending structured action has priority,
 followed by the normalized transcript and composer, with the native terminal as
 the fallback. Transcript rendering retains only SGR styling from tmux capture
 output; other terminal control sequences are discarded. Claude and Codex
