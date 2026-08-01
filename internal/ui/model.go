@@ -984,6 +984,10 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sendInput.Blur()
 		m.status = "Ready"
 		return m, nil
+	case "ctrl+j", "shift+enter":
+		m.sendInput.InsertString("\n")
+		m.syncComposerSize()
+		return m, nil
 	case "enter":
 		selected, ok := m.selectedAgent()
 		if !ok {
@@ -2801,7 +2805,7 @@ func renderFooterStatus(
 func (m Model) commandHints() string {
 	switch m.mode {
 	case modeCompose:
-		return "Enter send  Esc cancel"
+		return "Enter send  Ctrl-j newline  Esc cancel"
 	case modeDelete:
 		if m.activePane == paneWorkspaces &&
 			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) &&

@@ -21,6 +21,7 @@ set -s default-terminal "tmux-256color"
 set -sa terminal-overrides ",*:RGB"
 set -s escape-time 10
 set -s focus-events on
+set -s extended-keys on
 set -g history-limit 50000
 set -g mouse on
 `
