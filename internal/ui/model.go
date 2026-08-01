@@ -1304,10 +1304,10 @@ func (m Model) renderHeader() string {
 		}
 	}
 	// The header is a solid band from edge to edge; the title glow and the
-	// counters ride on it.
+	// counters ride on it. The title sits flush left, aligned with the
+	// pane labels beneath it.
 	band := lipgloss.NewStyle().Background(colorHeaderBand)
-	left := band.Render(" ") +
-		shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), colorHeaderBand)
+	left := shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), colorHeaderBand)
 	right := band.Foreground(colorMuted).
 		Render(fmt.Sprintf("%d active", working))
 	if waiting > 0 {
