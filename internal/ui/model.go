@@ -1366,6 +1366,9 @@ func paintHierarchyConnector(
 		return paneContent
 	}
 
+	// The connector rides the pane divider, so its endpoints are junctions
+	// (├ ┤ ┼), never corners — the divider must read as one continuous
+	// line with a branch, not a line interrupted by an overlapping hook.
 	style := lipgloss.NewStyle().Foreground(colorWaiting)
 	first := min(workspaceRow, agentRow)
 	last := max(workspaceRow, agentRow)
@@ -1373,15 +1376,11 @@ func paintHierarchyConnector(
 		glyph := "│"
 		switch {
 		case workspaceRow == agentRow:
-			glyph = "─"
-		case row == workspaceRow && workspaceRow < agentRow:
-			glyph = "┐"
+			glyph = "┼"
 		case row == workspaceRow:
-			glyph = "┘"
-		case row == agentRow && agentRow < workspaceRow:
-			glyph = "┌"
+			glyph = "┤"
 		case row == agentRow:
-			glyph = "└"
+			glyph = "├"
 		}
 		lines[row] = replaceStyledCell(
 			lines[row],
