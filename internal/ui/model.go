@@ -55,6 +55,8 @@ const (
 	modeDelete
 	modeAddWorkspace
 	modeRename
+	modeInfo
+	modeHelp
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -616,6 +618,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAddWorkspace(msg)
 		case modeRename:
 			return m.updateRename(msg)
+		case modeInfo, modeHelp:
+			// Any key dismisses an informational overlay.
+			m.mode = modeNormal
+			m.status = "Ready"
+			return m, nil
 		default:
 			// The keypress is the presence proof: if an unseen result is
 			// on screen right now (selected, transcript loaded) and the
@@ -819,6 +826,18 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginRename()
 	case "M":
 		return m.clearAttention()
+	case "K":
+		if m.activePane == paneWorkspaces {
+			if _, ok := m.selectedWorkspace(); ok {
+				m.mode = modeInfo
+				m.status = "Workspace info"
+			}
+			return m, nil
+		}
+	case "?":
+		m.mode = modeHelp
+		m.status = "Keys"
+		return m, nil
 	}
 
 	if m.activePane != paneInteraction {
@@ -1333,8 +1352,123 @@ func (m Model) renderBody() string {
 			width,
 			contentHeight,
 		)
+	case modeInfo:
+		return overlayCentered(
+			dashboard,
+			m.renderInfoModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeHelp:
+		return overlayCentered(
+			dashboard,
+			m.renderHelpModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
 	}
 	return dashboard
+}
+
+func (m Model) renderInfoModal(width, height int) string {
+	selected, ok := m.selectedWorkspace()
+	if !ok {
+		return ""
+	}
+	rows := [][2]string{
+		{"Name", m.selectedWorkspaceLabel()},
+		{"Kind", strings.ToUpper(selected.Kind)},
+		{"ID", selected.ID},
+		{"Root", selected.Root},
+		{"Execution root", selected.ExecutionRoot},
+	}
+	if selected.ComponentName != "" {
+		rows = append(rows, [2]string{"Component", selected.ComponentName})
+		rows = append(rows, [2]string{"Component root", selected.ComponentRoot})
+	}
+	keys := make([]string, 0, len(selected.Metadata))
+	for key := range selected.Metadata {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		rows = append(rows, [2]string{key, selected.Metadata[key]})
+	}
+	rows = append(rows, [2]string{
+		"Agents", fmt.Sprintf("%d", len(m.agentsForSelectedWorkspace())),
+	})
+
+	modalWidth, modalHeight := modalDimensions(width, height, 72, len(rows)+6)
+	innerWidth := max(1, modalWidth-2)
+	lines := []string{
+		"  " + titleStyle.Render("Workspace · "+m.selectedWorkspaceLabel()),
+		"",
+	}
+	labelWidth := 0
+	for _, row := range rows {
+		labelWidth = max(labelWidth, lipgloss.Width(row[0]))
+	}
+	for _, row := range rows {
+		pad := strings.Repeat(" ", labelWidth-lipgloss.Width(row[0]))
+		value := truncate(row[1], max(1, innerWidth-labelWidth-6))
+		lines = append(lines,
+			"  "+mutedStyle.Render(row[0])+pad+"  "+value,
+		)
+	}
+	lines = append(lines, "", "  "+mutedStyle.Render("any key closes"))
+	return renderModal(strings.Join(lines, "\n"), modalWidth, modalHeight)
+}
+
+func (m Model) renderHelpModal(width, height int) string {
+	sections := []struct {
+		title string
+		keys  [][2]string
+	}{
+		{"Navigate", [][2]string{
+			{"h/l", "move between panes"},
+			{"j/k", "move in the pane; scroll Spanreed"},
+			{"gg / G", "first or last item"},
+			{"Ctrl-d/u  Ctrl-f/b", "half or full page"},
+			{"Enter", "into agents; open agent terminal"},
+			{"Ctrl-6", "return from an agent to the dashboard"},
+			{"prefix Q", "return (tmux-native fallback)"},
+		}},
+		{"Act", [][2]string{
+			{"n", "new agent (or add workspace)"},
+			{"o", "new agent with directory picker"},
+			{"i / s", "write a reply in Spanreed"},
+			{"x", "interrupt the selected agent"},
+			{"Ctrl-x then x/X", "delete agent / workspace (+agents)"},
+			{"R", "rename workspace or agent"},
+			{"M", "mark agent or workspace seen"},
+			{"K", "workspace info"},
+		}},
+		{"View", [][2]string{
+			{", then a/n/c", "sort: attention, name, newest"},
+			{"z", "toggle compact and expanded rows"},
+			{"r / Ctrl-l", "refresh"},
+			{"?", "this help"},
+			{"q", "quit the dashboard"},
+		}},
+	}
+
+	lines := []string{"  " + titleStyle.Render("Keys"), ""}
+	for _, section := range sections {
+		lines = append(lines, "  "+accentStyle.Render(section.title))
+		for _, key := range section.keys {
+			pad := max(1, 20-lipgloss.Width(key[0]))
+			lines = append(lines,
+				"    "+titleStyle.Render(key[0])+
+					strings.Repeat(" ", pad)+
+					mutedStyle.Render(key[1]),
+			)
+		}
+		lines = append(lines, "")
+	}
+	lines = append(lines, "  "+mutedStyle.Render("any key closes"))
+
+	modalWidth, modalHeight := modalDimensions(width, height, 64, len(lines)+2)
+	return renderModal(strings.Join(lines, "\n"), modalWidth, modalHeight)
 }
 
 func (m Model) renderDashboardBody(width, contentHeight int) string {
@@ -3004,7 +3138,7 @@ func (m Model) commandHints() string {
 		)
 	default:
 		return strings.TrimSpace(
-			"j/k select  l agents  n add  Ctrl-x remove  , sort  " + rowMode + "  r refresh  q quit",
+			"j/k select  l agents  n add  K info  , sort  " + rowMode + "  ? help  q quit",
 		)
 	}
 }

@@ -146,6 +146,8 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `R` | Rename the selected workspace or agent |
 | `,` then `a` / `n` / `c` | Sort by attention, name, or newest (applies to both lists) |
 | `M` | Mark the selected agent — or workspace — seen |
+| `K` | Workspace info popup (resolver, roots, metadata) |
+| `?` | Full keybinding reference |
 | `r` / `Ctrl-l` | Refresh |
 | `q` | Close the dashboard |
 
