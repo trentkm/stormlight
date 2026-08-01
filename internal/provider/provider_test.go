@@ -203,22 +203,28 @@ func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 		"Notification",
 		"Stop",
 	} {
-		groups := settings.Hooks[name]
-		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
-			t.Fatalf("%s hooks = %#v", name, groups)
-		}
-		if !strings.Contains(groups[0].Hooks[0].Command, "_provider-event claude") {
-			t.Fatalf("%s command = %q", name, groups[0].Hooks[0].Command)
-		}
-		if !strings.Contains(groups[0].Hooks[0].Command, "STORMLIGHT_BIN") {
-			t.Fatalf("%s command lacks Stormlight executable: %q",
-				name,
-				groups[0].Hooks[0].Command,
-			)
+		for _, group := range settings.Hooks[name] {
+			if len(group.Hooks) != 1 {
+				t.Fatalf("%s hooks = %#v", name, group)
+			}
+			if !strings.Contains(group.Hooks[0].Command, "_provider-event claude") {
+				t.Fatalf("%s command = %q", name, group.Hooks[0].Command)
+			}
+			if !strings.Contains(group.Hooks[0].Command, "STORMLIGHT_BIN") {
+				t.Fatalf("%s command lacks Stormlight executable: %q",
+					name,
+					group.Hooks[0].Command,
+				)
+			}
 		}
 	}
-	if settings.Hooks["Notification"][0].Matcher != "permission_prompt" {
-		t.Fatalf("notification matcher = %q", settings.Hooks["Notification"][0].Matcher)
+	matchers := []string{}
+	for _, group := range settings.Hooks["Notification"] {
+		matchers = append(matchers, group.Matcher)
+	}
+	if !slices.Contains(matchers, "permission_prompt") ||
+		!slices.Contains(matchers, "idle_prompt") {
+		t.Fatalf("notification matchers = %#v", matchers)
 	}
 	permissionGroups := settings.Hooks["PermissionRequest"]
 	if len(permissionGroups) != 1 || len(permissionGroups[0].Hooks) != 1 {

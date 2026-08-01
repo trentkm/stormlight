@@ -39,9 +39,37 @@ func parseCodexEvent(payload []byte) (Event, bool, error) {
 		return Event{}, false, nil
 	}
 	return Event{
-		Activity: agent.ActivityIdle,
-		Summary:  eventSummary(notification.LastAssistantMessage),
+		Activity:  agent.ActivityIdle,
+		Attention: turnEndAttention(notification.LastAssistantMessage),
+		Summary:   eventSummary(notification.LastAssistantMessage),
 	}, true, nil
+}
+
+// turnEndAttention classifies why a turn ended from its final message: a
+// message that reads as a question needs an answer, so the row goes urgent.
+// Providers have no "asked a question" event — completion and question
+// arrive as the same signal — so the content is the only instant
+// discriminator. A reply clears the attention.
+func turnEndAttention(message string) agent.Attention {
+	if asksQuestion(message) {
+		return agent.AttentionQuestion
+	}
+	return agent.AttentionNone
+}
+
+// asksQuestion reports whether the final non-empty line of a message ends
+// with a question mark, tolerating markdown emphasis and quote trailers.
+func asksQuestion(message string) bool {
+	lines := strings.Split(message, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		if line == "" {
+			continue
+		}
+		line = strings.TrimRight(line, " \t*_`\"')")
+		return strings.HasSuffix(line, "?")
+	}
+	return false
 }
 
 func parseClaudeEvent(payload []byte) (Event, bool, error) {
@@ -49,6 +77,7 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 		Name                 string `json:"hook_event_name"`
 		Prompt               string `json:"prompt"`
 		Message              string `json:"message"`
+		NotificationType     string `json:"notification_type"`
 		LastAssistantMessage string `json:"last_assistant_message"`
 	}
 	if err := json.Unmarshal(payload, &hook); err != nil {
@@ -62,6 +91,15 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 			Summary:  eventSummary(hook.Prompt),
 		}, true, nil
 	case "Notification":
+		if hook.NotificationType == "idle_prompt" {
+			// Fires 60 seconds after the turn ended: the soft signal that
+			// the agent is paused on the human. No summary — the Stop
+			// event's final-message summary stays.
+			return Event{
+				Activity:  agent.ActivityIdle,
+				Attention: agent.AttentionWaiting,
+			}, true, nil
+		}
 		summary := eventSummary(hook.Message)
 		if summary == "" {
 			summary = "Needs approval"
@@ -73,8 +111,9 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 		}, true, nil
 	case "Stop":
 		return Event{
-			Activity: agent.ActivityIdle,
-			Summary:  eventSummary(hook.LastAssistantMessage),
+			Activity:  agent.ActivityIdle,
+			Attention: turnEndAttention(hook.LastAssistantMessage),
+			Summary:   eventSummary(hook.LastAssistantMessage),
 		}, true, nil
 	default:
 		return Event{}, false, nil

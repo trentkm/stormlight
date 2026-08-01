@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -74,5 +75,71 @@ func TestEventSummaryIsBounded(t *testing.T) {
 	}
 	if !handled || len([]rune(event.Summary)) != maxEventSummaryRunes {
 		t.Fatalf("summary length = %d", len([]rune(event.Summary)))
+	}
+}
+
+func TestStopClassifiesQuestionsAsUrgentAttention(t *testing.T) {
+	cases := []struct {
+		message string
+		want    agent.Attention
+	}{
+		{"Which approach do you prefer?", agent.AttentionQuestion},
+		{"Ready to help — what would you like to work on?", agent.AttentionQuestion},
+		{"Should I proceed with the refactor?**", agent.AttentionQuestion},
+		{"All tests pass.\n\nWant me to commit?", agent.AttentionQuestion},
+		{"Done, all tests pass.", agent.AttentionNone},
+		{"Fixed the bug. See `internal/ui`.", agent.AttentionNone},
+		{"Is it a bug? I checked — it is, and it's fixed now.", agent.AttentionNone},
+		{"", agent.AttentionNone},
+	}
+	for _, c := range cases {
+		payload := map[string]string{
+			"hook_event_name":        "Stop",
+			"last_assistant_message": c.message,
+		}
+		encoded, _ := json.Marshal(payload)
+		event, handled, err := ParseEvent(agent.ProviderClaude, encoded)
+		if err != nil || !handled {
+			t.Fatalf("handled=%v err=%v", handled, err)
+		}
+		if event.Attention != c.want {
+			t.Errorf("attention for %q = %q, want %q", c.message, event.Attention, c.want)
+		}
+	}
+}
+
+func TestIdlePromptNotificationIsSoftWaiting(t *testing.T) {
+	payload := []byte(`{"hook_event_name":"Notification",` +
+		`"message":"Claude is waiting for your input",` +
+		`"notification_type":"idle_prompt"}`)
+	event, handled, err := ParseEvent(agent.ProviderClaude, payload)
+	if err != nil || !handled {
+		t.Fatalf("handled=%v err=%v", handled, err)
+	}
+	if event.Attention != agent.AttentionWaiting || event.Summary != "" {
+		t.Fatalf("event = %#v, want waiting with no summary", event)
+	}
+
+	permission := []byte(`{"hook_event_name":"Notification",` +
+		`"message":"Claude needs your permission to use Bash",` +
+		`"notification_type":"permission_prompt"}`)
+	event, handled, err = ParseEvent(agent.ProviderClaude, permission)
+	if err != nil || !handled {
+		t.Fatalf("handled=%v err=%v", handled, err)
+	}
+	if event.Attention != agent.AttentionApproval {
+		t.Fatalf("permission attention = %q", event.Attention)
+	}
+}
+
+func TestCodexCompletionClassifiesQuestions(t *testing.T) {
+	payload := []byte(`{"type":"agent-turn-complete",` +
+		`"last-assistant-message":"Should I also update the docs?"}`)
+	event, handled, err := ParseEvent(agent.ProviderCodex, payload)
+	if err != nil || !handled {
+		t.Fatalf("handled=%v err=%v", handled, err)
+	}
+	if event.Attention != agent.AttentionQuestion {
+		t.Fatalf("attention = %q", event.Attention)
 	}
 }

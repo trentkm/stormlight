@@ -664,7 +664,7 @@ func newEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Comm
 	}
 	command.Flags().StringVar(&id, "id", "", "agent id")
 	command.Flags().StringVar(&state, "state", "", "starting, working, idle, completed, failed, or stopped")
-	command.Flags().StringVar(&attention, "attention", "", "none, question, approval, or auth")
+	command.Flags().StringVar(&attention, "attention", "", "none, question, approval, auth, or waiting")
 	command.Flags().StringVar(&summary, "summary", "", "one-line status summary")
 	return command
 }
@@ -965,7 +965,8 @@ func parseAttention(value string) (agent.Attention, error) {
 	}
 	attention := agent.Attention(value)
 	switch attention {
-	case "", agent.AttentionQuestion, agent.AttentionApproval, agent.AttentionAuth:
+	case "", agent.AttentionQuestion, agent.AttentionApproval,
+		agent.AttentionAuth, agent.AttentionWaiting:
 		return attention, nil
 	default:
 		return "", fmt.Errorf("invalid attention type %q", value)
