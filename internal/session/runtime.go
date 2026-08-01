@@ -40,6 +40,9 @@ type Update struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// ClearAttention removes any attention state without touching the
+	// rest of the record; an empty Attention alone means "leave as is".
+	ClearAttention bool
 }
 
 type AttachResult struct {

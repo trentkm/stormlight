@@ -46,15 +46,16 @@ func parseCodexEvent(payload []byte) (Event, bool, error) {
 }
 
 // turnEndAttention classifies why a turn ended from its final message: a
-// message that reads as a question needs an answer, so the row goes urgent.
-// Providers have no "asked a question" event — completion and question
-// arrive as the same signal — so the content is the only instant
-// discriminator. A reply clears the attention.
+// message that reads as a question needs an answer (urgent); any other
+// finished turn is an unseen result (soft waiting) until the human views
+// it, replies, or marks it seen. Providers have no "asked a question"
+// event — completion and question arrive as the same signal — so the
+// content is the only instant discriminator.
 func turnEndAttention(message string) agent.Attention {
 	if asksQuestion(message) {
 		return agent.AttentionQuestion
 	}
-	return agent.AttentionNone
+	return agent.AttentionWaiting
 }
 
 // asksQuestion reports whether the final non-empty line of a message ends
@@ -92,13 +93,10 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 		}, true, nil
 	case "Notification":
 		if hook.NotificationType == "idle_prompt" {
-			// Fires 60 seconds after the turn ended: the soft signal that
-			// the agent is paused on the human. No summary — the Stop
-			// event's final-message summary stays.
-			return Event{
-				Activity:  agent.ActivityIdle,
-				Attention: agent.AttentionWaiting,
-			}, true, nil
+			// Turn-end events already mark unseen results the moment they
+			// land; acting on this delayed echo would re-raise attention
+			// the human has since cleared.
+			return Event{}, false, nil
 		}
 		summary := eventSummary(hook.Message)
 		if summary == "" {

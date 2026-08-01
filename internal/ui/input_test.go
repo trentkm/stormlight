@@ -1667,6 +1667,10 @@ func (stubBackend) Rename(context.Context, string, string) error {
 	return nil
 }
 
+func (stubBackend) ClearAttention(context.Context, string) error {
+	return nil
+}
+
 func (stubBackend) RenameWorkspace(context.Context, workspace.Context, string) error {
 	return nil
 }
@@ -1733,4 +1737,54 @@ func (b *recordingBackend) ResolvePendingAction(
 	b.resolvedActionID = actionID
 	b.resolvedOptionID = optionID
 	return nil
+}
+
+func TestSeenClearingMarksSelectedAgentOnPresence(t *testing.T) {
+	ws := workspace.DirectoryContext("/workspace/project")
+	model := NewModel(stubBackend{})
+	model.width = 120
+	model.height = 30
+	model.ready = true
+	model.catalogWorkspaces = []workspace.Context{ws}
+	model.agents = []agent.Agent{{
+		ID:          "unread",
+		Name:        "sh-unread",
+		ProcessLive: true,
+		Activity:    agent.ActivityIdle,
+		Attention:   agent.AttentionWaiting,
+		Workspace:   ws,
+	}}
+	model.rebuildGroups(ws.ID, "unread")
+	model.activePane = paneAgents
+	model.interactionID = "unread"
+
+	updated, _ := model.Update(runeKey("k"))
+	model = updated.(Model)
+	if model.agents[0].Attention != agent.AttentionNone {
+		t.Fatalf("attention = %q, want cleared on presence", model.agents[0].Attention)
+	}
+}
+
+func TestClearAttentionHotkeyClearsWholeWorkspace(t *testing.T) {
+	ws := workspace.DirectoryContext("/workspace/project")
+	model := NewModel(stubBackend{})
+	model.width = 120
+	model.catalogWorkspaces = []workspace.Context{ws}
+	model.agents = []agent.Agent{
+		{ID: "one", ProcessLive: true, Attention: agent.AttentionWaiting, Workspace: ws},
+		{ID: "two", ProcessLive: true, Attention: agent.AttentionQuestion, Workspace: ws},
+	}
+	model.rebuildGroups(ws.ID, "")
+	model.activePane = paneWorkspaces
+
+	updated, cmd := model.updateNormal(runeKey("M"))
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a backend clear command")
+	}
+	for _, managedAgent := range model.agents {
+		if managedAgent.Attention != agent.AttentionNone {
+			t.Fatalf("agent %s attention = %q", managedAgent.ID, managedAgent.Attention)
+		}
+	}
 }

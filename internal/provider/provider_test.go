@@ -222,8 +222,9 @@ func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 	for _, group := range settings.Hooks["Notification"] {
 		matchers = append(matchers, group.Matcher)
 	}
-	if !slices.Contains(matchers, "permission_prompt") ||
-		!slices.Contains(matchers, "idle_prompt") {
+	// Only permission prompts: turn-end events carry the unseen-result
+	// signal, so the delayed idle notification is deliberately absent.
+	if !slices.Equal(matchers, []string{"permission_prompt"}) {
 		t.Fatalf("notification matchers = %#v", matchers)
 	}
 	permissionGroups := settings.Hooks["PermissionRequest"]

@@ -135,12 +135,16 @@ separate:
 
 Attention is tiered. Question, approval, and authentication are urgent — the
 agent is blocked on an explicit human decision. Waiting is soft — the turn
-ended and the provider's delayed idle notification reported that the agent
-is paused on the human. Urgent states are classified at turn end from the
-final assistant message (providers emit one event for both "done" and
-"asked a question", so content is the only instant discriminator); the
-waiting signal arrives later and never downgrades an urgent state. A new
-prompt clears attention.
+finished with a result the human has not seen. Every turn end is classified
+from the final assistant message (providers emit one event for both "done"
+and "asked a question", so content is the only instant discriminator): a
+closing question is urgent, anything else is an unseen result. The
+provider's delayed idle notification is deliberately ignored — it would
+re-raise attention the human already cleared. Attention clears on
+engagement: a new prompt, opening the terminal, viewing the result while
+present, or an explicit mark-seen; the runtime refuses to let a soft
+signal downgrade an urgent state. Dead panes carry no attention — their
+exit status is the story.
 
 This prevents a resumable completed conversation from being conflated with a
 currently running process, and keeps "needs me now" distinct from "idle on

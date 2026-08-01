@@ -253,6 +253,11 @@ func (s *Service) Interrupt(ctx context.Context, id string) error {
 	return s.runtime.Interrupt(ctx, id)
 }
 
+// ClearAttention marks an agent's notification as seen.
+func (s *Service) ClearAttention(ctx context.Context, id string) error {
+	return s.runtime.Update(ctx, id, session.Update{ClearAttention: true})
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.runtime.Delete(ctx, id)
 }
