@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,6 +40,8 @@ type Backend interface {
 	Send(context.Context, string, string) error
 	Interrupt(context.Context, string) error
 	Delete(context.Context, string) error
+	Rename(context.Context, string, string) error
+	RenameWorkspace(context.Context, workspace.Context, string) error
 	Providers() []provider.Info
 }
 
@@ -50,6 +53,7 @@ const (
 	modeCompose
 	modeDelete
 	modeAddWorkspace
+	modeRename
 )
 
 type pane int
@@ -111,12 +115,18 @@ type Model struct {
 	providerIndex           int
 	cwdInput                lineInput
 	taskInput               textarea.Model
-	sendInput               lineInput
+	sendInput               textarea.Model
 	initialCwd              string
 	directories             []directoryChoice
 	directoryIndex          int
 	yaziPath                string
 	nvimPath                string
+	dispatchMode            agent.PermissionMode
+	modeForDir              func(string) (agent.PermissionMode, bool)
+	providerForDir          func(string) (agent.Provider, bool)
+	renameInput             lineInput
+	renameAgentID           string
+	renameWorkspace         workspace.Context
 	pickerStart             string
 	chooseDispatchDirectory bool
 
@@ -125,7 +135,8 @@ type Model struct {
 	err            error
 	pendingActions []pending.Action
 	pendingOption  int
-	pulseOn        bool
+	shimmerPhase   int
+	shimmerRunning bool
 
 	normalPrefix   string
 	dispatchPrefix string
@@ -180,7 +191,7 @@ type workspaceAddedMsg struct {
 }
 
 type tickMsg time.Time
-type pulseTickMsg time.Time
+type shimmerTickMsg time.Time
 
 var (
 	colorAccent       = lipgloss.Color("#62AEEF")
@@ -193,6 +204,7 @@ var (
 	colorBorder       = lipgloss.AdaptiveColor{Light: "#AAB3B9", Dark: "#59636B"}
 	colorSelect       = lipgloss.AdaptiveColor{Light: "#E1E4E6", Dark: "#3D4245"}
 	colorSelectedText = lipgloss.AdaptiveColor{Light: "#172027", Dark: "#F3F5F6"}
+	colorDangerBg     = lipgloss.AdaptiveColor{Light: "#F2D5D1", Dark: "#552B29"}
 
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
@@ -200,6 +212,89 @@ var (
 	errorStyle   = lipgloss.NewStyle().Foreground(colorFailed)
 	successStyle = lipgloss.NewStyle().Foreground(colorDone)
 )
+
+// Working things glow: a brighter band sweeps across their text — the
+// closest a terminal gets to holding stormlight. stormlightGlow orders the
+// shades base → mid → bright → crest; the crest sits at the band's center
+// and falls off on both sides. The sweep replaces blinking as the working
+// indicator for the header, workspace names, and agent titles.
+const stormlightTitle = "Stormlight"
+
+// shimmerRest adds off-screen travel on both ends of each sweep so the glow
+// rests at the base shade between passes instead of wrapping abruptly.
+const shimmerRest = 14
+
+var stormlightGlow = []lipgloss.AdaptiveColor{
+	{Light: "#0F7A90", Dark: "#3BA8BD"},
+	{Light: "#0A93AE", Dark: "#5CC6DB"},
+	{Light: "#00A9C9", Dark: "#8AE7F8"},
+	{Light: "#00C2E8", Dark: "#C4F5FF"},
+}
+
+// shimmerText renders text in the glow palette. A negative phase (or a
+// resting band position) yields the uniform base shade; otherwise the
+// bright band centers on one rune and sweeps as the phase advances.
+// background, when non-nil, preserves row highlighting behind the glow.
+// shimmerBand computes the crest position for a text of the given length; a
+// negative phase parks the band off-text so everything renders at base.
+func shimmerBand(length, phase int) int {
+	if phase < 0 {
+		return -shimmerRest
+	}
+	return phase%(length+shimmerRest) - 4
+}
+
+func shimmerText(text string, phase int, background lipgloss.TerminalColor) string {
+	runes := []rune(text)
+	band := shimmerBand(len(runes), phase)
+	var out strings.Builder
+	for index, letter := range runes {
+		distance := index - band
+		if distance < 0 {
+			distance = -distance
+		}
+		shade := max(0, len(stormlightGlow)-1-distance)
+		style := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(stormlightGlow[shade])
+		if background != nil {
+			style = style.Background(background)
+		}
+		out.WriteString(style.Render(string(letter)))
+	}
+	return out.String()
+}
+
+// rowTheme colors a selected list row. selectTheme is the normal selection;
+// dangerTheme marks a row awaiting delete confirmation.
+type rowTheme struct {
+	background lipgloss.TerminalColor
+	text       lipgloss.TerminalColor
+	focusMark  lipgloss.TerminalColor
+	restMark   lipgloss.TerminalColor
+}
+
+var (
+	selectTheme = rowTheme{
+		background: colorSelect,
+		text:       colorSelectedText,
+		focusMark:  colorWaiting,
+		restMark:   colorBorder,
+	}
+	dangerTheme = rowTheme{
+		background: colorDangerBg,
+		text:       colorSelectedText,
+		focusMark:  colorFailed,
+		restMark:   colorFailed,
+	}
+)
+
+func rowThemeFor(danger bool) rowTheme {
+	if danger {
+		return dangerTheme
+	}
+	return selectTheme
+}
 
 func NewModel(backend Backend) Model {
 	return NewModelWithSurface(backend, surface.NewDirect())
@@ -211,10 +306,36 @@ func codingAgentProviders(infos []provider.Info) []provider.Info {
 	})
 }
 
+// Options carries user-configuration defaults into the dashboard. Zero
+// values mean "use the built-in behavior".
+type Options struct {
+	YaziPath        string
+	NvimPath        string
+	DefaultMode     agent.PermissionMode
+	DefaultProvider agent.Provider
+	ExpandedRows    bool
+	ModeForDir      func(string) (agent.PermissionMode, bool)
+	ProviderForDir  func(string) (agent.Provider, bool)
+}
+
 func NewModelWithSurface(backend Backend, current surface.Surface) Model {
+	return NewModelWithOptions(backend, current, Options{})
+}
+
+func NewModelWithOptions(backend Backend, current surface.Surface, options Options) Model {
 	cwd, _ := os.Getwd()
-	yaziPath, _ := exec.LookPath("yazi")
-	nvimPath, _ := exec.LookPath("nvim")
+	yaziPath := options.YaziPath
+	if yaziPath == "" {
+		yaziPath, _ = exec.LookPath("yazi")
+	}
+	nvimPath := options.NvimPath
+	if nvimPath == "" {
+		nvimPath, _ = exec.LookPath("nvim")
+	}
+	dispatchMode := options.DefaultMode
+	if dispatchMode == "" {
+		dispatchMode = agent.DefaultMode
+	}
 	if current == nil {
 		current = surface.NewDirect()
 	}
@@ -224,28 +345,44 @@ func NewModelWithSurface(backend Backend, current surface.Surface) Model {
 
 	taskInput := newTaskInput("What should the agent do?")
 
-	sendInput := newLineInput("Reply to the selected agent")
+	sendInput := newTaskInput("Reply to the selected agent")
+	sendInput.SetPromptFunc(2, func(lineIdx int) string {
+		if lineIdx == 0 {
+			return "> "
+		}
+		return "  "
+	})
 
 	model := Model{
-		backend:      backend,
-		surface:      current,
-		providers:    codingAgentProviders(backend.Providers()),
-		cwdInput:     cwdInput,
-		taskInput:    taskInput,
-		sendInput:    sendInput,
-		initialCwd:   cwd,
-		yaziPath:     yaziPath,
-		nvimPath:     nvimPath,
-		activePane:   paneWorkspaces,
-		rowsExpanded: false,
-		status:       "Ready",
+		backend:        backend,
+		surface:        current,
+		providers:      codingAgentProviders(backend.Providers()),
+		cwdInput:       cwdInput,
+		taskInput:      taskInput,
+		sendInput:      sendInput,
+		initialCwd:     cwd,
+		yaziPath:       yaziPath,
+		nvimPath:       nvimPath,
+		activePane:     paneWorkspaces,
+		rowsExpanded:   options.ExpandedRows,
+		dispatchMode:   dispatchMode,
+		modeForDir:     options.ModeForDir,
+		providerForDir: options.ProviderForDir,
+		shimmerRunning: true,
+		status:         "Ready",
+	}
+	for index, info := range model.providers {
+		if info.ID == options.DefaultProvider {
+			model.providerIndex = index
+			break
+		}
 	}
 	model.prepareDirectoryChoices(cwd)
 	return model
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refreshCmd(), tickCmd(), pulseTickCmd())
+	return tea.Batch(m.refreshCmd(), tickCmd(), shimmerTickCmd())
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -266,9 +403,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
 
-	case pulseTickMsg:
-		m.pulseOn = !m.pulseOn
-		return m, pulseTickCmd()
+	case shimmerTickMsg:
+		if !m.anyAgentsActive() {
+			m.shimmerRunning = false
+			m.shimmerPhase = 0
+			return m, nil
+		}
+		m.shimmerPhase = (m.shimmerPhase + 1) % (1 << 20)
+		return m, shimmerTickCmd()
 
 	case dashboardMsg:
 		workspaceID := m.selectedWorkspaceID()
@@ -286,6 +428,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingOption = 0
 			}
 			m.clampPendingOption()
+		}
+		if m.anyAgentsActive() && !m.shimmerRunning {
+			m.shimmerRunning = true
+			return m, tea.Batch(m.loadInteractionCmd(), shimmerTickCmd())
 		}
 		return m, m.loadInteractionCmd()
 
@@ -443,6 +589,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDelete(msg)
 		case modeAddWorkspace:
 			return m.updateAddWorkspace(msg)
+		case modeRename:
+			return m.updateRename(msg)
 		default:
 			return m.updateNormal(msg)
 		}
@@ -565,6 +713,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePane = paneInteraction
 			m.mode = modeCompose
 			m.sendInput.SetValue("")
+			m.syncComposerSize()
 			m.sendInput.Focus()
 			m.err = nil
 			return m, nil
@@ -576,22 +725,36 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.backend.Interrupt(ctx, selected.ID)
 			})
 		}
-	case "d":
+	case "d", "ctrl+x":
 		if m.activePane == paneWorkspaces {
-			if _, ok := m.selectedWorkspace(); ok {
-				m.mode = modeDelete
-				m.err = nil
+			selected, ok := m.selectedWorkspace()
+			if !ok {
+				return m, nil
+			}
+			m.mode = modeDelete
+			m.err = nil
+			if count := len(m.groups[m.workspaceCursor].agents); count > 0 {
+				m.status = fmt.Sprintf(
+					"Delete %s and %d agent(s)? press X",
+					m.selectedWorkspaceLabel(),
+					count,
+				)
+			} else {
+				m.status = "Remove " + selected.Name + "? press again"
 			}
 			return m, nil
 		}
-		if _, ok := m.selectedAgent(); ok {
+		if selected, ok := m.selectedAgent(); ok {
 			m.mode = modeDelete
 			m.err = nil
+			m.status = "Delete " + agentDisplayTitle(selected) + "? press again"
 			return m, nil
 		}
 	case "r", "ctrl+l":
 		m.status = "Refreshing"
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
+	case "R":
+		return m.beginRename()
 	}
 
 	if m.activePane != paneInteraction {
@@ -757,6 +920,11 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.editSelectedDirectory()
 			return m, nil
 		}
+	case "m":
+		if m.formFocus == dispatchProvider || m.formFocus == dispatchDirectory {
+			m.dispatchMode = nextDispatchMode(m.dispatchMode)
+			return m, nil
+		}
 	case "enter":
 		switch m.formFocus {
 		case dispatchProvider:
@@ -834,8 +1002,40 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.backend.Send(ctx, selected.ID, text)
 		})
 	}
-	m.sendInput = m.sendInput.Update(msg)
-	return m, nil
+	var cmd tea.Cmd
+	m.sendInput, cmd = m.sendInput.Update(msg)
+	m.syncComposerSize()
+	return m, cmd
+}
+
+// syncComposerSize keeps the persisted reply textarea sized to the Spanreed
+// pane. Sizing only a render-time copy is not enough: the textarea's
+// internal wrap and scroll state evolve while typing, so it must live at
+// the real dimensions.
+func (m *Model) syncComposerSize() {
+	// interactionDimensions already returns the pane's content width (the
+	// same value renderInteraction receives) — no further adjustment.
+	inner, _ := m.interactionDimensions()
+	inner = max(1, inner)
+	previous := m.sendInput.Height()
+	m.sendInput.SetWidth(inner)
+	height := composerHeight(m.sendInput.Value(), inner)
+	m.sendInput.SetHeight(height)
+	if height > previous {
+		// The keystroke that grew the content was processed while the box
+		// was still one row short, which scrolled the textarea's viewport —
+		// and nothing scrolls it back once the box catches up (its
+		// repositioning only ever chases the cursor). Rebuilding the value
+		// resets the scroll; the cursor is put back where it was.
+		row := m.sendInput.Line()
+		info := m.sendInput.LineInfo()
+		column := info.StartColumn + info.ColumnOffset
+		m.sendInput.SetValue(m.sendInput.Value())
+		for m.sendInput.Line() > row {
+			m.sendInput.CursorUp()
+		}
+		m.sendInput.SetCursor(column)
+	}
 }
 
 func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -911,18 +1111,30 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "d", "y", "enter":
-		m.mode = modeNormal
+	case "d", "x", "ctrl+x", "y", "enter":
 		if m.activePane == paneWorkspaces {
 			selected, ok := m.selectedWorkspace()
 			if !ok {
+				m.mode = modeNormal
 				return m, nil
 			}
+			if count := len(m.groups[m.workspaceCursor].agents); count > 0 {
+				// Deleting agents needs the deliberate keystroke; stay in
+				// the confirmation and say so.
+				m.status = fmt.Sprintf(
+					"%s has %d agent(s) — press X to delete everything",
+					m.selectedWorkspaceLabel(),
+					count,
+				)
+				return m, nil
+			}
+			m.mode = modeNormal
 			m.status = "Removing " + selected.Name
 			return m, actionCmd("Workspace removed", func(ctx context.Context) error {
 				return m.backend.RemoveWorkspace(ctx, selected)
 			})
 		}
+		m.mode = modeNormal
 		selected, ok := m.selectedAgent()
 		if !ok {
 			return m, nil
@@ -931,11 +1143,57 @@ func (m Model) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, actionCmd("Agent deleted", func(ctx context.Context) error {
 			return m.backend.Delete(ctx, selected.ID)
 		})
+	case "X":
+		if m.activePane != paneWorkspaces {
+			return m, nil
+		}
+		selected, ok := m.selectedWorkspace()
+		if !ok {
+			m.mode = modeNormal
+			return m, nil
+		}
+		doomed := slices.Clone(m.groups[m.workspaceCursor].agents)
+		label := m.selectedWorkspaceLabel()
+		m.mode = modeNormal
+		m.status = fmt.Sprintf("Deleting %s and %d agent(s)", label, len(doomed))
+		backend := m.backend
+		return m, actionCmd("Workspace and agents deleted",
+			func(ctx context.Context) error {
+				var failures []error
+				for _, condemned := range doomed {
+					if err := backend.Delete(ctx, condemned.ID); err != nil {
+						failures = append(failures, err)
+					}
+				}
+				if err := backend.RemoveWorkspace(ctx, selected); err != nil {
+					failures = append(failures, err)
+				}
+				return errors.Join(failures...)
+			})
 	case "n", "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
 		m.status = "Ready"
 	}
 	return m, nil
+}
+
+func (m Model) anyAgentsActive() bool {
+	for _, managedAgent := range m.agents {
+		if managedAgent.Activity == agent.ActivityWorking ||
+			managedAgent.Activity == agent.ActivityStarting {
+			return true
+		}
+	}
+	return false
+}
+
+// shimmerPhaseOrRest returns the sweep phase while the shimmer is running
+// and the resting (uniform base shade) phase otherwise.
+func (m Model) shimmerPhaseOrRest() int {
+	if m.shimmerRunning {
+		return m.shimmerPhase
+	}
+	return -1
 }
 
 func (m Model) renderHeader() string {
@@ -951,7 +1209,7 @@ func (m Model) renderHeader() string {
 			attention++
 		}
 	}
-	left := titleStyle.Render(" Stormlight")
+	left := " " + shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), nil)
 	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
 	if attention > 0 {
 		attentionLabel := fmt.Sprintf("%d need input", attention)
@@ -981,6 +1239,13 @@ func (m Model) renderBody() string {
 		return overlayCentered(
 			dashboard,
 			m.renderAddWorkspaceModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeRename:
+		return overlayCentered(
+			dashboard,
+			m.renderRenameModal(width, contentHeight),
 			width,
 			contentHeight,
 		)
@@ -1029,7 +1294,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		true,
 	)
 	interaction := m.renderPane(
-		"Interaction",
+		"Spanreed",
 		"",
 		m.renderInteraction(
 			max(1, interactionWidth-2),
@@ -1339,7 +1604,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 		)
 	case paneInteraction:
 		return m.renderPane(
-			"Interaction",
+			"Spanreed",
 			"‹",
 			m.renderInteraction(max(1, width-2), height-1),
 			width,
@@ -1372,14 +1637,13 @@ func (m Model) renderPane(
 	innerWidth := max(1, width)
 	style := lipgloss.NewStyle().Width(innerWidth).Height(height).MaxHeight(height)
 	if borderRight {
+		// Dividers are structure, not state: focus is shown by the header
+		// underline and the single hot cursor row, never the frame.
 		innerWidth = max(1, width-1)
 		style = style.Width(innerWidth).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderRight(true).
 			BorderForeground(colorBorder)
-		if active {
-			style = style.BorderForeground(colorAccent)
-		}
 	}
 	header := renderPaneHeader(label, contextLabel, innerWidth, active)
 	body := lipgloss.NewStyle().
@@ -1389,51 +1653,43 @@ func (m Model) renderPane(
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
 }
 
+// renderPaneHeader underlines the entire header cell, padding included, so
+// the header reads as a full-width ruled box top rather than floating text.
 func renderPaneHeader(label, contextLabel string, width int, active bool) string {
-	left := mutedStyle.Copy().
-		Bold(true).
+	underlined := func(style lipgloss.Style) lipgloss.Style {
+		return style.Underline(true)
+	}
+	fill := underlined(lipgloss.NewStyle().Foreground(colorBorder))
+
+	left := underlined(mutedStyle.Copy().Bold(true)).
 		Render(truncate(" "+label, width))
 	if active {
-		rail := lipgloss.NewStyle().
-			Foreground(colorAccent).
-			Bold(true).
-			Render(ansi.Truncate("▌ ", width, ""))
-		labelWidth := max(0, width-lipgloss.Width(rail))
-		left = rail + titleStyle.Render(truncate(label, labelWidth))
+		// The active pane's header rule renders in accent — the pane's
+		// "selected tab" indicator. The rule alone carries the signal; no
+		// rail, no extra chrome.
+		fill = underlined(lipgloss.NewStyle().Foreground(colorAccent))
+		left = underlined(titleStyle.Copy()).
+			Render(truncate(" "+label, width))
 	}
 
 	remaining := width - lipgloss.Width(left) - 2
 	if strings.TrimSpace(contextLabel) == "" || remaining < 4 {
-		return lipgloss.NewStyle().Width(width).Render(left)
+		pad := max(0, width-lipgloss.Width(left))
+		return left + fill.Render(strings.Repeat(" ", pad))
 	}
 
-	rightStyle := mutedStyle
+	rightStyle := underlined(mutedStyle.Copy())
 	if strings.ContainsAny(contextLabel, "‹›") {
-		rightStyle = accentStyle
+		rightStyle = underlined(accentStyle.Copy())
 	}
 	right := rightStyle.Render(truncate(contextLabel, remaining))
 	gap := max(2, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return lipgloss.NewStyle().Width(width).Render(
-		left + strings.Repeat(" ", gap) + right,
-	)
+	tail := max(0, width-lipgloss.Width(left)-gap-lipgloss.Width(right))
+	return left + fill.Render(strings.Repeat(" ", gap)) + right +
+		fill.Render(strings.Repeat(" ", tail))
 }
 
 func (m Model) renderWorkspaces(width, height int) string {
-	if m.mode == modeDelete && m.activePane == paneWorkspaces {
-		value, ok := m.selectedWorkspace()
-		if !ok {
-			return mutedStyle.Render("No workspace selected")
-		}
-		return lipgloss.JoinVertical(lipgloss.Left,
-			errorStyle.Render(truncate("Remove "+value.Name+"?", width)),
-			"",
-			mutedStyle.Render(ansi.Wrap(
-				"This removes the workspace from Stormlight. Running agents are unchanged.",
-				width,
-				"",
-			)),
-		)
-	}
 	if len(m.groups) == 0 {
 		return "\n" + mutedStyle.Render(" No workspaces")
 	}
@@ -1441,6 +1697,7 @@ func (m Model) renderWorkspaces(width, height int) string {
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
 	start, end := visibleRange(len(m.groups), m.workspaceCursor, capacity)
+	deleting := m.mode == modeDelete && m.activePane == paneWorkspaces
 	rows := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
 		rows = append(rows, m.renderWorkspaceRow(
@@ -1448,6 +1705,7 @@ func (m Model) renderWorkspaces(width, height int) string {
 			index == m.workspaceCursor,
 			index == m.workspaceCursor && m.activePane == paneWorkspaces,
 			width,
+			deleting && index == m.workspaceCursor,
 		))
 	}
 	separator := "\n"
@@ -1462,6 +1720,7 @@ func (m Model) renderWorkspaceRow(
 	selected bool,
 	focused bool,
 	width int,
+	danger bool,
 ) string {
 	active, attention := workspaceStats(group.agents)
 	countLabel := fmt.Sprintf("%d agents", len(group.agents))
@@ -1491,10 +1750,7 @@ func (m Model) renderWorkspaceRow(
 	}
 	activityMarker := "  "
 	if active > 0 {
-		activityMarker = "○ "
-		if m.pulseOn {
-			activityMarker = "● "
-		}
+		activityMarker = "● "
 	}
 	nameWidth := max(
 		1,
@@ -1510,7 +1766,7 @@ func (m Model) renderWorkspaceRow(
 	)
 	path, kind, detailGap := workspaceDetail(group.context, contentWidth)
 	bottomContent := path + strings.Repeat(" ", detailGap) + kind
-	if selected {
+	if focused || danger {
 		return renderSelectedWorkspaceRow(
 			activityMarker,
 			name,
@@ -1521,23 +1777,25 @@ func (m Model) renderWorkspaceRow(
 			focused,
 			m.expandedRows(),
 			active > 0,
-			m.pulseOn,
+			m.shimmerPhaseOrRest(),
+			rowThemeFor(danger),
 		)
 	}
 
 	marker := "  "
+	if selected {
+		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("▏ ")
+	}
 	activityStyle := mutedStyle
-	nameStyle := titleStyle
+	renderedName := titleStyle.Render(name)
 	if active > 0 {
 		activityStyle = lipgloss.NewStyle().
 			Foreground(colorWorking).
 			Bold(true)
-		if m.pulseOn {
-			nameStyle = titleStyle.Copy().Foreground(colorWorking)
-		}
+		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
 	top := marker + activityStyle.Render(activityMarker) +
-		nameStyle.Render(name) +
+		renderedName +
 		strings.Repeat(" ", gap) +
 		mutedStyle.Render(suffix)
 	bottom := marker + mutedStyle.Render(path) +
@@ -1559,44 +1817,43 @@ func renderSelectedWorkspaceRow(
 	focused bool,
 	expanded bool,
 	active bool,
-	pulseOn bool,
+	shimmerPhase int,
+	theme rowTheme,
 ) string {
 	top := activityMarker + name + strings.Repeat(" ", gap) + suffix
 	if width < 3 || lipgloss.Width(top) > max(0, width-2) {
 		if focused {
 			if !expanded {
-				return renderSelectableRow(top, width, true)
+				return theme.selectableRow(top, width, true)
 			}
-			return renderFocusedRow(top, bottom, width)
+			return theme.focusedRow(top, bottom, width)
 		}
 		if !expanded {
-			return renderSelectableRow(top, width, false)
+			return theme.selectableRow(top, width, false)
 		}
-		return renderContextRow(top, bottom, width)
+		return theme.contextRow(top, bottom, width)
 	}
 
 	marker := "▏ "
-	markerColor := colorBorder
+	markerColor := theme.restMark
 	if focused {
 		marker = "▌ "
-		markerColor = colorWaiting
+		markerColor = theme.focusMark
 	}
 	markerStyle := lipgloss.NewStyle().
 		Foreground(markerColor).
-		Background(colorSelect).
+		Background(theme.background).
 		Bold(focused)
 	baseStyle := lipgloss.NewStyle().
-		Foreground(colorSelectedText).
-		Background(colorSelect)
+		Foreground(theme.text).
+		Background(theme.background)
 	activityStyle := baseStyle.Copy()
-	nameStyle := baseStyle.Copy().Bold(true)
+	renderedName := baseStyle.Copy().Bold(true).Render(name)
 	if active {
 		activityStyle = activityStyle.
 			Foreground(colorWorking).
 			Bold(true)
-		if pulseOn {
-			nameStyle = nameStyle.Foreground(colorWorking)
-		}
+		renderedName = shimmerText(name, shimmerPhase, theme.background)
 	}
 
 	contentWidth := width - 2
@@ -1606,7 +1863,7 @@ func renderSelectedWorkspaceRow(
 	)
 	topLine := markerStyle.Render(marker) +
 		activityStyle.Render(activityMarker) +
-		nameStyle.Render(name) +
+		renderedName +
 		baseStyle.Copy().
 			Width(tailWidth).
 			MaxWidth(tailWidth).
@@ -1648,6 +1905,7 @@ func (m Model) renderAgents(width, height int) string {
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
 	start, end := visibleRange(len(agents), m.agentCursor, capacity)
+	deleting := m.mode == modeDelete && m.activePane != paneWorkspaces
 	rows := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
 		rows = append(rows, renderAgentRowWithDensity(
@@ -1656,6 +1914,8 @@ func (m Model) renderAgents(width, height int) string {
 			index == m.agentCursor && m.activePane == paneAgents,
 			width,
 			expanded,
+			deleting && index == m.agentCursor,
+			m.shimmerPhaseOrRest(),
 		))
 	}
 	separator := "\n"
@@ -1677,6 +1937,8 @@ func renderAgentRow(
 		focused,
 		width,
 		true,
+		false,
+		-1,
 	)
 }
 
@@ -1686,6 +1948,8 @@ func renderAgentRowWithDensity(
 	focused bool,
 	width int,
 	expanded bool,
+	danger bool,
+	shimmerPhase int,
 ) string {
 	symbol, statusStyle := statusVisual(managedAgent)
 	providerName := strings.ToUpper(string(managedAgent.Provider))
@@ -1705,26 +1969,38 @@ func renderAgentRowWithDensity(
 		state = "needs " + string(managedAgent.Attention)
 	}
 	details := []string{providerName, state}
+	if badge := modeBadge(managedAgent.Mode); badge != "" {
+		details = append(details, badge)
+	}
 	if location := agentLocation(managedAgent); location != "" {
 		details = append(details, location)
 	}
 	bottomContent := truncate("  "+strings.Join(details, "  "), contentWidth)
-	if focused {
+	// Only the active pane's cursor row gets the filled background; a
+	// selection remembered in an inactive pane keeps just a faint marker,
+	// so exactly one row on screen is hot.
+	if focused || danger {
+		theme := rowThemeFor(danger)
 		if !expanded {
-			return renderSelectableRow(topContent, width, true)
+			return theme.selectableRow(topContent, width, focused)
 		}
-		return renderFocusedRow(topContent, bottomContent, width)
-	}
-	if selected {
-		if !expanded {
-			return renderSelectableRow(topContent, width, false)
+		if focused {
+			return theme.focusedRow(topContent, bottomContent, width)
 		}
-		return renderContextRow(topContent, bottomContent, width)
+		return theme.contextRow(topContent, bottomContent, width)
 	}
 
+	renderedTitle := titleStyle.Render(displayTitle)
+	if managedAgent.Activity == agent.ActivityWorking ||
+		managedAgent.Activity == agent.ActivityStarting {
+		renderedTitle = shimmerText(displayTitle, shimmerPhase, nil)
+	}
 	marker := "  "
+	if selected {
+		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("▏ ")
+	}
 	top := marker + statusStyle.Render(symbol) + " " +
-		titleStyle.Render(displayTitle) +
+		renderedTitle +
 		strings.Repeat(" ", gap) +
 		mutedStyle.Render(age)
 	bottom := marker + mutedStyle.Render(bottomContent)
@@ -1742,10 +2018,14 @@ func listRowCapacity(height int, expanded bool) int {
 }
 
 func renderFocusedRow(top, bottom string, width int) string {
+	return selectTheme.focusedRow(top, bottom, width)
+}
+
+func (t rowTheme) focusedRow(top, bottom string, width int) string {
 	if width < 3 {
 		style := lipgloss.NewStyle().
-			Foreground(colorSelectedText).
-			Background(colorSelect).
+			Foreground(t.text).
+			Background(t.background).
 			Width(max(1, width))
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -1756,18 +2036,18 @@ func renderFocusedRow(top, bottom string, width int) string {
 
 	contentWidth := width - 2
 	markerStyle := lipgloss.NewStyle().
-		Foreground(colorWaiting).
-		Background(colorSelect).
+		Foreground(t.focusMark).
+		Background(t.background).
 		Bold(true)
 	topStyle := lipgloss.NewStyle().
-		Foreground(colorSelectedText).
-		Background(colorSelect).
+		Foreground(t.text).
+		Background(t.background).
 		Bold(true).
 		Width(contentWidth).
 		MaxWidth(contentWidth)
 	bottomStyle := lipgloss.NewStyle().
-		Foreground(colorSelectedText).
-		Background(colorSelect).
+		Foreground(t.text).
+		Background(t.background).
 		Width(contentWidth).
 		MaxWidth(contentWidth)
 	return lipgloss.JoinVertical(
@@ -1778,10 +2058,14 @@ func renderFocusedRow(top, bottom string, width int) string {
 }
 
 func renderContextRow(top, bottom string, width int) string {
+	return selectTheme.contextRow(top, bottom, width)
+}
+
+func (t rowTheme) contextRow(top, bottom string, width int) string {
 	if width < 3 {
 		style := lipgloss.NewStyle().
-			Foreground(colorSelectedText).
-			Background(colorSelect).
+			Foreground(t.text).
+			Background(t.background).
 			Width(max(1, width))
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -1792,17 +2076,17 @@ func renderContextRow(top, bottom string, width int) string {
 
 	contentWidth := width - 2
 	markerStyle := lipgloss.NewStyle().
-		Foreground(colorBorder).
-		Background(colorSelect)
+		Foreground(t.restMark).
+		Background(t.background)
 	topStyle := lipgloss.NewStyle().
-		Foreground(colorSelectedText).
-		Background(colorSelect).
+		Foreground(t.text).
+		Background(t.background).
 		Bold(true).
 		Width(contentWidth).
 		MaxWidth(contentWidth)
 	bottomStyle := lipgloss.NewStyle().
-		Foreground(colorSelectedText).
-		Background(colorSelect).
+		Foreground(t.text).
+		Background(t.background).
 		Width(contentWidth).
 		MaxWidth(contentWidth)
 	return lipgloss.JoinVertical(
@@ -1847,23 +2131,24 @@ func (m Model) renderInteraction(width, height int) string {
 	if !ok {
 		return mutedStyle.Render(truncate("No agent selected", width))
 	}
-	if m.mode == modeDelete && m.activePane != paneWorkspaces {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			errorStyle.Render(truncate("Delete "+agentDisplayTitle(managedAgent)+"?", width)),
-			"",
-			mutedStyle.Render(ansi.Wrap(
-				"The tmux window and any running process will be removed.",
-				width,
-				"",
-			)),
+	title := titleStyle.Render(truncate(agentDisplayTitle(managedAgent), width))
+	if managedAgent.Activity == agent.ActivityWorking ||
+		managedAgent.Activity == agent.ActivityStarting {
+		title = shimmerText(
+			truncate(agentDisplayTitle(managedAgent), width),
+			m.shimmerPhaseOrRest(),
+			nil,
 		)
 	}
-	title := titleStyle.Render(truncate(agentDisplayTitle(managedAgent), width))
-	metaText := strings.TrimSpace(fmt.Sprintf("%s  %s  %s",
-		managedAgent.Provider,
-		managedAgent.Activity,
-		shortPath(managedAgent.Cwd),
-	))
+	metaParts := []string{
+		string(managedAgent.Provider),
+		string(managedAgent.Activity),
+	}
+	if badge := modeBadge(managedAgent.Mode); badge != "" {
+		metaParts = append(metaParts, badge)
+	}
+	metaParts = append(metaParts, shortPath(managedAgent.Cwd))
+	metaText := strings.TrimSpace(strings.Join(metaParts, "  "))
 	meta := mutedStyle.Render(truncate(metaText, width))
 	if managedAgent.Attention != agent.AttentionNone {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
@@ -1883,12 +2168,23 @@ func (m Model) renderInteraction(width, height int) string {
 		)
 	}
 
-	composer := mutedStyle.Render(truncate("i compose  Enter open terminal", width))
+	viewportCopy := m.interaction
+	composer := mutedStyle.Render(truncate("i reply  Enter open terminal", width))
 	if m.mode == modeCompose {
-		m.sendInput.SetWidth(max(1, width-2))
-		composer = "> " + m.sendInput.View()
+		m.sendInput.SetWidth(max(1, width))
+		inputHeight := composerHeight(m.sendInput.Value(), max(1, width))
+		m.sendInput.SetHeight(inputHeight)
+		rule := mutedStyle.Render(strings.Repeat("─", max(1, width)))
+		composer = lipgloss.JoinVertical(
+			lipgloss.Left,
+			rule,
+			m.sendInput.View(),
+			rule,
+		)
+		// The bordered composer grows; the transcript yields the rows.
+		viewportCopy.Height = max(1, viewportCopy.Height-inputHeight-2+1)
 	}
-	transcript := m.interaction.View() + ansi.ResetStyle
+	transcript := viewportCopy.View() + ansi.ResetStyle
 	if m.interactionID != managedAgent.ID {
 		transcript = mutedStyle.Render(truncate("Loading interaction...", width))
 	}
@@ -1899,6 +2195,7 @@ func (m Model) renderInteraction(width, height int) string {
 		composer,
 	)
 }
+
 
 func renderPendingAction(
 	action pending.Action,
@@ -2152,6 +2449,11 @@ func (m Model) renderDispatchAt(width, height int) string {
 		}
 	}
 
+	lines = append(lines,
+		"",
+		"  "+m.renderDispatchModeLine(contentWidth),
+	)
+
 	taskDetail := fmt.Sprintf(
 		"%d chars",
 		utf8.RuneCountInString(m.taskInput.Value()),
@@ -2165,11 +2467,21 @@ func (m Model) renderDispatchAt(width, height int) string {
 			contentWidth,
 		),
 	)
-	taskHeight := clamp(height-len(lines)-2, 1, 6)
+	taskHeight := clamp(height-len(lines)-4, 1, 6)
 	lines = append(lines,
-		"  "+m.renderTaskComposer(contentWidth, taskHeight),
+		indentLines(m.renderTaskComposer(contentWidth, taskHeight), "  "),
+		"",
+		"  "+mutedStyle.Render(truncate(m.commandHints(), contentWidth)),
 	)
 	return strings.Join(lines, "\n")
+}
+
+func indentLines(block, prefix string) string {
+	rows := strings.Split(block, "\n")
+	for i, row := range rows {
+		rows[i] = prefix + row
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m Model) renderTaskComposer(width, height int) string {
@@ -2189,6 +2501,54 @@ func (m Model) renderTaskComposer(width, height int) string {
 		style = style.BorderForeground(colorAccent)
 	}
 	return style.Render(input.View())
+}
+
+func nextDispatchMode(mode agent.PermissionMode) agent.PermissionMode {
+	switch mode {
+	case agent.ModeAsk:
+		return agent.ModeEdits
+	case agent.ModeEdits:
+		return agent.ModeAuto
+	default:
+		return agent.ModeAsk
+	}
+}
+
+func modeSummary(mode agent.PermissionMode) (string, string) {
+	switch mode {
+	case agent.ModeAsk:
+		return "Ask", "asks first"
+	case agent.ModeAuto:
+		return "Auto", "never asks"
+	default:
+		return "Edits", "auto file edits"
+	}
+}
+
+func modeBadge(mode agent.PermissionMode) string {
+	switch mode {
+	case agent.ModeAsk:
+		return "ask"
+	case agent.ModeAuto:
+		return "AUTO"
+	default:
+		return ""
+	}
+}
+
+func (m Model) renderDispatchModeLine(width int) string {
+	label, description := modeSummary(m.dispatchMode)
+	rendered := titleStyle.Render("Mode") + "  "
+	if m.dispatchMode == agent.ModeAuto {
+		rendered += lipgloss.NewStyle().
+			Foreground(colorWaiting).Bold(true).Render(label)
+	} else {
+		rendered += accentStyle.Render(label)
+	}
+	rendered += "  "
+	available := max(0, width-lipgloss.Width(rendered))
+	detail := description + "  (m)"
+	return rendered + mutedStyle.Render(truncate(detail, available))
 }
 
 func (m Model) renderDispatchSectionTitle(
@@ -2314,28 +2674,32 @@ func (m Model) renderDirectoryRow(
 }
 
 func renderSelectableRow(content string, width int, focused bool) string {
+	return selectTheme.selectableRow(content, width, focused)
+}
+
+func (t rowTheme) selectableRow(content string, width int, focused bool) string {
 	if width < 3 {
 		return lipgloss.NewStyle().
-			Foreground(colorSelectedText).
-			Background(colorSelect).
+			Foreground(t.text).
+			Background(t.background).
 			Bold(focused).
 			Width(max(1, width)).
 			Render(ansi.Truncate(content, width, ""))
 	}
 	contentWidth := width - 2
 	marker := "▏ "
-	markerColor := colorBorder
+	markerColor := t.restMark
 	if focused {
 		marker = "▌ "
-		markerColor = colorWaiting
+		markerColor = t.focusMark
 	}
 	markerStyle := lipgloss.NewStyle().
 		Foreground(markerColor).
-		Background(colorSelect).
+		Background(t.background).
 		Bold(focused)
 	rowStyle := lipgloss.NewStyle().
-		Foreground(colorSelectedText).
-		Background(colorSelect).
+		Foreground(t.text).
+		Background(t.background).
 		Bold(focused).
 		Width(contentWidth).
 		MaxWidth(contentWidth)
@@ -2437,9 +2801,14 @@ func renderFooterStatus(
 func (m Model) commandHints() string {
 	switch m.mode {
 	case modeCompose:
-		return "Esc normal  Enter send"
+		return "Enter send  Esc cancel"
 	case modeDelete:
-		return "d confirm  Esc cancel"
+		if m.activePane == paneWorkspaces &&
+			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) &&
+			len(m.groups[m.workspaceCursor].agents) > 0 {
+			return "X delete workspace and agents  Esc cancel"
+		}
+		return "d/x confirm  Esc cancel"
 	case modeDispatch:
 		switch m.formFocus {
 		case dispatchProvider:
@@ -2447,12 +2816,13 @@ func (m Model) commandHints() string {
 			if m.chooseDispatchDirectory {
 				hints = "j/k choose  Enter location"
 			}
+			hints += "  m mode"
 			if m.nvimPath != "" {
 				hints += "  e Neovim"
 			}
 			return hints + "  Esc cancel"
 		case dispatchDirectory:
-			return "j/k location  Enter choose  e edit path  Esc cancel"
+			return "j/k location  Enter choose  m mode  e edit path  Esc cancel"
 		case dispatchCustomPath:
 			return "Enter accept path  Esc cancel"
 		default:
@@ -2464,6 +2834,8 @@ func (m Model) commandHints() string {
 		}
 	case modeAddWorkspace:
 		return "j/k select  Enter add  e edit path  Esc cancel"
+	case modeRename:
+		return "Enter apply  Esc cancel"
 	}
 	rowMode := "z expand rows"
 	if m.rowsExpanded {
@@ -2492,7 +2864,7 @@ func (m Model) commandHints() string {
 		)
 	case paneInteraction:
 		return strings.TrimSpace(
-			"h agents  j/k scroll  i compose  n new  " + rowMode + "  Enter open",
+			"h agents  j/k scroll  i reply  n new  " + rowMode + "  Enter open",
 		)
 	default:
 		return strings.TrimSpace(
@@ -2726,6 +3098,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 		Provider: m.providers[m.providerIndex].ID,
 		Cwd:      strings.TrimSpace(m.cwdInput.Value()),
 		Task:     strings.TrimSpace(m.taskInput.Value()),
+		Mode:     m.dispatchMode,
 	}
 	if request.Task == "" {
 		m.err = fmt.Errorf("task cannot be empty")
@@ -3334,12 +3707,112 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 		m.cwdInput.SetValue(directory)
 		m.formFocus = dispatchProvider
 	}
+	m.applyDispatchOverrides(directory)
 	m.mode = modeDispatch
 	m.dispatchPrefix = ""
 	m.focusForm()
 	m.err = nil
 	m.status = "New agent"
 	return m, nil
+}
+
+// applyDispatchOverrides applies per-workspace config defaults for the
+// directory the form opens in. The user's in-form choices still win — this
+// only presets the fields.
+func (m *Model) applyDispatchOverrides(directory string) {
+	if m.modeForDir != nil {
+		if mode, ok := m.modeForDir(directory); ok {
+			m.dispatchMode = mode
+		}
+	}
+	if m.providerForDir == nil {
+		return
+	}
+	if providerID, ok := m.providerForDir(directory); ok {
+		for index, info := range m.providers {
+			if info.ID == providerID {
+				m.providerIndex = index
+				break
+			}
+		}
+	}
+}
+
+func (m Model) beginRename() (tea.Model, tea.Cmd) {
+	m.renameAgentID = ""
+	m.renameWorkspace = workspace.Context{}
+	current := ""
+	if m.activePane == paneWorkspaces {
+		selected, ok := m.selectedWorkspace()
+		if !ok {
+			return m, nil
+		}
+		m.renameWorkspace = selected
+		current = m.selectedWorkspaceLabel()
+	} else {
+		selected, ok := m.selectedAgent()
+		if !ok {
+			return m, nil
+		}
+		m.renameAgentID = selected.ID
+		current = agentDisplayTitle(selected)
+	}
+	m.renameInput = newLineInput("New name")
+	m.renameInput.SetValue(current)
+	m.renameInput.Focus()
+	m.mode = modeRename
+	m.err = nil
+	m.status = "Rename"
+	return m, nil
+}
+
+func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c", "ctrl+[":
+		m.mode = modeNormal
+		m.status = "Ready"
+		return m, nil
+	case "enter":
+		name := strings.TrimSpace(m.renameInput.Value())
+		if name == "" {
+			m.err = fmt.Errorf("name cannot be empty")
+			return m, nil
+		}
+		m.mode = modeNormal
+		backend := m.backend
+		if m.renameAgentID != "" {
+			id := m.renameAgentID
+			m.status = "Renaming agent"
+			return m, actionCmd("Agent renamed", func(ctx context.Context) error {
+				return backend.Rename(ctx, id, name)
+			})
+		}
+		target := m.renameWorkspace
+		m.status = "Renaming workspace"
+		return m, actionCmd("Workspace renamed", func(ctx context.Context) error {
+			return backend.RenameWorkspace(ctx, target, name)
+		})
+	}
+	m.renameInput = m.renameInput.Update(msg)
+	return m, nil
+}
+
+func (m Model) renderRenameModal(width, height int) string {
+	modalWidth, modalHeight := modalDimensions(width, height, 56, 7)
+	innerWidth := max(1, modalWidth-2)
+	title := "Rename workspace"
+	if m.renameAgentID != "" {
+		title = "Rename agent"
+	}
+	m.renameInput.SetWidth(max(10, innerWidth-6))
+	content := strings.Join([]string{
+		"  " + titleStyle.Render(title),
+		"",
+		"    " + m.renameInput.View(),
+		"",
+		"  " + mutedStyle.Render("Enter apply  Esc cancel"),
+	}, "\n")
+	return renderModal(content, modalWidth, modalHeight)
 }
 
 func (m Model) submitAddWorkspace(path string) (tea.Model, tea.Cmd) {
@@ -3454,9 +3927,9 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-func pulseTickCmd() tea.Cmd {
-	return tea.Tick(650*time.Millisecond, func(t time.Time) tea.Msg {
-		return pulseTickMsg(t)
+func shimmerTickCmd() tea.Cmd {
+	return tea.Tick(90*time.Millisecond, func(t time.Time) tea.Msg {
+		return shimmerTickMsg(t)
 	})
 }
 
@@ -3839,4 +4312,65 @@ func clamp(value, low, high int) int {
 		return high
 	}
 	return value
+}
+
+// composerHeight sizes the reply box to its wrapped content: the textarea
+// wraps at its width minus the two-column prompt. One row minimum, six
+// before the box scrolls internally. The height MUST match the textarea's
+// own layout exactly — its scroll viewport is shared between model copies,
+// and an undersized box wedges it scrolled down permanently.
+func composerHeight(value string, width int) int {
+	wrapWidth := max(1, width-2)
+	total := 0
+	for _, logical := range strings.Split(value, "\n") {
+		total += textareaWrapCount([]rune(logical), wrapWidth)
+	}
+	return clamp(total, 1, 6)
+}
+
+// textareaWrapCount is a faithful port of bubbles/textarea's internal
+// wrap(), reduced to counting soft lines. Note the closing `>=`: a line
+// exactly filling the width spills its final word onto a new row.
+func textareaWrapCount(runes []rune, width int) int {
+	lines := [][]rune{{}}
+	word := []rune{}
+	row := 0
+	spaces := 0
+
+	for _, r := range runes {
+		if unicode.IsSpace(r) {
+			spaces++
+		} else {
+			word = append(word, r)
+		}
+
+		if spaces > 0 {
+			if lipgloss.Width(string(lines[row]))+lipgloss.Width(string(word))+spaces > width {
+				row++
+				lines = append(lines, []rune{})
+				lines[row] = append(lines[row], word...)
+				lines[row] = append(lines[row], []rune(strings.Repeat(" ", spaces))...)
+			} else {
+				lines[row] = append(lines[row], word...)
+				lines[row] = append(lines[row], []rune(strings.Repeat(" ", spaces))...)
+			}
+			spaces = 0
+			word = nil
+		} else {
+			lastCharLen := lipgloss.Width(string(word[len(word)-1]))
+			if lipgloss.Width(string(word))+lastCharLen > width {
+				if len(lines[row]) > 0 {
+					row++
+					lines = append(lines, []rune{})
+				}
+				lines[row] = append(lines[row], word...)
+				word = nil
+			}
+		}
+	}
+
+	if lipgloss.Width(string(lines[row]))+lipgloss.Width(string(word))+spaces >= width {
+		lines = append(lines, []rune{})
+	}
+	return len(lines)
 }
