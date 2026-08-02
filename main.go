@@ -233,9 +233,28 @@ func runDashboard(socket, sessionName string, cfg config.Config) error {
 			ProviderForDir:  cfg.ProviderForDir,
 		}),
 		tea.WithAltScreen(),
+		tea.WithFilter(ui.DecodeModifiedKeys),
 	)
+	restoreKeys := enableModifiedKeys()
 	_, err = program.Run()
+	restoreKeys()
 	return err
+}
+
+// enableModifiedKeys opts the terminal into xterm's modifyOtherKeys
+// reporting so chords like shift+enter reach the dashboard instead of
+// being collapsed to plain enter; Bubble Tea v1 never requests an
+// enhanced keyboard protocol itself. tmux applies the request to the
+// dashboard's pane when the server has extended-keys enabled. The
+// returned function restores default reporting for whoever inherits the
+// terminal.
+func enableModifiedKeys() func() {
+	info, err := os.Stdout.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return func() {}
+	}
+	fmt.Fprint(os.Stdout, ui.EnableModifiedKeys)
+	return func() { fmt.Fprint(os.Stdout, ui.DisableModifiedKeys) }
 }
 
 func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {

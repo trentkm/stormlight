@@ -22,6 +22,7 @@ set -sa terminal-overrides ",*:RGB"
 set -s escape-time 10
 set -s focus-events on
 set -s extended-keys on
+set -as terminal-features 'xterm*:extkeys'
 set -g history-limit 50000
 set -g mouse on
 `
