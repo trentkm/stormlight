@@ -394,6 +394,49 @@ func TestFooterKeepsCommandsVisibleWithStatus(t *testing.T) {
 	}
 }
 
+func TestFooterShowsOnlyChordOptionsWhilePending(t *testing.T) {
+	model := NewModel(stubBackend{})
+	model.width = 100
+
+	updated, _ := model.updateNormal(runeKey(","))
+	model = updated.(Model)
+	footer := ansi.Strip(model.renderFooter())
+	if !strings.Contains(footer, "Sort:") ||
+		!strings.Contains(footer, "a attention") ||
+		!strings.Contains(footer, "n name") ||
+		!strings.Contains(footer, "c newest") {
+		t.Fatalf("pending sort chord lacks its options: %q", footer)
+	}
+	if strings.Contains(footer, "j/k") || strings.Contains(footer, "q quit") {
+		t.Fatalf("normal hints shown while chord is pending: %q", footer)
+	}
+
+	updated, _ = model.updateNormal(runeKey("n"))
+	model = updated.(Model)
+	footer = ansi.Strip(model.renderFooter())
+	if !strings.Contains(footer, "Sorted by name") ||
+		!strings.Contains(footer, "j/k select") {
+		t.Fatalf("resolved chord did not restore normal footer: %q", footer)
+	}
+
+	updated, _ = model.updateNormal(runeKey("g"))
+	model = updated.(Model)
+	footer = ansi.Strip(model.renderFooter())
+	if !strings.Contains(footer, "Go:") || !strings.Contains(footer, "g top") {
+		t.Fatalf("pending g chord lacks its options: %q", footer)
+	}
+	if strings.Contains(footer, "j/k") {
+		t.Fatalf("normal hints shown while g chord is pending: %q", footer)
+	}
+
+	updated, _ = model.updateNormal(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(Model)
+	footer = ansi.Strip(model.renderFooter())
+	if strings.Contains(footer, "Go:") || !strings.Contains(footer, "j/k select") {
+		t.Fatalf("cancelled chord did not restore normal footer: %q", footer)
+	}
+}
+
 func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(stubBackend{})
