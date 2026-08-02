@@ -53,10 +53,16 @@ agents keep running on the Stormlight server.
   on older tmux instead of risking the server.
 - Optional: `yazi` for the directory picker, `nvim` for task editing.
 
-The future Homebrew formula must declare `depends_on "tmux"` so installs get
-a popup-safe tmux (>= 3.7) without users thinking about any of this.
+## Install
 
-## Build
+```bash
+brew install trentkm/stormlight/stormlight
+```
+
+The formula declares `depends_on "tmux"`, so installs get a popup-safe tmux
+(>= 3.7) without thinking about any of this.
+
+## Build from source
 
 ```bash
 go build -o stormlight .
