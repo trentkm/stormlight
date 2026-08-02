@@ -2066,8 +2066,10 @@ func (m Model) renderWorkspaceRow(
 			lipgloss.Width(suffix),
 	)
 	// Subtitle indents to sit under the name, reading as detail of the
-	// title rather than a second row of equal weight.
-	bottomContent := "  " + workspaceDetail(group.context, max(1, contentWidth-2))
+	// title rather than a second row of equal weight. One space here: the
+	// selected row's marker column supplies the other, and the quiet path
+	// adds its own, so the subtitle never shifts with selection.
+	bottomContent := " " + workspaceDetail(group.context, max(1, contentWidth-2))
 	tier := attentionTierOf(urgent, waiting)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
@@ -2115,7 +2117,7 @@ func (m Model) renderWorkspaceRow(
 		renderedName +
 		strings.Repeat(" ", gap) +
 		suffixStyle.Render(suffix)
-	bottom := mutedStyle.Render(bottomContent)
+	bottom := mutedStyle.Render(" " + bottomContent)
 	if !m.expandedRows() {
 		return top
 	}
@@ -2336,7 +2338,7 @@ func renderAgentRowWithDensity(
 	if location := agentLocation(managedAgent); location != "" {
 		details = append(details, location)
 	}
-	bottomContent := "  " + truncate(
+	bottomContent := " " + truncate(
 		strings.Join(details, " · "),
 		max(1, contentWidth-2),
 	)
@@ -2376,7 +2378,7 @@ func renderAgentRowWithDensity(
 		renderedTitle +
 		strings.Repeat(" ", gap) +
 		detailStyle.Render(age)
-	bottom := detailStyle.Render(bottomContent)
+	bottom := detailStyle.Render(" " + bottomContent)
 	if !expanded {
 		return top
 	}
