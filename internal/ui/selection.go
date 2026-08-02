@@ -101,9 +101,6 @@ func (m Model) transcriptLineAt(y int) (int, bool) {
 	if _, ok := m.selectedAgent(); !ok || m.interactionContent == "" {
 		return 0, false
 	}
-	if _, pending := m.selectedPendingAction(); pending {
-		return 0, false
-	}
 	row := y - spanreedContentTop
 	if row < 0 {
 		row = 0

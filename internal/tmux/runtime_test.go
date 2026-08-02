@@ -519,13 +519,13 @@ func releaseWindowSizeCalls() [][]string {
 }
 
 type captureRunner struct {
-	agentLine            string
-	sourceSessionID      string
-	binding              string
-	rootBinding          string
-	feedbackVersion      string
-	clientLine string
-	calls                [][]string
+	agentLine       string
+	sourceSessionID string
+	binding         string
+	rootBinding     string
+	feedbackVersion string
+	clientLine      string
+	calls           [][]string
 }
 
 func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string, error) {

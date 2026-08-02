@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
-	"github.com/trentkm/stormlight/internal/pending"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -20,8 +19,6 @@ type flowBackend struct {
 	renamedID        string
 	renamedName      string
 	renamedWorkspace string
-	resolvedAction   string
-	resolvedOption   string
 }
 
 func (b *flowBackend) Delete(_ context.Context, id string) error {
@@ -48,12 +45,6 @@ func (b *flowBackend) RenameWorkspace(
 	return nil
 }
 
-func (b *flowBackend) ResolvePendingAction(_ context.Context, actionID, optionID string) error {
-	b.resolvedAction = actionID
-	b.resolvedOption = optionID
-	return nil
-}
-
 func flowModelFixture(t *testing.T, backend Backend) Model {
 	t.Helper()
 	model := NewModel(backend)
@@ -70,66 +61,6 @@ func flowModelFixture(t *testing.T, backend Backend) Model {
 	}}
 	model.rebuildGroups(workspaceContext.ID, "agent-1")
 	return model
-}
-
-func TestPendingActionKeysNavigateAndResolve(t *testing.T) {
-	action := pending.Action{
-		ID:      "action-1",
-		AgentID: "agent-1",
-		Kind:    pending.KindApproval,
-		Title:   "Run go test?",
-		Options: []pending.Option{
-			{ID: pending.OptionAllowOnce, Label: "Allow"},
-			{ID: pending.OptionAlwaysPrefix + "bash", Label: "Always"},
-			{ID: pending.OptionDeny, Label: "Deny", Shortcut: "3"},
-			{ID: pending.OptionTerminal, Label: "Terminal"},
-		},
-	}
-	cases := []struct {
-		key  string
-		want string
-	}{
-		{"y", pending.OptionAllowOnce},
-		{"a", pending.OptionAlwaysPrefix + "bash"},
-		{"n", pending.OptionDeny},
-		{"t", pending.OptionTerminal},
-		{"3", pending.OptionDeny},
-	}
-	for _, c := range cases {
-		backend := &flowBackend{}
-		model := flowModelFixture(t, backend)
-		updated, cmd, handled := model.updatePendingAction(c.key, action)
-		model = updated.(Model)
-		if !handled || cmd == nil {
-			t.Fatalf("%q was not handled", c.key)
-		}
-		cmd()
-		if backend.resolvedAction != action.ID || backend.resolvedOption != c.want {
-			t.Fatalf("%q resolved %q/%q, want option %q",
-				c.key, backend.resolvedAction, backend.resolvedOption, c.want)
-		}
-	}
-
-	backend := &flowBackend{}
-	model := flowModelFixture(t, backend)
-	for range 10 {
-		updated, _, _ := model.updatePendingAction("j", action)
-		model = updated.(Model)
-	}
-	if model.pendingOption != len(action.Options)-1 {
-		t.Fatalf("j did not clamp: %d", model.pendingOption)
-	}
-	updated, cmd, _ := model.updatePendingAction("enter", action)
-	model = updated.(Model)
-	cmd()
-	if backend.resolvedOption != pending.OptionTerminal {
-		t.Fatalf("enter resolved %q, want highlighted option", backend.resolvedOption)
-	}
-	updated, _, _ = model.updatePendingAction("k", action)
-	model = updated.(Model)
-	if model.pendingOption != len(action.Options)-2 {
-		t.Fatalf("k did not move up: %d", model.pendingOption)
-	}
 }
 
 func TestDeleteFlowDeletesAgentAndCancels(t *testing.T) {

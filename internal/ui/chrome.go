@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/trentkm/stormlight/internal/pending"
 )
 
 func (m Model) renderFooter() string {
@@ -168,19 +167,9 @@ func (m Model) commandHints() string {
 		rowMode = ""
 	}
 	if m.activePane == paneInteraction {
-		if action, ok := m.selectedPendingAction(); ok {
-			if action.Kind == pending.KindQuestion {
-				return "h agents  j/k choose  1-9 pick  t terminal  Enter answer"
-			}
-			hints := []string{"h agents", "j/k choose", "y allow"}
-			for _, option := range action.Options {
-				if strings.HasPrefix(option.ID, pending.OptionAlwaysPrefix) {
-					hints = append(hints, "a always")
-					break
-				}
-			}
-			hints = append(hints, "n deny", "t terminal", "Enter confirm")
-			return strings.Join(hints, "  ")
+		if selected, ok := m.selectedAgent(); ok &&
+			selected.ProcessLive && selected.Attention.Urgent() {
+			return "Enter answer in terminal  h agents  j/k scroll  M seen"
 		}
 	}
 	switch m.activePane {

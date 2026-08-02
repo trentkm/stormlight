@@ -39,26 +39,19 @@ func (m Model) renderInteraction(width, height int) string {
 	metaText := strings.TrimSpace(strings.Join(metaParts, "  "))
 	meta := mutedStyle.Render(truncate(metaText, width))
 	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
+		// Prompts are answered in the agent's own terminal; the dashboard's
+		// job is pointing at the pane, loudly.
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
-			Render(truncate("Needs "+string(managedAgent.Attention), width))
+			Render(truncate(
+				"Needs "+string(managedAgent.Attention)+" — Enter opens the terminal",
+				width,
+			))
 	} else if managedAgent.ProcessLive &&
 		managedAgent.Attention == agent.AttentionWaiting {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).
 			Render(truncate("Unseen result", width))
 	}
 	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
-	if action, ok := m.selectedPendingAction(); ok {
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			heading,
-			renderPendingAction(
-				action,
-				m.pendingOption,
-				width,
-				max(1, height-3),
-			),
-		)
-	}
 
 	viewportCopy := m.interaction
 	composer := mutedStyle.Render(truncate("i reply  / search  Enter open terminal", width))

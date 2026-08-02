@@ -19,7 +19,6 @@ import (
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
-	"github.com/trentkm/stormlight/internal/pending"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
@@ -132,7 +131,6 @@ func newRootCommand() *cobra.Command {
 		newDeleteCommand(&socket, &sessionName, cfg),
 		newEventCommand(&socket, &sessionName, cfg),
 		newProviderEventCommand(&socket, &sessionName, cfg),
-		newProviderPermissionCommand(&socket, &sessionName, cfg),
 		newLogsCommand(&logFile),
 		newRunCommand(&socket, &sessionName, cfg),
 		newConfigCommand(&socket, &sessionName, cfg),
@@ -747,143 +745,6 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 				Summary:        event.Summary,
 				TranscriptPath: event.TranscriptPath,
 			})
-			return nil
-		},
-	}
-}
-
-func newProviderPermissionCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
-	return &cobra.Command{
-		Use:    "_provider-permission <provider>",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			id := agentIDFromEnv()
-			if id == "" {
-				return nil
-			}
-			payload, err := io.ReadAll(cmd.InOrStdin())
-			if err != nil {
-				diagnostic.Logger().Warn(
-					"permission hook input unavailable",
-					"error", err,
-				)
-				return nil
-			}
-			bridge, err := provider.ParsePermissionRequest(
-				agent.Provider(args[0]),
-				id,
-				payload,
-			)
-			if err != nil {
-				diagnostic.Logger().Warn(
-					"permission hook payload unsupported",
-					"provider", args[0],
-					"error", err,
-				)
-				return nil
-			}
-
-			store := pending.NewStore()
-			published, err := store.Publish(bridge.Action)
-			if err != nil {
-				diagnostic.Logger().Warn(
-					"permission request publication failed",
-					"agent_id", id,
-					"error", err,
-				)
-				return nil
-			}
-			bridge.Action = published
-			defer func() {
-				if err := store.Remove(published.ID); err != nil {
-					diagnostic.Logger().Warn(
-						"permission request cleanup failed",
-						"action_id", published.ID,
-						"error", err,
-					)
-				}
-			}()
-
-			attention := agent.AttentionApproval
-			if published.Kind == pending.KindQuestion {
-				attention = agent.AttentionQuestion
-			}
-			service, serviceErr := newService(*socket, *sessionName, cfg)
-			if serviceErr == nil {
-				updatePermissionAgent(
-					service,
-					id,
-					agent.ActivityIdle,
-					attention,
-					published.Title,
-				)
-			}
-
-			resolution, err := store.Wait(cmd.Context(), published.ID)
-			if errors.Is(err, pending.ErrNoController) {
-				diagnostic.Logger().Info(
-					"permission request returned to provider terminal",
-					"agent_id", id,
-					"action_id", published.ID,
-				)
-				return nil
-			}
-			if err != nil {
-				diagnostic.Logger().Warn(
-					"permission request wait failed",
-					"agent_id", id,
-					"action_id", published.ID,
-					"error", err,
-				)
-				return nil
-			}
-
-			response, handled, err := bridge.Response(resolution)
-			if err != nil {
-				diagnostic.Logger().Warn(
-					"permission response failed",
-					"agent_id", id,
-					"action_id", published.ID,
-					"error", err,
-				)
-				return nil
-			}
-			if !handled {
-				if serviceErr == nil {
-					summary := "Review permission in terminal"
-					if published.Kind == pending.KindQuestion {
-						summary = "Answer question in terminal"
-					}
-					updatePermissionAgent(
-						service,
-						id,
-						agent.ActivityIdle,
-						attention,
-						summary,
-					)
-				}
-				return nil
-			}
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(response)); err != nil {
-				return fmt.Errorf("write permission response: %w", err)
-			}
-
-			if serviceErr == nil {
-				summary := "Permission approved"
-				if published.Kind == pending.KindQuestion {
-					summary = "Question answered"
-				} else if resolution.OptionID == pending.OptionDeny {
-					summary = "Permission denied"
-				}
-				updatePermissionAgent(
-					service,
-					id,
-					agent.ActivityWorking,
-					agent.AttentionNone,
-					summary,
-				)
-			}
 			return nil
 		},
 	}

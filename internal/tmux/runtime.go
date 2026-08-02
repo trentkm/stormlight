@@ -44,10 +44,10 @@ const (
 	baseStatusStyle      = "bg=#1B2740,fg=#C8D6F2"
 	baseStatusLeft       = " #[fg=#7DCFFF,bold]✦ #[fg=#E8EEF9,bold]#{session_name}#[default] "
 	baseStatusLeftLength = 40
-	dynamicStatusStyle      = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
-	dynamicStatusLeft       = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
-	basePaneFieldCount      = 10
-	metadataFieldCount      = 19
+	dynamicStatusStyle   = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
+	dynamicStatusLeft    = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
+	basePaneFieldCount   = 10
+	metadataFieldCount   = 19
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -844,23 +844,23 @@ func parseAgent(line string) (agent.Agent, bool) {
 	}
 
 	return agent.Agent{
-		ID:          core[0],
-		Provider:    agent.Provider(core[1]),
-		Name:        parts[3],
-		Task:        core[2],
-		Summary:     core[3],
-		Cwd:         core[4],
-		CreatedAt:   createdAt,
-		Activity:    activity,
-		Attention:   agent.Attention(core[7]),
-		TmuxSession: parts[0],
-		WindowID:    parts[1],
-		WindowIndex: windowIndex,
-		PaneID:      parts[4],
-		Command:     parts[5],
-		PaneTitle:   parts[7],
-		ProcessLive: !paneDead,
-		ExitCode:    exitCode,
+		ID:             core[0],
+		Provider:       agent.Provider(core[1]),
+		Name:           parts[3],
+		Task:           core[2],
+		Summary:        core[3],
+		Cwd:            core[4],
+		CreatedAt:      createdAt,
+		Activity:       activity,
+		Attention:      agent.Attention(core[7]),
+		TmuxSession:    parts[0],
+		WindowID:       parts[1],
+		WindowIndex:    windowIndex,
+		PaneID:         parts[4],
+		Command:        parts[5],
+		PaneTitle:      parts[7],
+		ProcessLive:    !paneDead,
+		ExitCode:       exitCode,
 		Mode:           agent.PermissionMode(core[17]),
 		TranscriptPath: core[18],
 		Workspace: workspace.Context{
@@ -882,16 +882,16 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		createdAt = strconv.FormatInt(managedAgent.CreatedAt.Unix(), 10)
 	}
 	options := map[string]string{
-		"@stormlight_id":         managedAgent.ID,
-		"@stormlight_provider":   string(managedAgent.Provider),
-		"@stormlight_task":       metadataValue(managedAgent.Task),
-		"@stormlight_summary":    metadataValue(managedAgent.Summary),
-		"@stormlight_cwd":        managedAgent.Cwd,
-		"@stormlight_created_at": createdAt,
-		"@stormlight_activity":   string(managedAgent.Activity),
-		"@stormlight_attention":  string(managedAgent.Attention),
-		"@stormlight_pane":       managedAgent.PaneID,
-		"@stormlight_mode":       string(managedAgent.Mode),
+		"@stormlight_id":              managedAgent.ID,
+		"@stormlight_provider":        string(managedAgent.Provider),
+		"@stormlight_task":            metadataValue(managedAgent.Task),
+		"@stormlight_summary":         metadataValue(managedAgent.Summary),
+		"@stormlight_cwd":             managedAgent.Cwd,
+		"@stormlight_created_at":      createdAt,
+		"@stormlight_activity":        string(managedAgent.Activity),
+		"@stormlight_attention":       string(managedAgent.Attention),
+		"@stormlight_pane":            managedAgent.PaneID,
+		"@stormlight_mode":            string(managedAgent.Mode),
 		"@stormlight_transcript_path": managedAgent.TranscriptPath,
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(managedAgent.Workspace)

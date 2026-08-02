@@ -80,7 +80,10 @@ const (
 )
 
 // DefaultMode is used when a dispatch does not specify a permission mode.
-const DefaultMode = ModeEdits
+// Auto is the recommended way to run Stormlight agents: prompts are
+// answered in the agent's own terminal, so a mode that rarely prompts is
+// what keeps the dashboard a place you watch rather than babysit.
+const DefaultMode = ModeAuto
 
 func ParseMode(value string) (PermissionMode, error) {
 	switch PermissionMode(value) {
@@ -93,24 +96,24 @@ func ParseMode(value string) (PermissionMode, error) {
 }
 
 type Agent struct {
-	ID          string            `json:"id"`
-	Provider    Provider          `json:"provider"`
-	Name        string            `json:"name"`
-	Task        string            `json:"task"`
-	Summary     string            `json:"summary,omitempty"`
-	Cwd         string            `json:"cwd"`
-	CreatedAt   time.Time         `json:"created_at"`
-	Activity    Activity          `json:"activity"`
-	Attention   Attention         `json:"attention,omitempty"`
-	TmuxSession string            `json:"tmux_session"`
-	WindowID    string            `json:"window_id"`
-	WindowIndex int               `json:"window_index"`
-	PaneID      string            `json:"pane_id"`
-	PaneTitle   string            `json:"pane_title,omitempty"`
-	Command     string            `json:"command,omitempty"`
-	ProcessLive bool              `json:"process_live"`
-	ExitCode    *int              `json:"exit_code,omitempty"`
-	Mode        PermissionMode    `json:"mode,omitempty"`
+	ID          string         `json:"id"`
+	Provider    Provider       `json:"provider"`
+	Name        string         `json:"name"`
+	Task        string         `json:"task"`
+	Summary     string         `json:"summary,omitempty"`
+	Cwd         string         `json:"cwd"`
+	CreatedAt   time.Time      `json:"created_at"`
+	Activity    Activity       `json:"activity"`
+	Attention   Attention      `json:"attention,omitempty"`
+	TmuxSession string         `json:"tmux_session"`
+	WindowID    string         `json:"window_id"`
+	WindowIndex int            `json:"window_index"`
+	PaneID      string         `json:"pane_id"`
+	PaneTitle   string         `json:"pane_title,omitempty"`
+	Command     string         `json:"command,omitempty"`
+	ProcessLive bool           `json:"process_live"`
+	ExitCode    *int           `json:"exit_code,omitempty"`
+	Mode        PermissionMode `json:"mode,omitempty"`
 	// TranscriptPath is the provider's own transcript file for this
 	// conversation (Claude Code session JSONL), reported by its hooks.
 	TranscriptPath string            `json:"transcript_path,omitempty"`

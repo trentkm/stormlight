@@ -96,14 +96,10 @@ func highlightSearchLine(line, needle string, current bool) string {
 }
 
 // interactionSearchable reports whether the Spanreed pane is showing a
-// transcript `/` can search: an agent is selected and no pending action has
-// replaced the viewport.
+// transcript `/` can search: an agent must be selected.
 func (m Model) interactionSearchable() bool {
-	if _, ok := m.selectedAgent(); !ok {
-		return false
-	}
-	_, pending := m.selectedPendingAction()
-	return !pending
+	_, ok := m.selectedAgent()
+	return ok
 }
 
 // beginSearch opens the `/` prompt over the Spanreed transcript.
