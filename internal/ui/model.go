@@ -2053,7 +2053,7 @@ func renderPaneHeader(label, contextLabel string, width int, active bool) string
 
 func (m Model) renderWorkspaces(width, height int) string {
 	if len(m.groups) == 0 {
-		return "\n" + mutedStyle.Render(" No workspaces")
+		return mutedStyle.Render(" No workspaces")
 	}
 
 	expanded := m.expandedRows()
@@ -2334,7 +2334,7 @@ func abbreviatePath(path string) string {
 func (m Model) renderAgents(width, height int) string {
 	agents := m.agentsForSelectedWorkspace()
 	if len(agents) == 0 {
-		return "\n" + mutedStyle.Render(" No agents")
+		return mutedStyle.Render(" No agents")
 	}
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
