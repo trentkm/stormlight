@@ -167,9 +167,11 @@ IDs may be shortened as long as the prefix remains unambiguous.
 In Spanreed, press `i` or `s` to open the reply box — it wraps and grows
 with your message, and stays open between messages. Press `Enter` to send,
 `Ctrl-j` for a newline, and `Esc` to leave.
-Press `/` to search the transcript (`n`/`N` between matches) and `y` to open
-it in a pager in the dashboard's pane — from there tmux copy-mode
-(`prefix [`, mouse drag, `v`/`y`) selects and copies text; `q` returns.
+Press `/` to search the transcript (`n`/`N` between matches). Drag with the
+mouse to highlight transcript lines — releasing copies them to the tmux
+buffer and system clipboard (`Esc` clears the highlight). For longer
+excursions, `y` opens the transcript in a pager in the dashboard's pane,
+where full tmux copy-mode (`prefix [`, `v`/`y`) is available; `q` returns.
 Provider slash commands (`/compact`, `/clear`, custom skills) work from the
 reply box too — a single-line message starting with `/` is typed into the
 agent as a command instead of pasted as text. Normal-mode `Enter` opens the
