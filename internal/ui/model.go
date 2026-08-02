@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"strconv"
 	"fmt"
 	"os"
 	"os/exec"
@@ -231,7 +232,6 @@ var (
 	colorSelect       = lipgloss.AdaptiveColor{Light: "#E1E4E6", Dark: "#3D4245"}
 	colorSelectedText = lipgloss.AdaptiveColor{Light: "#172027", Dark: "#F3F5F6"}
 	colorDangerBg     = lipgloss.AdaptiveColor{Light: "#F2D5D1", Dark: "#552B29"}
-	colorHeaderBand   = lipgloss.AdaptiveColor{Light: "#CBDDF3", Dark: "#1D3557"}
 
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
@@ -275,13 +275,71 @@ func shimmerText(text string, phase int, background lipgloss.TerminalColor) stri
 	return shimmerTextWith(stormlightGlow, text, phase, background)
 }
 
-// headerGlow is the title's palette on the deep-blue band: white at rest,
-// sweeping to an icy crest while agents work.
-var headerGlow = []lipgloss.AdaptiveColor{
-	{Light: "#20406B", Dark: "#E9EFF5"},
-	{Light: "#16345C", Dark: "#F6FAFD"},
-	{Light: "#0D2748", Dark: "#FFFFFF"},
-	{Light: "#0A5E78", Dark: "#BDEFFF"},
+// The wordmark holds light: each letter takes a fixed sapphire→sky→ice
+// gradient, and while agents work the sweep blends letters toward the
+// crest color as it passes — a storm moving through the word.
+var (
+	wordmarkStopsDark  = [3]string{"#7AA2F7", "#7DCFFF", "#C8F7EF"}
+	wordmarkStopsLight = [3]string{"#2450A8", "#0E6FA8", "#0D8A80"}
+	wordmarkCrest      = lipgloss.AdaptiveColor{Light: "#001B4D", Dark: "#FFFFFF"}
+)
+
+func hexChannel(hex string, index int) int {
+	value, err := strconv.ParseInt(hex[1+index*2:3+index*2], 16, 32)
+	if err != nil {
+		return 0
+	}
+	return int(value)
+}
+
+func lerpHex(from, to string, t float64) string {
+	blend := func(index int) int {
+		a, b := hexChannel(from, index), hexChannel(to, index)
+		return a + int(float64(b-a)*t)
+	}
+	return fmt.Sprintf("#%02X%02X%02X", blend(0), blend(1), blend(2))
+}
+
+func gradientStop(stops [3]string, t float64) string {
+	if t <= 0.5 {
+		return lerpHex(stops[0], stops[1], t*2)
+	}
+	return lerpHex(stops[1], stops[2], (t-0.5)*2)
+}
+
+// renderWordmark paints the title's gradient and, while the shimmer runs,
+// brightens letters toward the crest as the band passes them.
+func renderWordmark(phase int) string {
+	runes := []rune(stormlightTitle)
+	band := shimmerBand(len(runes), phase)
+	var out strings.Builder
+	glint := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{
+			Light: wordmarkStopsLight[1],
+			Dark:  wordmarkStopsDark[1],
+		})
+	out.WriteString(glint.Render("✦ "))
+	for index, letter := range runes {
+		t := 0.0
+		if len(runes) > 1 {
+			t = float64(index) / float64(len(runes)-1)
+		}
+		dark := gradientStop(wordmarkStopsDark, t)
+		light := gradientStop(wordmarkStopsLight, t)
+		distance := index - band
+		if distance < 0 {
+			distance = -distance
+		}
+		if weight := [4]float64{0.85, 0.55, 0.25, 0}[min(distance, 3)]; weight > 0 {
+			dark = lerpHex(dark, wordmarkCrest.Dark, weight)
+			light = lerpHex(light, wordmarkCrest.Light, weight)
+		}
+		out.WriteString(lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.AdaptiveColor{Light: light, Dark: dark}).
+			Render(string(letter)))
+	}
+	return out.String()
 }
 
 func shimmerTextWith(
@@ -1321,20 +1379,12 @@ func (m Model) renderHeader() string {
 			waiting++
 		}
 	}
-	// The header is a solid band from edge to edge; the title glow and the
-	// counters ride on it. The title sits flush left, aligned with the
-	// pane labels beneath it.
-	band := lipgloss.NewStyle().Background(colorHeaderBand)
-	left := shimmerTextWith(
-		headerGlow,
-		stormlightTitle,
-		m.shimmerPhaseOrRest(),
-		colorHeaderBand,
-	)
-	right := band.Foreground(colorMuted).
-		Render(fmt.Sprintf("%d active", working))
+	// No chrome: the wordmark's own gradient is the identity, floating on
+	// the terminal background with the counters at the far edge.
+	left := renderWordmark(m.shimmerPhaseOrRest())
+	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
 	if waiting > 0 {
-		right += band.Render("  ") + band.Foreground(colorWaiting).
+		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).
 			Render(fmt.Sprintf("%d waiting", waiting))
 	}
 	if urgent > 0 {
@@ -1342,11 +1392,11 @@ func (m Model) renderHeader() string {
 		if urgent == 1 {
 			attentionLabel = "1 needs input"
 		}
-		right += band.Render("  ") + band.Foreground(colorWaiting).Bold(true).
+		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
 			Render(attentionLabel)
 	}
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right)-1)
-	return left + band.Render(strings.Repeat(" ", gap)) + right + band.Render(" ")
+	return left + strings.Repeat(" ", gap) + right + " "
 }
 
 func (m Model) renderBody() string {
