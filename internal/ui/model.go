@@ -1519,11 +1519,16 @@ func (m Model) renderInfoModal(width, height int) string {
 		{"Kind", strings.ToUpper(selected.Kind)},
 		{"ID", selected.ID},
 		{"Root", selected.Root},
-		{"Execution root", selected.ExecutionRoot},
+	}
+	if selected.ExecutionRoot != "" && selected.ExecutionRoot != selected.Root {
+		rows = append(rows, [2]string{"Execution root", selected.ExecutionRoot})
 	}
 	if selected.ComponentName != "" {
 		rows = append(rows, [2]string{"Component", selected.ComponentName})
-		rows = append(rows, [2]string{"Component root", selected.ComponentRoot})
+		if selected.ComponentRoot != "" &&
+			selected.ComponentRoot != selected.ExecutionRoot {
+			rows = append(rows, [2]string{"Component root", selected.ComponentRoot})
+		}
 	}
 	keys := make([]string, 0, len(selected.Metadata))
 	for key := range selected.Metadata {
@@ -2295,8 +2300,8 @@ func workspaceDetail(value workspace.Context, width int) string {
 		if pathToken != "" {
 			parts = append(parts, pathToken)
 		}
-		if value.ComponentName != "" && value.ComponentName != value.Name {
-			parts = append(parts, value.ComponentName)
+		if tail := workspaceDetailTail(value); tail != "" {
+			parts = append(parts, tail)
 		}
 		return strings.Join(parts, " · ")
 	}
@@ -2311,6 +2316,20 @@ func workspaceDetail(value workspace.Context, width int) string {
 		detail = join(truncatePathTail(path, max(1, width-overhead)))
 	}
 	return ansi.Truncate(detail, width, "…")
+}
+
+// workspaceDetailTail is the subtitle's final token: a resolver-supplied
+// component, or the worktree directory when the agent runs outside the main
+// checkout. Empty when neither adds information beyond the workspace name.
+func workspaceDetailTail(value workspace.Context) string {
+	tail := value.ComponentName
+	if tail == "" && value.ExecutionRoot != "" && value.ExecutionRoot != value.Root {
+		tail = filepath.Base(value.ExecutionRoot)
+	}
+	if tail == value.Name {
+		return ""
+	}
+	return tail
 }
 
 // abbreviatePath shortens every segment but the last to its first rune,

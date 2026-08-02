@@ -104,6 +104,9 @@ func TestGitResolverGroupsLinkedWorktrees(t *testing.T) {
 	if mainContext.ExecutionRoot == worktreeContext.ExecutionRoot {
 		t.Fatalf("execution roots are equal: %q", mainContext.ExecutionRoot)
 	}
+	if worktreeContext.ComponentName != "" || worktreeContext.ComponentRoot != "" {
+		t.Fatalf("git resolver invented a component: %#v", worktreeContext)
+	}
 }
 
 func TestExternalResolverProtocol(t *testing.T) {
