@@ -556,12 +556,19 @@ func (r *Runtime) Send(ctx context.Context, id, message string) error {
 			return err
 		}
 	}
+	// Provider TUIs absorb a paste (or typed command) asynchronously; an
+	// Enter arriving in the same instant lands while the composer is still
+	// ingesting and gets dropped, leaving the message sitting unsubmitted.
+	// A short gap makes the submit reliable.
+	time.Sleep(sendSubmitDelay)
 	_, err = r.runner.Run(ctx, nil, "send-keys", "-t", managedAgent.PaneID, "Enter")
 	if err == nil {
 		_ = r.Update(ctx, id, session.Update{Activity: agent.ActivityWorking})
 	}
 	return err
 }
+
+var sendSubmitDelay = 150 * time.Millisecond
 
 // isSlashCommand reports whether a message should reach the provider as a
 // typed slash command. Only single-line messages qualify — a slash command

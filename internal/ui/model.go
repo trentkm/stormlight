@@ -687,6 +687,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Workspace added"
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case modifiedKeyMsg:
 		// Chords decoded from the terminal's modifyOtherKeys reporting
 		// that Bubble Tea v1 cannot express as a tea.KeyMsg.
@@ -4270,7 +4273,11 @@ func effectiveWorkspace(managedAgent agent.Agent) workspace.Context {
 }
 
 func (m *Model) moveSelection(delta int) {
-	switch m.activePane {
+	m.moveSelectionIn(m.activePane, delta)
+}
+
+func (m *Model) moveSelectionIn(target pane, delta int) {
+	switch target {
 	case paneWorkspaces:
 		if len(m.groups) == 0 {
 			return
@@ -4289,6 +4296,47 @@ func (m *Model) moveSelection(delta int) {
 		} else {
 			m.interaction.LineUp(-delta)
 		}
+	}
+}
+
+// handleMouse scrolls whichever pane sits under the pointer: the wheel
+// works positionally, without moving keyboard focus.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.ready || m.mode != modeNormal || msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	direction := 0
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		direction = -1
+	case tea.MouseButtonWheelDown:
+		direction = 1
+	default:
+		return m, nil
+	}
+	if pane := m.paneAt(msg.X); pane == paneInteraction {
+		m.moveSelectionIn(paneInteraction, direction*3)
+		return m, nil
+	} else {
+		m.moveSelectionIn(pane, direction)
+	}
+	return m, m.loadInteractionCmd()
+}
+
+// paneAt maps a screen column to the dashboard pane rendered there.
+func (m Model) paneAt(x int) pane {
+	width := max(1, m.width-1)
+	if width < 72 {
+		return m.activePane
+	}
+	workspaceWidth, agentWidth, _ := paneWidths(width)
+	switch {
+	case x < workspaceWidth:
+		return paneWorkspaces
+	case x < workspaceWidth+agentWidth:
+		return paneAgents
+	default:
+		return paneInteraction
 	}
 }
 

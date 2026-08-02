@@ -146,6 +146,37 @@ func TestSearchEscRestoresViewportOffset(t *testing.T) {
 	}
 }
 
+func TestMouseWheelScrollsPaneUnderPointer(t *testing.T) {
+	model := searchModelFixture(t)
+	model.activePane = paneWorkspaces
+	model.interactionContent = strings.Repeat("filler line\n", 80)
+	model.interaction.SetContent(model.interactionContent)
+	model.interaction.GotoTop()
+
+	wheel := tea.MouseMsg{
+		X:      90,
+		Y:      5,
+		Button: tea.MouseButtonWheelDown,
+		Action: tea.MouseActionPress,
+	}
+	updated, _ := model.Update(wheel)
+	model = updated.(Model)
+	if model.interaction.YOffset == 0 {
+		t.Fatal("wheel over the Spanreed region did not scroll it")
+	}
+	if model.activePane != paneWorkspaces {
+		t.Fatalf("wheel moved keyboard focus to pane %d", model.activePane)
+	}
+
+	offset := model.interaction.YOffset
+	wheel.X = 5
+	updated, _ = model.Update(wheel)
+	model = updated.(Model)
+	if model.interaction.YOffset != offset {
+		t.Fatal("wheel over the workspace list scrolled the transcript")
+	}
+}
+
 func TestSearchSurvivesTranscriptRefresh(t *testing.T) {
 	model := searchModelFixture(t)
 	updated, _ := model.updateNormal(runeKey("/"))
