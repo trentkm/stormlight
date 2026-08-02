@@ -136,3 +136,27 @@ func TestPathNavViewListsMatches(t *testing.T) {
 		t.Fatalf("view missing content:\n%s", view)
 	}
 }
+
+func TestPathNavViewShowsTypedPathAsCdAction(t *testing.T) {
+	nav := newPathNav(pathNavFixture(t))
+	other := t.TempDir()
+
+	nav.update(runeKey(other))
+	view := ansi.Strip(nav.view(80, 5))
+	lines := strings.Split(view, "\n")
+	action := lines[len(lines)-1]
+	if !strings.Contains(action, "cd ") ||
+		!strings.HasSuffix(action, filepath.Base(other)) {
+		t.Fatalf("typed path is not shown as a cd action:\n%s", view)
+	}
+	if strings.Contains(view, "no matching directories") {
+		t.Fatalf("cd mode still claims no matches:\n%s", view)
+	}
+
+	nav.filter.SetValue("")
+	nav.update(runeKey("/definitely/not/a/dir"))
+	view = ansi.Strip(nav.view(80, 5))
+	if !strings.Contains(view, "no such directory") {
+		t.Fatalf("unresolved path lacks live feedback:\n%s", view)
+	}
+}
