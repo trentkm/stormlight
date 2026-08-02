@@ -1078,6 +1078,18 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 	if wide != "custom · /Volumes/repos/shared/alpha-service" {
 		t.Fatalf("wide detail = %q", wide)
 	}
+
+	named := workspace.Context{
+		Kind: "git",
+		Name: "alpha-service",
+		Root: "/Volumes/repos/shared/alpha-service",
+	}
+	if detail := workspaceDetail(named, 60); detail != "git · /Volumes/repos/shared" {
+		t.Fatalf("parent-only detail = %q", detail)
+	}
+	if got := abbreviatePath("/Volumes/repos/alpha-service"); got != "/V/r/alpha-service" {
+		t.Fatalf("abbreviated path = %q", got)
+	}
 }
 
 func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {

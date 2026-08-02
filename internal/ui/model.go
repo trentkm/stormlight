@@ -2135,6 +2135,12 @@ func workspaceDetail(value workspace.Context, width int) string {
 	width = max(1, width)
 	kind := strings.ToLower(strings.TrimSpace(value.Kind))
 	path := shortPath(strings.TrimSpace(value.Root))
+	// The path's tail usually duplicates the workspace name; only the
+	// parent carries information. Renamed or oddly-rooted workspaces keep
+	// the full path.
+	if path != "" && filepath.Base(path) == value.Name {
+		path = filepath.Dir(path)
+	}
 	join := func(pathToken string) string {
 		parts := []string{}
 		if kind != "" {
@@ -2150,11 +2156,27 @@ func workspaceDetail(value workspace.Context, width int) string {
 	}
 	detail := join(path)
 	if lipgloss.Width(detail) > width && path != "" {
-		// The path yields first, keeping its distinguishing tail.
+		// The path yields first: fish-style abbreviation, then the tail.
+		path = abbreviatePath(path)
+		detail = join(path)
+	}
+	if lipgloss.Width(detail) > width && path != "" {
 		overhead := lipgloss.Width(detail) - lipgloss.Width(path)
 		detail = join(truncatePathTail(path, max(1, width-overhead)))
 	}
 	return ansi.Truncate(detail, width, "…")
+}
+
+// abbreviatePath shortens every segment but the last to its first rune,
+// fish-prompt style: /Volumes/repos/alpha-service → /V/r/alpha-service.
+func abbreviatePath(path string) string {
+	segments := strings.Split(path, "/")
+	for index := 0; index < len(segments)-1; index++ {
+		if runes := []rune(segments[index]); len(runes) > 1 && segments[index] != "~" {
+			segments[index] = string(runes[:1])
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 func (m Model) renderAgents(width, height int) string {
