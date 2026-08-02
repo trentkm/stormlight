@@ -186,13 +186,20 @@ tmux popup when the current surface supports popups and otherwise temporarily
 takes over the terminal.
 
 Press `o` when the agent should run somewhere else. This opens the full
-directory picker with known workspaces, worktrees, components, Yazi, and manual
-path entry. Use `j` / `k` or `gg` / `G` to select a location. Pressing `e` on a
-location edits that path directly. In Yazi, `Enter` chooses the highlighted
-directory (or a highlighted file's parent), `q` chooses Yazi's current
-directory, and `Q` cancels. Yazi opens as a tmux popup over the dashboard,
-including when Stormlight was launched from a regular shell. Direct terminal
-takeover remains a fallback when the dashboard cannot be hosted in tmux.
+directory picker with known workspaces, worktrees, components, Yazi, and
+interactive path entry. Use `j` / `k` or `gg` / `G` to select a location.
+Pressing `e` on a location edits that path directly. In Yazi, `Enter` chooses
+the highlighted directory (or a highlighted file's parent), `q` chooses
+Yazi's current directory, and `Q` cancels. Yazi opens as a tmux popup over
+the dashboard, including when Stormlight was launched from a regular shell.
+Direct terminal takeover remains a fallback when the dashboard cannot be
+hosted in tmux.
+
+`Enter a path` is an interactive `cd` from the current directory: type to
+filter its subdirectories, `Tab` descends into the best match (arrows pick
+another, then `Enter` descends), `Backspace` on an empty filter goes up, a
+typed absolute or `~` path jumps there, and `Enter` with nothing highlighted
+chooses the directory you are in.
 
 The Spanreed pane retains provider terminal colors while removing startup
 chrome and the inactive prompt/status area for Claude and Codex. Shell agent

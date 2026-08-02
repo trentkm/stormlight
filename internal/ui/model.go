@@ -153,6 +153,7 @@ type Model struct {
 	renameInput             lineInput
 	renameAgentID           string
 	renameWorkspace         workspace.Context
+	pathNav                 pathNav
 	pickerStart             string
 	chooseDispatchDirectory bool
 
@@ -1023,6 +1024,18 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.dispatchPrefix = ""
 
+	if m.formFocus == dispatchCustomPath &&
+		key != "esc" && key != "ctrl+c" && key != "ctrl+[" &&
+		key != "ctrl+s" && key != "shift+tab" {
+		if confirmed := m.handlePathNavKey(msg); confirmed {
+			m.cwdInput.SetValue(m.pathNav.base)
+			m.pickerStart = m.pathNav.base
+			m.formFocus = dispatchTask
+			m.focusForm()
+		}
+		return m, nil
+	}
+
 	switch key {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
@@ -1118,18 +1131,10 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openYazi()
 			case directoryCustom:
 				m.formFocus = dispatchCustomPath
+				m.startPathNav()
 			default:
 				m.formFocus = dispatchTask
 			}
-			m.focusForm()
-			return m, nil
-		case dispatchCustomPath:
-			path := strings.TrimSpace(m.cwdInput.Value())
-			if !isDirectory(path) {
-				m.err = fmt.Errorf("working directory is unavailable: %s", path)
-				return m, nil
-			}
-			m.formFocus = dispatchTask
 			m.focusForm()
 			return m, nil
 		case dispatchTask:
@@ -1138,8 +1143,6 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.formFocus {
-	case dispatchCustomPath:
-		m.cwdInput = m.cwdInput.Update(msg)
 	case dispatchTask:
 		var cmd tea.Cmd
 		m.taskInput, cmd = m.taskInput.Update(msg)
@@ -1282,6 +1285,14 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.dispatchPrefix = ""
 
+	if m.formFocus == dispatchCustomPath &&
+		key != "esc" && key != "ctrl+c" && key != "ctrl+[" {
+		if confirmed := m.handlePathNavKey(msg); confirmed {
+			return m.submitAddWorkspace(m.pathNav.base)
+		}
+		return m, nil
+	}
+
 	switch key {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
@@ -1314,9 +1325,6 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "enter":
-		if m.formFocus == dispatchCustomPath {
-			return m.submitAddWorkspace(m.cwdInput.Value())
-		}
 		selected, ok := m.selectedDirectory()
 		if !ok {
 			return m, nil
@@ -1326,14 +1334,12 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openYazi()
 		case directoryCustom:
 			m.formFocus = dispatchCustomPath
+			m.startPathNav()
 			m.focusForm()
 			return m, nil
 		default:
 			return m.submitAddWorkspace(selected.path)
 		}
-	}
-	if m.formFocus == dispatchCustomPath {
-		m.cwdInput = m.cwdInput.Update(msg)
 	}
 	return m, nil
 }
@@ -2796,15 +2802,9 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 	)...)
 	if selected, ok := m.selectedDirectory(); ok &&
 		selected.kind == directoryCustom {
-		pathStyle := titleStyle
-		if m.formFocus == dispatchCustomPath {
-			pathStyle = accentStyle
-		}
-		lines = append(lines,
-			"",
-			"  "+pathStyle.Render("Path"),
-			"    "+m.cwdInput.View(),
-		)
+		lines = append(lines, "")
+		lines = append(lines, indentLines(
+			m.pathNav.view(max(10, contentWidth-2), 4), "  "))
 	}
 	if len(m.groups) > 0 {
 		lines = append(lines,
@@ -2869,7 +2869,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 		customPathLines := 0
 		if selected, ok := m.selectedDirectory(); ok &&
 			selected.kind == directoryCustom {
-			customPathLines = 3
+			customPathLines = 8
 		}
 		directoryRows := clamp(
 			height-len(lines)-customPathLines-6,
@@ -2883,15 +2883,9 @@ func (m Model) renderDispatchAt(width, height int) string {
 
 		if selected, ok := m.selectedDirectory(); ok &&
 			selected.kind == directoryCustom {
-			pathStyle := titleStyle
-			if m.formFocus == dispatchCustomPath {
-				pathStyle = accentStyle
-			}
-			lines = append(lines,
-				"",
-				"  "+pathStyle.Render("Path"),
-				"    "+m.cwdInput.View(),
-			)
+			lines = append(lines, "")
+			lines = append(lines, indentLines(
+				m.pathNav.view(max(10, contentWidth-2), 4), "  "))
 		}
 	}
 
@@ -3308,7 +3302,7 @@ func (m Model) commandHints() string {
 		case dispatchDirectory:
 			return "j/k location  Enter choose  m mode  e edit path  Esc cancel"
 		case dispatchCustomPath:
-			return "Enter accept path  Esc cancel"
+			return "type filter  Tab descend  Enter choose  Backspace up  Esc cancel"
 		default:
 			hints := "Enter launch"
 			if m.nvimPath != "" {
@@ -3365,10 +3359,63 @@ func (m *Model) focusForm() {
 	m.taskInput.Blur()
 	switch m.formFocus {
 	case dispatchCustomPath:
-		m.cwdInput.Focus()
+		m.pathNav.filter.Focus()
 	case dispatchTask:
 		m.taskInput.Focus()
 	}
+}
+
+// startPathNav opens the interactive cd at the most relevant directory.
+func (m *Model) startPathNav() {
+	start := strings.TrimSpace(m.cwdInput.Value())
+	if !isDirectory(start) {
+		start = m.pickerStart
+	}
+	if !isDirectory(start) {
+		start = m.initialCwd
+	}
+	m.pathNav = newPathNav(start)
+}
+
+// handlePathNavKey drives the interactive cd. The return value reports a
+// confirmation: Enter with nothing highlighted chooses the directory the
+// navigator is sitting in.
+func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "tab":
+		m.pathNav.descend()
+		return false
+	case "down", "ctrl+n":
+		m.pathNav.moveHighlight(1)
+		return false
+	case "up", "ctrl+p":
+		m.pathNav.moveHighlight(-1)
+		return false
+	case "backspace":
+		if m.pathNav.filterEmpty() {
+			m.pathNav.up()
+			return false
+		}
+	case "enter":
+		if m.pathNav.highlight >= 0 {
+			m.pathNav.descend()
+			return false
+		}
+		if attempted, ok := m.pathNav.jump(); attempted {
+			if !ok {
+				m.err = fmt.Errorf(
+					"not a directory: %s",
+					strings.TrimSpace(m.pathNav.filter.Value()),
+				)
+			} else {
+				m.err = nil
+			}
+			return false
+		}
+		return true
+	}
+	m.pathNav.update(msg)
+	return false
 }
 
 func (m *Model) blurForm() {
