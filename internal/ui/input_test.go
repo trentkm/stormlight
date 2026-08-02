@@ -1067,18 +1067,16 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 		Root: "/Volumes/repos/shared/alpha-service",
 	}
 
-	path, kind, gap := workspaceDetail(value, 17)
-	if kind != "" || gap != 0 {
-		t.Fatalf("compact detail includes resolver kind: path=%q kind=%q gap=%d", path, kind, gap)
-	}
-	if !strings.HasSuffix(path, "alpha-service") || lipgloss.Width(path) > 17 {
-		t.Fatalf("compact path does not preserve its distinguishing tail: %q", path)
+	narrow := workspaceDetail(value, 24)
+	if !strings.Contains(narrow, "custom") ||
+		!strings.HasSuffix(narrow, "alpha-service") ||
+		lipgloss.Width(narrow) > 24 {
+		t.Fatalf("narrow detail lost its distinguishing tail: %q", narrow)
 	}
 
-	path, kind, gap = workspaceDetail(value, 60)
-	if kind != "CUSTOM" || gap < 2 ||
-		!strings.Contains(path, "alpha-service") {
-		t.Fatalf("expanded detail = path=%q kind=%q gap=%d", path, kind, gap)
+	wide := workspaceDetail(value, 60)
+	if wide != "custom · /Volumes/repos/shared/alpha-service" {
+		t.Fatalf("wide detail = %q", wide)
 	}
 }
 
@@ -1300,7 +1298,7 @@ func TestFocusedAgentRowUsesTaskFirstTitleAndSelectionRail(t *testing.T) {
 	}, true, true, 52))
 
 	if !strings.Contains(rendered, "Fix parser behavior") ||
-		!strings.Contains(rendered, "CODEX") ||
+		!strings.Contains(rendered, "codex") ||
 		strings.Contains(rendered, "cx-fix-parser") {
 		t.Fatalf("agent row does not use task-first labeling:\n%s", rendered)
 	}
