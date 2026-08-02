@@ -102,6 +102,12 @@ func TestPopupsSupported(t *testing.T) {
 		{"tmux 3.10\n", true},
 		{"tmux 4.0\n", true},
 		{"tmux next-3.8\n", true},
+		// Bare #{version} format, as reported by the popup-hosting server.
+		{"3.7b\n", true},
+		{"3.8\n", true},
+		{"next-3.8\n", true},
+		{"3.6a\n", false},
+		{"3.4\n", false},
 		{"tmux 3.6\n", false},
 		{"tmux 3.6a\n", false},
 		{"tmux 3.5a\n", false},

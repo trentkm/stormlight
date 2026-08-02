@@ -16,12 +16,21 @@ type Surface struct {
 
 var _ surface.Surface = (*Surface)(nil)
 
+// NewSurface gates popups on the version of the server that will host them:
+// display-popup runs on the server behind $TMUX, which can be older than the
+// binary in PATH (a distro tmux under an SSH session, or a server that
+// predates a brew upgrade). Popups on a pre-3.7 server kill that server
+// (tmux/tmux#4942), so asking the wrong version is not a cosmetic mistake.
 func NewSurface(binary string) *Surface {
 	if binary == "" {
 		binary = "tmux"
 	}
 	version := ""
-	if out, err := exec.Command(binary, "-V").Output(); err == nil {
+	if out, err := exec.Command(
+		binary, "display-message", "-p", "#{version}",
+	).Output(); err == nil {
+		version = string(out)
+	} else if out, err := exec.Command(binary, "-V").Output(); err == nil {
 		version = string(out)
 	}
 	return newSurfaceWithVersion(binary, version)
@@ -54,8 +63,10 @@ func popupsSupported(version string) bool {
 	return major > 3 || (major == 3 && minor >= 7)
 }
 
+// The pattern accepts both `tmux -V` output ("tmux 3.7b") and the bare
+// #{version} format ("3.7b", "next-3.8").
 var tmuxVersionPattern = regexp.MustCompile(
-	`^tmux (?:next-)?(\d+)\.(\d+)`,
+	`^(?:tmux )?(?:next-)?(\d+)\.(\d+)`,
 )
 
 func (s *Surface) Capabilities() surface.Capabilities {
