@@ -34,6 +34,14 @@ set -g mouse on
 set -g allow-passthrough all
 `
 
+// serverOptions mirrors the option lines in serverConfig that must also
+// reach servers that are already running: the boot config applies only at
+// server start, and the appliance server outlives Stormlight upgrades as
+// long as any agent keeps it alive.
+var serverOptions = [][2]string{
+	{"allow-passthrough", "all"},
+}
+
 // EnsureServerConfig writes Stormlight's tmux configuration into the given
 // directory and returns its path. The file is rewritten every time so
 // upgrades take effect and manual edits cannot introduce per-machine drift.
