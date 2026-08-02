@@ -141,6 +141,39 @@ func TestCleanInteractionPreservesColorAndFocusesConversation(t *testing.T) {
 	}
 }
 
+func TestCleanInteractionKeepsIndentationWhenWrapping(t *testing.T) {
+	line := "    ⎿ " + strings.Repeat("word ", 12)
+	got := cleanInteraction(line, 30, agent.Provider("custom"))
+	rows := strings.Split(ansi.Strip(got), "\n")
+	if len(rows) < 2 {
+		t.Fatalf("line did not wrap: %q", got)
+	}
+	for index, row := range rows {
+		if !strings.HasPrefix(row, "    ") {
+			t.Fatalf("row %d lost the hanging indent: %q", index, row)
+		}
+		if width := lipgloss.Width(row); width > 30 {
+			t.Fatalf("row %d is %d columns wide: %q", index, width, row)
+		}
+	}
+}
+
+func TestCleanInteractionKeepsIndentationInsideFrames(t *testing.T) {
+	content := strings.Join([]string{
+		"╭──────────────────────────╮",
+		"│ plain line               │",
+		"│    indented code         │",
+		"╰──────────────────────────╯",
+	}, "\n")
+	got := ansi.Strip(cleanInteraction(content, 60, agent.Provider("custom")))
+	if !strings.Contains(got, "\n   indented code") {
+		t.Fatalf("frame interior lost its indentation:\n%s", got)
+	}
+	if strings.Contains(got, " plain line") {
+		t.Fatalf("frame padding space survived:\n%s", got)
+	}
+}
+
 func TestCleanInteractionDropsNonStyleEscapeSequences(t *testing.T) {
 	content := "\x1b]0;unexpected title\x07\x1b[31mresult\x1b[0m"
 	got := cleanInteraction(content, 80, agent.Provider("custom"))
