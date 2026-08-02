@@ -143,6 +143,7 @@ type Model struct {
 	taskInput               textarea.Model
 	sendInput               textarea.Model
 	initialCwd              string
+	initialWorkspaceID      string
 	directories             []directoryChoice
 	directoryIndex          int
 	yaziPath                string
@@ -414,6 +415,9 @@ type Options struct {
 	ExpandedRows    bool
 	ModeForDir      func(string) (agent.PermissionMode, bool)
 	ProviderForDir  func(string) (agent.Provider, bool)
+	// SelectWorkspaceID names the workspace the first dashboard refresh
+	// should land on, for launches like `stormlight <path>`.
+	SelectWorkspaceID string
 }
 
 func NewModelWithSurface(backend Backend, current surface.Surface) Model {
@@ -452,22 +456,23 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 	})
 
 	model := Model{
-		backend:        backend,
-		surface:        current,
-		providers:      backend.Providers(),
-		cwdInput:       cwdInput,
-		taskInput:      taskInput,
-		sendInput:      sendInput,
-		initialCwd:     cwd,
-		yaziPath:       yaziPath,
-		nvimPath:       nvimPath,
-		activePane:     paneWorkspaces,
-		rowsExpanded:   options.ExpandedRows,
-		dispatchMode:   dispatchMode,
-		modeForDir:     options.ModeForDir,
-		providerForDir: options.ProviderForDir,
-		shimmerRunning: true,
-		status:         "Ready",
+		backend:            backend,
+		surface:            current,
+		providers:          backend.Providers(),
+		cwdInput:           cwdInput,
+		taskInput:          taskInput,
+		sendInput:          sendInput,
+		initialCwd:         cwd,
+		initialWorkspaceID: options.SelectWorkspaceID,
+		yaziPath:           yaziPath,
+		nvimPath:           nvimPath,
+		activePane:         paneWorkspaces,
+		rowsExpanded:       options.ExpandedRows,
+		dispatchMode:       dispatchMode,
+		modeForDir:         options.ModeForDir,
+		providerForDir:     options.ProviderForDir,
+		shimmerRunning:     true,
+		status:             "Ready",
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -512,6 +517,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dashboardMsg:
 		workspaceID := m.selectedWorkspaceID()
+		if workspaceID == "" {
+			// First refresh: land on the workspace a `stormlight <path>`
+			// launch asked for.
+			workspaceID = m.initialWorkspaceID
+		}
 		agentID := m.selectedAgentID()
 		pendingID := m.selectedPendingActionID()
 		if msg.err != nil {
@@ -522,6 +532,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.catalogWorkspaces = msg.workspaces
 			m.pendingActions = msg.actions
 			m.rebuildGroups(workspaceID, agentID)
+			m.initialWorkspaceID = ""
 			if currentID := m.selectedPendingActionID(); currentID != pendingID {
 				m.pendingOption = 0
 			}

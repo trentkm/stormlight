@@ -1131,6 +1131,32 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 	}
 }
 
+func TestFirstRefreshLandsOnRequestedWorkspace(t *testing.T) {
+	first := workspace.DirectoryContext("/workspace/first")
+	second := workspace.DirectoryContext("/workspace/second")
+	model := NewModelWithOptions(stubBackend{}, nil, Options{
+		SelectWorkspaceID: second.ID,
+	})
+
+	updated, _ := model.Update(dashboardMsg{
+		workspaces: []workspace.Context{first, second},
+	})
+	model = updated.(Model)
+	if selected, ok := model.selectedWorkspace(); !ok || selected.ID != second.ID {
+		t.Fatalf("selected workspace = %#v", selected)
+	}
+
+	// The request is one-shot: later refreshes follow the user's cursor.
+	model.moveSelection(-1)
+	updated, _ = model.Update(dashboardMsg{
+		workspaces: []workspace.Context{first, second},
+	})
+	model = updated.(Model)
+	if selected, _ := model.selectedWorkspace(); selected.ID != first.ID {
+		t.Fatalf("refresh stole the cursor: %#v", selected)
+	}
+}
+
 func TestInfoModalCollapsesDegenerateRows(t *testing.T) {
 	plain := workspace.Context{
 		ID:            "git:/repo/.git",

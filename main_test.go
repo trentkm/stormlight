@@ -11,7 +11,7 @@ func TestRootCommandUsesStormlightIdentityAndDefaultSession(t *testing.T) {
 	t.Setenv("STORMLIGHT_SESSION", "")
 
 	command := newRootCommand()
-	if command.Use != "stormlight" {
+	if command.Use != "stormlight [path]" {
 		t.Fatalf("command use = %q", command.Use)
 	}
 	session, err := command.PersistentFlags().GetString("session")
@@ -20,6 +20,17 @@ func TestRootCommandUsesStormlightIdentityAndDefaultSession(t *testing.T) {
 	}
 	if session != "stormlight-agents" {
 		t.Fatalf("session = %q", session)
+	}
+}
+
+func TestOpenWorkspacePathRequiresDirectory(t *testing.T) {
+	directory := t.TempDir()
+	resolved, err := openWorkspacePath(directory)
+	if err != nil || resolved != directory {
+		t.Fatalf("resolved = %q, err = %v", resolved, err)
+	}
+	if _, err := openWorkspacePath("/definitely/not/a/dir"); err == nil {
+		t.Fatal("missing directory was accepted")
 	}
 }
 
