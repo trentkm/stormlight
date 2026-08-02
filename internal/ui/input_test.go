@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
-	"github.com/trentkm/stormlight/internal/pending"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -1545,89 +1544,6 @@ func TestInteractionComposerSendsToSelectedAgent(t *testing.T) {
 	}
 }
 
-func TestPendingActionNavigationAndResolution(t *testing.T) {
-	backend := &recordingBackend{}
-	workspaceContext := workspace.DirectoryContext(t.TempDir())
-	action := pending.Action{
-		ID:       "0123456789abcdef0123456789abcdef",
-		AgentID:  "agent-one",
-		Provider: agent.ProviderClaude,
-		Kind:     pending.KindApproval,
-		Title:    "Claude requests Bash",
-		ToolName: "Bash",
-		Options: []pending.Option{
-			{ID: pending.OptionAllowOnce, Label: "Allow once", Shortcut: "y"},
-			{
-				ID:       pending.OptionAlwaysPrefix + "0",
-				Label:    "Always allow Bash",
-				Shortcut: "a",
-			},
-			{ID: pending.OptionDeny, Label: "Deny", Shortcut: "n"},
-			{ID: pending.OptionTerminal, Label: "Review in terminal", Shortcut: "t"},
-		},
-	}
-	model := NewModel(backend)
-	model.catalogWorkspaces = []workspace.Context{workspaceContext}
-	model.agents = []agent.Agent{{
-		ID:        "agent-one",
-		Name:      "agent-one",
-		Provider:  agent.ProviderClaude,
-		Workspace: workspaceContext,
-	}}
-	model.pendingActions = []pending.Action{action}
-	model.rebuildGroups(workspaceContext.ID, "agent-one")
-	model.activePane = paneInteraction
-
-	updated, _ := model.updateNormal(runeKey("j"))
-	model = updated.(Model)
-	if model.pendingOption != 1 {
-		t.Fatalf("pending option = %d, want 1", model.pendingOption)
-	}
-	updated, cmd := model.updateNormal(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	if cmd == nil {
-		t.Fatal("approval resolution command was not created")
-	}
-	message := cmd()
-	resolved, ok := message.(pendingResolvedMsg)
-	if !ok || resolved.err != nil {
-		t.Fatalf("resolution message = %#v", message)
-	}
-	if backend.resolvedActionID != action.ID ||
-		backend.resolvedOptionID != pending.OptionAlwaysPrefix+"0" {
-		t.Fatalf(
-			"resolved action=%q option=%q",
-			backend.resolvedActionID,
-			backend.resolvedOptionID,
-		)
-	}
-	updated, _ = model.Update(message)
-	model = updated.(Model)
-	if len(model.pendingActions) != 0 {
-		t.Fatalf("resolved action remains visible: %#v", model.pendingActions)
-	}
-}
-
-func TestPendingActionShortViewKeepsSelectedOptionVisible(t *testing.T) {
-	action := pending.Action{
-		Kind:     pending.KindApproval,
-		Title:    "Claude requests Bash",
-		ToolName: "Bash",
-		Options: []pending.Option{
-			{ID: pending.OptionAllowOnce, Label: "Allow once"},
-			{ID: pending.OptionDeny, Label: "Deny"},
-			{ID: pending.OptionTerminal, Label: "Review in terminal"},
-		},
-	}
-	rendered := ansi.Strip(renderPendingAction(action, 2, 30, 2))
-	if !strings.Contains(rendered, "Review in terminal") {
-		t.Fatalf("selected option is hidden:\n%s", rendered)
-	}
-	if lines := strings.Count(rendered, "\n") + 1; lines > 2 {
-		t.Fatalf("short approval rendered %d lines:\n%s", lines, rendered)
-	}
-}
-
 func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 	backend := &recordingBackend{}
 	workspaceContext := workspace.DirectoryContext("/workspace")
@@ -1776,14 +1692,6 @@ func (stubBackend) RemoveWorkspace(context.Context, workspace.Context) error {
 	return nil
 }
 
-func (stubBackend) ListPendingActions(context.Context) ([]pending.Action, error) {
-	return nil, nil
-}
-
-func (stubBackend) ResolvePendingAction(context.Context, string, string) error {
-	return nil
-}
-
 func (stubBackend) Dispatch(context.Context, app.DispatchRequest) (agent.Agent, error) {
 	return agent.Agent{}, nil
 }
@@ -1830,14 +1738,12 @@ func (stubBackend) Providers() []provider.Info {
 
 type recordingBackend struct {
 	stubBackend
-	providers        []provider.Info
-	request          app.DispatchRequest
-	addedPath        string
-	sentID           string
-	sentMessage      string
-	attachedID       string
-	resolvedActionID string
-	resolvedOptionID string
+	providers   []provider.Info
+	request     app.DispatchRequest
+	addedPath   string
+	sentID      string
+	sentMessage string
+	attachedID  string
 }
 
 func (b *recordingBackend) Dispatch(_ context.Context, request app.DispatchRequest) (agent.Agent, error) {
@@ -1872,16 +1778,6 @@ func (b *recordingBackend) Attach(
 ) (app.AttachResult, error) {
 	b.attachedID = id
 	return app.AttachResult{}, nil
-}
-
-func (b *recordingBackend) ResolvePendingAction(
-	_ context.Context,
-	actionID string,
-	optionID string,
-) error {
-	b.resolvedActionID = actionID
-	b.resolvedOptionID = optionID
-	return nil
 }
 
 func TestSeenClearingMarksSelectedAgentOnPresence(t *testing.T) {

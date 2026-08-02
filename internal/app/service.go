@@ -9,7 +9,6 @@ import (
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
-	"github.com/trentkm/stormlight/internal/pending"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -30,7 +29,6 @@ type Service struct {
 	providers  *provider.Registry
 	workspaces *workspace.Registry
 	catalog    *workspace.Catalog
-	actions    *pending.Store
 }
 
 func NewService(
@@ -52,37 +50,17 @@ func NewServiceWithCatalog(
 	workspaces *workspace.Registry,
 	catalog *workspace.Catalog,
 ) *Service {
-	return NewServiceWithStores(
-		runtime,
-		providers,
-		workspaces,
-		catalog,
-		pending.NewStore(),
-	)
-}
-
-func NewServiceWithStores(
-	runtime session.Runtime,
-	providers *provider.Registry,
-	workspaces *workspace.Registry,
-	catalog *workspace.Catalog,
-	actions *pending.Store,
-) *Service {
 	if workspaces == nil {
 		workspaces = workspace.NewRegistry()
 	}
 	if catalog == nil {
 		catalog = workspace.NewCatalog()
 	}
-	if actions == nil {
-		actions = pending.NewStore()
-	}
 	return &Service{
 		runtime:    runtime,
 		providers:  providers,
 		workspaces: workspaces,
 		catalog:    catalog,
-		actions:    actions,
 	}
 }
 
@@ -296,20 +274,6 @@ func (s *Service) ClearAttention(ctx context.Context, id string) error {
 
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.runtime.Delete(ctx, id)
-}
-
-func (s *Service) ListPendingActions(
-	ctx context.Context,
-) ([]pending.Action, error) {
-	return s.actions.List(ctx)
-}
-
-func (s *Service) ResolvePendingAction(
-	ctx context.Context,
-	actionID string,
-	optionID string,
-) error {
-	return s.actions.Resolve(ctx, actionID, optionID)
 }
 
 func (s *Service) Update(ctx context.Context, id string, update session.Update) error {

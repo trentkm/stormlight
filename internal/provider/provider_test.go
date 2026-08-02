@@ -216,14 +216,10 @@ func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 	if !slices.Equal(matchers, []string{"permission_prompt"}) {
 		t.Fatalf("notification matchers = %#v", matchers)
 	}
-	permissionGroups := settings.Hooks["PermissionRequest"]
-	if len(permissionGroups) != 1 || len(permissionGroups[0].Hooks) != 1 {
-		t.Fatalf("PermissionRequest hooks = %#v", permissionGroups)
-	}
-	permissionHook := permissionGroups[0].Hooks[0]
-	if !strings.Contains(permissionHook.Command, "_provider-permission claude") ||
-		permissionHook.Timeout != 86400 ||
-		permissionHook.StatusMessage == "" {
-		t.Fatalf("PermissionRequest hook = %#v", permissionHook)
+	// Prompts are answered in the agent's own terminal: nothing may
+	// intercept the request, or the agent would block on a resolver that
+	// no longer exists.
+	if groups := settings.Hooks["PermissionRequest"]; len(groups) != 0 {
+		t.Fatalf("PermissionRequest hook resurfaced: %#v", groups)
 	}
 }

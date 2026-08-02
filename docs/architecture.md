@@ -14,9 +14,9 @@ The CLI adapters currently add provider-native lifecycle callbacks:
 
 - Codex: the documented external completion notifier reports idle state and
   the latest response.
-- Claude: per-launch prompt, permission, and stop hooks report state. A
-  `PermissionRequest` hook publishes provider-neutral approval actions and
-  converts the selected option back into Claude's hook response contract.
+- Claude: per-launch prompt, notification, and stop hooks report state.
+  Permission prompts raise attention through the notification hook; they
+  are answered in the agent's own terminal, never intercepted.
 - Generic agents: PTY state and optional lifecycle hooks.
 
 The next Codex revision should use App Server JSON-RPC for threads, turns,
@@ -28,8 +28,7 @@ SDK can similarly replace its CLI hook bridge. The runtime exposes
 
 The application service validates requests, resolves a provider and workspace,
 and delegates terminal operations to the runtime. The TUI and CLI use the same
-service. It also exposes the pending-action queue without coupling the UI to
-Claude's JSON schema. A persistent workspace catalog supplies workspaces that
+service. A persistent workspace catalog supplies workspaces that
 do not currently contain an agent.
 
 Workspace resolvers return a stable group ID, a group root, an execution root,
@@ -102,19 +101,14 @@ The window uses `remain-on-exit`, allowing completed output and exit status to
 remain reviewable. Messages are loaded into tmux buffers and pasted into the
 target pane; they are not interpolated into shell command strings.
 
-The Spanreed pane is layered. A pending structured action has priority,
-followed by the normalized transcript and composer, with the native terminal as
-the fallback. Transcript rendering retains only SGR styling from tmux capture
+The Spanreed pane shows the normalized transcript and composer, with the
+native terminal as the fallback. Transcript rendering retains only SGR
+styling from tmux capture
 output; other terminal control sequences are discarded. Claude and Codex
 interactions focus on content from the first populated prompt and remove only
 the trailing empty composer/status block. The tmux capture remains the
-provider-neutral fallback, including for arbitrary shell agents. Messages
+provider-neutral fallback. Messages
 composed in the pane are pasted into the selected tmux pane.
-
-Pending actions use permission-restricted request and response files. The TUI
-refreshes a short-lived controller heartbeat while open. A provider hook waits
-only while that heartbeat is fresh; if Stormlight exits or crashes, the hook
-returns without a decision so the provider's native prompt remains available.
 
 On first attach, the runtime reserves `Q` in tmux's prefix key table and marks
 the binding with the `Return from Stormlight` key note. The binding recognizes

@@ -251,7 +251,10 @@ func codexModeArgs(mode agent.PermissionMode) []string {
 
 func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
 	const eventCommand = `exec "$STORMLIGHT_BIN" _provider-event claude`
-	const permissionCommand = `exec "$STORMLIGHT_BIN" _provider-permission claude`
+	// Prompts are answered in the agent's own terminal, not re-implemented
+	// in the dashboard: the Notification hook raises attention so the
+	// dashboard can point at the pane, and nothing intercepts the request
+	// itself. Auto mode is the recommended way to run agents anyway.
 	settings := claudeSettings{
 		Hooks: map[string][]claudeHookGroup{
 			"UserPromptSubmit": {
@@ -261,16 +264,6 @@ func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
 				{
 					Matcher: "permission_prompt",
 					Hooks:   []claudeHook{{Type: "command", Command: eventCommand, Timeout: 5}},
-				},
-			},
-			"PermissionRequest": {
-				{
-					Hooks: []claudeHook{{
-						Type:          "command",
-						Command:       permissionCommand,
-						Timeout:       86400,
-						StatusMessage: "Waiting for approval in Stormlight",
-					}},
 				},
 			},
 			"Stop": {

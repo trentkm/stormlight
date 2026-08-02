@@ -30,7 +30,6 @@ preserving the checkout or worktree each agent is using.
 - Workspace resolvers are provider-neutral and external resolvers are supported.
 - Pane messages use tmux buffers, avoiding command interpolation.
 - The Spanreed pane combines structured actions with sampled terminal output.
-- Claude permission requests can be resolved without leaving the dashboard.
 - Custom provider specs give unsupported agent CLIs a fallback.
 
 An outside-tmux launch transparently hosts the dashboard in a temporary
@@ -110,11 +109,13 @@ stormlight dispatch --provider claude --mode auto --cwd ~/src/project \
 ```
 
 Each agent launches with a permission mode that maps onto the provider's own
-flags — `ask` (approvals for consequential actions), `edits` (the default:
-file edits apply immediately, shell and network still ask), or `auto` (never
-asks). In the New Agent form, press `m` to cycle the mode; `auto` agents are
-marked with an `AUTO` badge in the agent list. Claude approval requests keep
-arriving in the Spanreed pane in `ask` and `edits` modes.
+flags — `auto` (the default and the recommended way to run: never asks),
+`edits` (file edits apply immediately, shell and network still ask), or
+`ask` (approvals for consequential actions). In the New Agent form, press
+`m` to cycle the mode; `auto` agents are marked with an `AUTO` badge in the
+agent list. When an agent in a prompting mode does need an answer, the
+dashboard raises attention on it and `Enter` opens its terminal — prompts
+are answered in the agent's own pane, where the provider's real UI lives.
 
 Inspect and control agents:
 

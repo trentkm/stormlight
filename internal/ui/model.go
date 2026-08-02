@@ -14,7 +14,6 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
-	"github.com/trentkm/stormlight/internal/pending"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -25,8 +24,6 @@ type Backend interface {
 	ListWorkspaces(context.Context) ([]workspace.Context, error)
 	AddWorkspace(context.Context, string) (workspace.Context, error)
 	RemoveWorkspace(context.Context, workspace.Context) error
-	ListPendingActions(context.Context) ([]pending.Action, error)
-	ResolvePendingAction(context.Context, string, string) error
 	Dispatch(context.Context, app.DispatchRequest) (agent.Agent, error)
 	Capture(context.Context, string, int) (string, error)
 	Attach(context.Context, string) (app.AttachResult, error)
@@ -161,8 +158,6 @@ type Model struct {
 	interactionID  string
 	status         string
 	err            error
-	pendingActions []pending.Action
-	pendingOption  int
 	shimmerPhase   int
 	shimmerRunning bool
 
@@ -174,7 +169,6 @@ type Model struct {
 type dashboardMsg struct {
 	agents     []agent.Agent
 	workspaces []workspace.Context
-	actions    []pending.Action
 	err        error
 }
 
@@ -187,15 +181,6 @@ type interactionMsg struct {
 type actionMsg struct {
 	status string
 	err    error
-}
-
-type pendingResolvedMsg struct {
-	actionID string
-	optionID string
-	agentID  string
-	name     string
-	terminal bool
-	err      error
 }
 
 type attachMsg struct {
@@ -344,7 +329,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			workspaceID = m.initialWorkspaceID
 		}
 		agentID := m.selectedAgentID()
-		pendingID := m.selectedPendingActionID()
 		if msg.err != nil {
 			m.err = msg.err
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
@@ -352,7 +336,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			newAgents := len(msg.agents) > len(m.agents)
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
-			m.pendingActions = msg.actions
 			m.rebuildGroups(workspaceID, agentID)
 			m.initialWorkspaceID = ""
 			if newAgents {
@@ -362,10 +345,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadInteractionCmd(),
 				)
 			}
-			if currentID := m.selectedPendingActionID(); currentID != pendingID {
-				m.pendingOption = 0
-			}
-			m.clampPendingOption()
 		}
 		if m.anyAgentsActive() && !m.shimmerRunning {
 			m.shimmerRunning = true
@@ -440,28 +419,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// (external attach, suspended overlays); without it the terminal
 		// falls back to native tmux selection. Re-asserting is free.
 		return m, tea.Batch(m.refreshCmd(), tea.EnableMouseCellMotion)
-
-	case pendingResolvedMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.status = "Action failed"
-			diagnostic.Logger().Error(
-				"pending action resolution failed",
-				"action_id", msg.actionID,
-				"option_id", msg.optionID,
-				"error", msg.err,
-			)
-			return m, nil
-		}
-		m.removePendingAction(msg.actionID)
-		m.pendingOption = 0
-		if msg.terminal {
-			m.status = "Opening " + msg.name
-			return m, attachCmd(m.backend, msg.agentID, msg.name)
-		}
-		m.err = nil
-		m.status = "Response sent"
-		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 
 	case directoryPickedMsg:
 		// The picker may have run via ExecProcess, which loses mouse
@@ -616,24 +573,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.normalPrefix == "g" {
 		m.normalPrefix = ""
 		if key == "g" {
-			if m.activePane == paneInteraction {
-				if _, ok := m.selectedPendingAction(); ok {
-					m.pendingOption = 0
-					return m, nil
-				}
-			}
 			m.moveSelectionToStart()
 			return m, m.loadInteractionCmd()
 		}
 		return m, nil
-	}
-
-	if m.activePane == paneInteraction {
-		if action, ok := m.selectedPendingAction(); ok {
-			if updated, cmd, handled := m.updatePendingAction(key, action); handled {
-				return updated, cmd
-			}
-		}
 	}
 
 	switch key {

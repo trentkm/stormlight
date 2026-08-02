@@ -8,36 +8,25 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
-	"github.com/trentkm/stormlight/internal/pending"
 )
 
 func (m Model) refreshCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		actions, err := m.backend.ListPendingActions(ctx)
+		agents, err := m.backend.ListAgents(ctx)
 		if err != nil {
 			return dashboardMsg{err: err}
 		}
-		agents, err := m.backend.ListAgents(ctx)
-		if err != nil {
-			return dashboardMsg{actions: actions, err: err}
-		}
 		workspaces, err := m.backend.ListWorkspaces(ctx)
 		if err != nil {
-			return dashboardMsg{
-				agents:  agents,
-				actions: actions,
-				err:     err,
-			}
+			return dashboardMsg{agents: agents, err: err}
 		}
 		return dashboardMsg{
 			agents:     agents,
 			workspaces: workspaces,
-			actions:    actions,
 		}
 	}
 }
@@ -106,27 +95,6 @@ func actionCmd(status string, action func(context.Context) error) tea.Cmd {
 			)
 		}
 		return actionMsg{status: status, err: err}
-	}
-}
-
-func resolvePendingActionCmd(
-	backend Backend,
-	action pending.Action,
-	option pending.Option,
-	managedAgent agent.Agent,
-) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		err := backend.ResolvePendingAction(ctx, action.ID, option.ID)
-		return pendingResolvedMsg{
-			actionID: action.ID,
-			optionID: option.ID,
-			agentID:  managedAgent.ID,
-			name:     agentDisplayTitle(managedAgent),
-			terminal: option.ID == pending.OptionTerminal,
-			err:      err,
-		}
 	}
 }
 
