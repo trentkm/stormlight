@@ -617,6 +617,39 @@ func TestIsNoServerError(t *testing.T) {
 	}
 }
 
+func TestSendTypesSlashCommandsAsLiteralKeys(t *testing.T) {
+	runner := &captureRunner{agentLine: captureAgentLine(false)}
+	runtime := &Runtime{runner: runner}
+
+	if err := runtime.Send(context.Background(), "capture-id", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := [][]string{
+		{"list-panes", "-a", "-F", expectedPaneListFormat()},
+		{"send-keys", "-t", "%1", "-l", "--", "/compact"},
+		{"send-keys", "-t", "%1", "Enter"},
+	}
+	assertCalls(t, runner.calls[:len(wantCalls)], wantCalls)
+}
+
+func TestSendPastesRegularAndMultilineMessages(t *testing.T) {
+	for _, message := range []string{"fix the parser", "/compact\nthen continue"} {
+		runner := &captureRunner{agentLine: captureAgentLine(false)}
+		runtime := &Runtime{runner: runner}
+
+		if err := runtime.Send(context.Background(), "capture-id", message); err != nil {
+			t.Fatal(err)
+		}
+		wantCalls := [][]string{
+			{"list-panes", "-a", "-F", expectedPaneListFormat()},
+			{"load-buffer", "-b", "stormlight-capture-id", "-"},
+			{"paste-buffer", "-d", "-b", "stormlight-capture-id", "-t", "%1"},
+			{"send-keys", "-t", "%1", "Enter"},
+		}
+		assertCalls(t, runner.calls[:len(wantCalls)], wantCalls)
+	}
+}
+
 func TestUpdateNeverDowngradesUrgentAttentionToWaiting(t *testing.T) {
 	line := captureAgentLine(false)
 	parts := strings.Split(line, fieldSeparator)

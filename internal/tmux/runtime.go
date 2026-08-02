@@ -534,20 +534,38 @@ func (r *Runtime) Send(ctx context.Context, id, message string) error {
 	if !managedAgent.ProcessLive {
 		return fmt.Errorf("agent %s is not running", id)
 	}
-	buffer := "stormlight-" + id
-	if _, err := r.runner.Run(ctx, []byte(message), "load-buffer", "-b", buffer, "-"); err != nil {
-		return err
-	}
-	if _, err := r.runner.Run(ctx, nil,
-		"paste-buffer", "-d", "-b", buffer, "-t", managedAgent.PaneID,
-	); err != nil {
-		return err
+	if isSlashCommand(message) {
+		// Providers ignore slash commands that arrive as a bracketed paste,
+		// so type the command as literal keys instead. -l keeps the text a
+		// single un-interpreted argument and -- guards the leading slash.
+		if _, err := r.runner.Run(ctx, nil,
+			"send-keys", "-t", managedAgent.PaneID, "-l", "--", message,
+		); err != nil {
+			return err
+		}
+	} else {
+		buffer := "stormlight-" + id
+		if _, err := r.runner.Run(ctx, []byte(message), "load-buffer", "-b", buffer, "-"); err != nil {
+			return err
+		}
+		if _, err := r.runner.Run(ctx, nil,
+			"paste-buffer", "-d", "-b", buffer, "-t", managedAgent.PaneID,
+		); err != nil {
+			return err
+		}
 	}
 	_, err = r.runner.Run(ctx, nil, "send-keys", "-t", managedAgent.PaneID, "Enter")
 	if err == nil {
 		_ = r.Update(ctx, id, session.Update{Activity: agent.ActivityWorking})
 	}
 	return err
+}
+
+// isSlashCommand reports whether a message should reach the provider as a
+// typed slash command. Only single-line messages qualify — a slash command
+// never contains newlines, so multi-line text keeps the paste path.
+func isSlashCommand(message string) bool {
+	return strings.HasPrefix(message, "/") && !strings.ContainsAny(message, "\n\r")
 }
 
 func (r *Runtime) Interrupt(ctx context.Context, id string) error {
