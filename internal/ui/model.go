@@ -3366,15 +3366,11 @@ func (m *Model) focusForm() {
 }
 
 // startPathNav opens the interactive cd at the most relevant directory.
+// startPathNav opens the picker where Stormlight itself was launched — the
+// shell's working directory is the natural anchor for typing a path, and
+// workspace-relative starts are already covered by the picker's other rows.
 func (m *Model) startPathNav() {
-	start := strings.TrimSpace(m.cwdInput.Value())
-	if !isDirectory(start) {
-		start = m.pickerStart
-	}
-	if !isDirectory(start) {
-		start = m.initialCwd
-	}
-	m.pathNav = newPathNav(start)
+	m.pathNav = newPathNav(m.initialCwd)
 }
 
 // handlePathNavKey drives the interactive cd. The return value reports a
