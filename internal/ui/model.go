@@ -155,11 +155,12 @@ type Model struct {
 	pickerStart             string
 	chooseDispatchDirectory bool
 
-	interactionID  string
-	status         string
-	err            error
-	shimmerPhase   int
-	shimmerRunning bool
+	interactionID       string
+	interactionLoadedAt time.Time
+	status              string
+	err                 error
+	shimmerPhase        int
+	shimmerRunning      bool
 
 	normalPrefix   string
 	sortMode       sortMode
@@ -329,11 +330,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			workspaceID = m.initialWorkspaceID
 		}
 		agentID := m.selectedAgentID()
+		previous, _ := m.selectedAgent()
+		newAgents := false
 		if msg.err != nil {
 			m.err = msg.err
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
 		} else {
-			newAgents := len(msg.agents) > len(m.agents)
+			newAgents = len(msg.agents) > len(m.agents)
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
 			m.rebuildGroups(workspaceID, agentID)
@@ -350,19 +353,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = "Agent needs input"
 				}
 			}
-			if newAgents {
-				// A fresh window boots at 80x24; size it like the rest.
-				return m, tea.Batch(
-					m.syncAgentWindowsCmd(),
-					m.loadInteractionCmd(),
-				)
-			}
+		}
+		var cmds []tea.Cmd
+		if newAgents {
+			// A fresh window boots at 80x24; size it like the rest.
+			cmds = append(cmds, m.syncAgentWindowsCmd())
 		}
 		if m.anyAgentsActive() && !m.shimmerRunning {
 			m.shimmerRunning = true
-			return m, tea.Batch(m.loadInteractionCmd(), shimmerTickCmd())
+			cmds = append(cmds, shimmerTickCmd())
 		}
-		return m, m.loadInteractionCmd()
+		if m.shouldReloadInteraction(previous) {
+			m.interactionLoadedAt = time.Now()
+			cmds = append(cmds, m.loadInteractionCmd())
+		}
+		return m, tea.Batch(cmds...)
 
 	case interactionMsg:
 		if msg.id == m.selectedAgentID() {

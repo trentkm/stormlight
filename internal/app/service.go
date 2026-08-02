@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -29,7 +31,23 @@ type Service struct {
 	providers  *provider.Registry
 	workspaces *workspace.Registry
 	catalog    *workspace.Catalog
+
+	// resolved caches catalog-path resolution (one git spawn per path per
+	// call otherwise); the dashboard polls fast, directories change slowly.
+	// Keyed by catalog path, so added or removed workspaces never consult
+	// a stale entry.
+	resolveMu sync.Mutex
+	resolved  map[string]resolvedWorkspace
 }
+
+type resolvedWorkspace struct {
+	value workspace.Context
+	at    time.Time
+}
+
+// workspaceResolveTTL bounds how stale a cached resolution can get; a
+// checkout converted to a worktree (or similar) is noticed within this.
+const workspaceResolveTTL = 10 * time.Second
 
 func NewService(
 	runtime session.Runtime,
@@ -147,7 +165,7 @@ func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, erro
 	values := make([]workspace.Context, 0, len(paths))
 	seen := make(map[string]bool, len(paths))
 	for _, path := range paths {
-		value, resolveErr := s.workspaces.Resolve(ctx, path)
+		value, resolveErr := s.resolveCached(ctx, path)
 		if resolveErr != nil {
 			diagnostic.Logger().Warn("catalog workspace resolution failed",
 				"path", path,
@@ -166,6 +184,29 @@ func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, erro
 		return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 	})
 	return values, nil
+}
+
+func (s *Service) resolveCached(
+	ctx context.Context,
+	path string,
+) (workspace.Context, error) {
+	s.resolveMu.Lock()
+	cached, ok := s.resolved[path]
+	s.resolveMu.Unlock()
+	if ok && time.Since(cached.at) < workspaceResolveTTL {
+		return cached.value, nil
+	}
+	value, err := s.workspaces.Resolve(ctx, path)
+	if err != nil {
+		return workspace.Context{}, err
+	}
+	s.resolveMu.Lock()
+	if s.resolved == nil {
+		s.resolved = map[string]resolvedWorkspace{}
+	}
+	s.resolved[path] = resolvedWorkspace{value: value, at: time.Now()}
+	s.resolveMu.Unlock()
+	return value, nil
 }
 
 // applyWorkspaceNames overlays user-chosen display names from the catalog.

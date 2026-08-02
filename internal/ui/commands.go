@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 )
@@ -58,6 +59,29 @@ func (m Model) syncAgentWindowsCmd() tea.Cmd {
 	}
 }
 
+// shouldReloadInteraction keeps the fast poll cheap: the transcript is
+// recaptured only when the selected agent's story changed, while it is
+// streaming, or after a two-second staleness bound — not on every tick.
+func (m Model) shouldReloadInteraction(previous agent.Agent) bool {
+	selected, ok := m.selectedAgent()
+	if !ok {
+		return false
+	}
+	if selected.ID != previous.ID || selected.ID != m.interactionID {
+		return true
+	}
+	if selected.Activity == agent.ActivityWorking ||
+		selected.Activity == agent.ActivityStarting {
+		return true
+	}
+	if selected.Activity != previous.Activity ||
+		selected.Attention != previous.Attention ||
+		selected.Summary != previous.Summary {
+		return true
+	}
+	return time.Since(m.interactionLoadedAt) >= 2*time.Second
+}
+
 func (m Model) loadInteractionCmd() tea.Cmd {
 	id := m.selectedAgentID()
 	if id == "" {
@@ -71,8 +95,11 @@ func (m Model) loadInteractionCmd() tea.Cmd {
 	}
 }
 
+// The state poll is fast so attention (the amber band) lands quickly; the
+// expensive work — workspace resolution, transcript capture — is cached or
+// gated so the quick cadence stays cheap.
 func tickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(700*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
