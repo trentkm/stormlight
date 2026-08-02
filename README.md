@@ -153,8 +153,8 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `q` | Close the dashboard |
 
 In Spanreed, press `i` or `s` to open the reply box — it wraps and grows
-with your message. Press `Enter` to send, `Ctrl-j` (or `Shift-Enter` in
-terminals with extended-keys support) for a newline, and `Esc` to cancel.
+with your message. Press `Enter` to send, `Shift-Enter` (or `Ctrl-j`) for
+a newline, and `Esc` to cancel.
 Provider slash commands (`/compact`, `/clear`, custom skills) work from the
 reply box too — a single-line message starting with `/` is typed into the
 agent as a command instead of pasted as text. Normal-mode `Enter` opens the

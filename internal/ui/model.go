@@ -3,12 +3,12 @@ package ui
 import (
 	"context"
 	"errors"
-	"strconv"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -676,6 +676,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Workspace added"
 		return m, nil
 
+	case modifiedKeyMsg:
+		// Chords decoded from the terminal's modifyOtherKeys reporting
+		// that Bubble Tea v1 cannot express as a tea.KeyMsg.
+		if msg == chordShiftEnter && m.mode == modeCompose {
+			return m.insertComposerNewline()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.err != nil {
 			m.err = nil
@@ -1148,9 +1156,7 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Ready"
 		return m, nil
 	case "ctrl+j", "shift+enter":
-		m.sendInput.InsertString("\n")
-		m.syncComposerSize()
-		return m, nil
+		return m.insertComposerNewline()
 	case "ctrl+v":
 		// Terminal paste cannot carry image bytes into a TUI, so Ctrl-v
 		// bridges: read the clipboard image, park it in a temp file, and
@@ -1187,6 +1193,14 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.sendInput, cmd = m.sendInput.Update(msg)
 	m.syncComposerSize()
 	return m, cmd
+}
+
+// insertComposerNewline breaks the line under the cursor. It is reached
+// both by ctrl+j and by the decoded shift+enter chord (see extkeys.go).
+func (m Model) insertComposerNewline() (tea.Model, tea.Cmd) {
+	m.sendInput.InsertString("\n")
+	m.syncComposerSize()
+	return m, nil
 }
 
 // syncComposerSize keeps the persisted reply textarea sized to the Spanreed
@@ -2629,7 +2643,6 @@ func (m Model) renderInteraction(width, height int) string {
 	)
 }
 
-
 func renderPendingAction(
 	action pending.Action,
 	selectedOption int,
@@ -3272,7 +3285,7 @@ func renderFooterStatus(
 func (m Model) commandHints() string {
 	switch m.mode {
 	case modeCompose:
-		return "Enter send  Ctrl-j newline  Ctrl-v image  Esc cancel"
+		return "Enter send  Shift-Enter newline  Ctrl-v image  Esc cancel"
 	case modeDelete:
 		if m.activePane == paneWorkspaces &&
 			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) &&
