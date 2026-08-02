@@ -77,6 +77,14 @@ Open the dashboard:
 stormlight
 ```
 
+Open it on a directory — the path is added as a workspace (if it isn't one
+already) and selected, `code .`-style:
+
+```bash
+stormlight .
+stormlight ~/src/project
+```
+
 The dashboard refreshes all Stormlight-managed windows automatically, including
 agents started by `stormlight dispatch` in another shell. It does not adopt
 Claude or Codex conversations that were started directly outside Stormlight.
@@ -89,9 +97,6 @@ stormlight dispatch --provider codex --cwd ~/src/project \
 
 stormlight dispatch --provider claude --cwd ~/src/project \
   "Review the current branch for correctness"
-
-stormlight dispatch --provider shell --cwd ~/src/project \
-  "go test ./..."
 
 stormlight dispatch --provider claude --mode auto --cwd ~/src/project \
   "Fix every lint warning"

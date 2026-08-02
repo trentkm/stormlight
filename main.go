@@ -53,8 +53,9 @@ func newRootCommand() *cobra.Command {
 	cfg, configWarnings, configErr := config.Load()
 
 	root := &cobra.Command{
-		Use:          "stormlight",
+		Use:          "stormlight [path]",
 		Short:        "A workspace-native control surface for coding agents",
+		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		Version:      version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -81,6 +82,14 @@ func newRootCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			openPath := ""
+			if len(args) == 1 {
+				resolved, err := openWorkspacePath(args[0])
+				if err != nil {
+					return err
+				}
+				openPath = resolved
+			}
 			if shouldHostDashboard() {
 				tmuxPath, lookupErr := exec.LookPath("tmux")
 				if lookupErr == nil {
@@ -92,7 +101,7 @@ func newRootCommand() *cobra.Command {
 				)
 			}
 			configureHostedDashboard(socket)
-			return runDashboard(socket, sessionName, cfg)
+			return runDashboard(socket, sessionName, cfg, openPath)
 		},
 	}
 	root.PersistentFlags().StringVar(&socket, "tmux-socket",
@@ -199,6 +208,21 @@ func newConfigCommand(socket, sessionName *string, cfg config.Config) *cobra.Com
 	return command
 }
 
+// openWorkspacePath validates the optional root-command argument early, so
+// a bad path fails in the caller's terminal instead of inside the hosted
+// dashboard session.
+func openWorkspacePath(argument string) (string, error) {
+	absolute, err := filepath.Abs(argument)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace path: %w", err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("not a directory: %s", argument)
+	}
+	return absolute, nil
+}
+
 func shouldHostDashboard() bool {
 	return os.Getenv("TMUX") == "" && !dashboardIsHosted()
 }
@@ -207,10 +231,25 @@ func dashboardIsHosted() bool {
 	return os.Getenv(dashboardHostedEnv) != ""
 }
 
-func runDashboard(socket, sessionName string, cfg config.Config) error {
+func runDashboard(socket, sessionName string, cfg config.Config, openPath string) error {
 	service, err := newService(socket, sessionName, cfg)
 	if err != nil {
 		return err
+	}
+	options := ui.Options{
+		YaziPath:        cfg.Tools.Yazi,
+		NvimPath:        cfg.Tools.Nvim,
+		DefaultProvider: agent.Provider(cfg.Defaults.Provider),
+		ExpandedRows:    cfg.UI.Rows == "expanded",
+		ModeForDir:      cfg.ModeForDir,
+		ProviderForDir:  cfg.ProviderForDir,
+	}
+	if openPath != "" {
+		value, err := service.AddWorkspace(context.Background(), openPath)
+		if err != nil {
+			return fmt.Errorf("open workspace %s: %w", openPath, err)
+		}
+		options.SelectWorkspaceID = value.ID
 	}
 	currentSurface := surface.Surface(surface.NewDirect())
 	if os.Getenv("TMUX") != "" {
@@ -218,20 +257,12 @@ func runDashboard(socket, sessionName string, cfg config.Config) error {
 			currentSurface = tmux.NewSurface(tmuxPath)
 		}
 	}
-	defaultMode, err := agent.ParseMode(cfg.Defaults.Mode)
+	options.DefaultMode, err = agent.ParseMode(cfg.Defaults.Mode)
 	if err != nil {
-		defaultMode = agent.DefaultMode
+		options.DefaultMode = agent.DefaultMode
 	}
 	program := tea.NewProgram(
-		ui.NewModelWithOptions(service, currentSurface, ui.Options{
-			YaziPath:        cfg.Tools.Yazi,
-			NvimPath:        cfg.Tools.Nvim,
-			DefaultMode:     defaultMode,
-			DefaultProvider: agent.Provider(cfg.Defaults.Provider),
-			ExpandedRows:    cfg.UI.Rows == "expanded",
-			ModeForDir:      cfg.ModeForDir,
-			ProviderForDir:  cfg.ProviderForDir,
-		}),
+		ui.NewModelWithOptions(service, currentSurface, options),
 		tea.WithAltScreen(),
 		tea.WithFilter(ui.DecodeModifiedKeys),
 	)
