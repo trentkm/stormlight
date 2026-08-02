@@ -305,7 +305,26 @@ func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
 	if err := process.Run(); err != nil {
 		return fmt.Errorf("host dashboard in tmux: %w", err)
 	}
+	printFarewell(command.OutOrStdout())
 	return nil
+}
+
+// printFarewell replaces tmux's parting "[exited]" line with Stormlight's
+// own. Only on a clean exit — an error's output must stay readable — and
+// only on a real terminal.
+func printFarewell(out io.Writer) {
+	file, ok := out.(*os.File)
+	if !ok {
+		return
+	}
+	info, err := file.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return
+	}
+	// Cursor up onto tmux's "[exited]" line, clear it, speak the oath.
+	fmt.Fprint(file, "\x1b[A\x1b[2K")
+	fmt.Fprintln(file,
+		"\x1b[38;2;125;207;255m✦\x1b[0m \x1b[2mJourney before destination.\x1b[0m")
 }
 
 func dashboardSessionName(pid int, now time.Time) string {
