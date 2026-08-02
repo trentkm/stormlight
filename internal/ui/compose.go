@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -40,6 +41,14 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		selected, ok := m.selectedAgent()
 		if !ok {
 			m.mode = modeNormal
+			return m, nil
+		}
+		if selected.ProcessLive && selected.Attention == agent.AttentionApproval {
+			// The agent is showing a prompt or picker; a pasted message
+			// would type into it and Enter would pick whatever is
+			// highlighted. Answer where the prompt lives.
+			m.err = fmt.Errorf(
+				"agent is showing a prompt — Esc, then Enter opens its terminal")
 			return m, nil
 		}
 		text := strings.TrimSpace(m.sendInput.Value())

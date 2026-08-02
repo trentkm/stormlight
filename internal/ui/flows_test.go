@@ -202,6 +202,28 @@ func TestAddWorkspaceFlowNavigatesAndSubmits(t *testing.T) {
 	}
 }
 
+func TestComposerRefusesToSendIntoAnActivePrompt(t *testing.T) {
+	backend := &flowBackend{}
+	model := flowModelFixture(t, backend)
+	model.agents[0].Attention = agent.AttentionApproval
+	model.rebuildGroups(model.agents[0].Workspace.ID, "agent-1")
+
+	updated, _ := model.updateNormal(runeKey("i"))
+	model = updated.(Model)
+	model.sendInput.SetValue("oranges")
+	next, cmd := model.updateCompose(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(Model)
+	if cmd != nil {
+		t.Fatal("send fired into an active prompt")
+	}
+	if model.err == nil || !strings.Contains(model.err.Error(), "terminal") {
+		t.Fatalf("guard err = %v", model.err)
+	}
+	if model.sendInput.Value() != "oranges" {
+		t.Fatal("guard discarded the typed message")
+	}
+}
+
 func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 	model := flowModelFixture(t, &flowBackend{})
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 45})

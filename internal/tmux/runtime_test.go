@@ -764,3 +764,30 @@ func TestUpdateNeverDowngradesUrgentAttentionToWaiting(t *testing.T) {
 		t.Fatalf("attention writes kept=%v demoted=%v:\n%#v", kept, demoted, runner.calls)
 	}
 }
+
+func TestUpdateTurnEndDowngradesResolvedApproval(t *testing.T) {
+	line := captureAgentLine(false)
+	parts := strings.Split(line, fieldSeparator)
+	parts[17] = "approval"
+	runner := &captureRunner{agentLine: strings.Join(parts, fieldSeparator)}
+	runtime := &Runtime{runner: runner}
+
+	err := runtime.Update(context.Background(), "capture-id", session.Update{
+		Activity:  agent.ActivityIdle,
+		Attention: agent.AttentionWaiting,
+		TurnEnded: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range runner.calls {
+		if len(call) >= 2 && call[0] == "set-option" &&
+			call[len(call)-2] == "@stormlight_attention" {
+			if value := call[len(call)-1]; value != "waiting" {
+				t.Fatalf("turn end kept attention %q", value)
+			}
+			return
+		}
+	}
+	t.Fatal("attention was never written")
+}
