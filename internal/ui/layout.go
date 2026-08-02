@@ -1,0 +1,527 @@
+package ui
+
+// Pane arithmetic and the dashboard body composition.
+// Split from model.go; see #34.
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/trentkm/stormlight/internal/agent"
+)
+
+func (m Model) renderHeader() string {
+	width := max(1, m.width-1)
+	working := 0
+	urgent := 0
+	waiting := 0
+	for _, managedAgent := range m.agents {
+		if managedAgent.Activity == agent.ActivityWorking ||
+			managedAgent.Activity == agent.ActivityStarting {
+			working++
+		}
+		if !managedAgent.ProcessLive {
+			continue
+		}
+		switch {
+		case managedAgent.Attention.Urgent():
+			urgent++
+		case managedAgent.Attention == agent.AttentionWaiting:
+			waiting++
+		}
+	}
+	// No chrome: the wordmark's own gradient is the identity, floating on
+	// the terminal background with the counters at the far edge.
+	left := renderWordmark(m.shimmerPhaseOrRest())
+	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
+	if waiting > 0 {
+		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).
+			Render(fmt.Sprintf("%d waiting", waiting))
+	}
+	if urgent > 0 {
+		attentionLabel := fmt.Sprintf("%d need input", urgent)
+		if urgent == 1 {
+			attentionLabel = "1 needs input"
+		}
+		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
+			Render(attentionLabel)
+	}
+	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right)-1)
+	return left + strings.Repeat(" ", gap) + right + " "
+}
+
+func (m Model) renderBody() string {
+	contentHeight := max(1, m.height-4)
+	width := max(1, m.width-1)
+	dashboard := m.renderDashboardBody(width, contentHeight)
+	switch m.mode {
+	case modeDispatch:
+		return overlayCentered(
+			dashboard,
+			m.renderDispatchModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeAddWorkspace:
+		return overlayCentered(
+			dashboard,
+			m.renderAddWorkspaceModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeRename:
+		return overlayCentered(
+			dashboard,
+			m.renderRenameModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeInfo:
+		return overlayCentered(
+			dashboard,
+			m.renderInfoModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeHelp:
+		return overlayCentered(
+			dashboard,
+			m.renderHelpModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	}
+	return dashboard
+}
+
+func (m Model) renderDashboardBody(width, contentHeight int) string {
+	if width < 72 {
+		return m.renderFocusedPane(width, contentHeight)
+	}
+
+	workspaceWidth, agentWidth, interactionWidth := paneWidths(width)
+
+	workspaces := m.renderPane(
+		"Workspaces",
+		"",
+		// One extra column of slack keeps row text from touching the
+		// hierarchy connector drawn in the pane's padding column.
+		m.renderWorkspaces(max(1, workspaceWidth-3), contentHeight-1),
+		workspaceWidth,
+		contentHeight,
+		m.activePane == paneWorkspaces,
+		true,
+	)
+	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
+		workspaces = paintHierarchyConnector(
+			workspaces,
+			workspaceWidth,
+			workspaceRow,
+			agentRow,
+		)
+	}
+	agents := m.renderPane(
+		"Agents",
+		m.selectedWorkspaceLabel(),
+		m.renderAgents(max(1, agentWidth-2), contentHeight-1),
+		agentWidth,
+		contentHeight,
+		m.activePane == paneAgents,
+		true,
+	)
+	interaction := m.renderPane(
+		"Spanreed",
+		"",
+		m.renderInteraction(
+			max(1, interactionWidth-2),
+			contentHeight-1,
+		),
+		interactionWidth,
+		contentHeight,
+		m.activePane == paneInteraction,
+		false,
+	)
+	return lipgloss.JoinHorizontal(lipgloss.Top, workspaces, agents, interaction)
+}
+
+func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
+	if len(m.groups) == 0 || contentHeight < 2 {
+		return 0, 0, false
+	}
+	agents := m.agentsForSelectedWorkspace()
+	if len(agents) == 0 {
+		return 0, 0, false
+	}
+
+	expanded := m.expandedRows()
+	listHeight := contentHeight - 1
+	workspaceCapacity := listRowCapacity(listHeight, expanded)
+	workspaceStart, workspaceEnd := visibleRange(
+		len(m.groups),
+		m.workspaceCursor,
+		workspaceCapacity,
+	)
+	agentCapacity := listRowCapacity(listHeight, expanded)
+	agentStart, agentEnd := visibleRange(
+		len(agents),
+		m.agentCursor,
+		agentCapacity,
+	)
+	if m.workspaceCursor < workspaceStart ||
+		m.workspaceCursor >= workspaceEnd ||
+		m.agentCursor < agentStart ||
+		m.agentCursor >= agentEnd {
+		return 0, 0, false
+	}
+
+	rowStep := 1
+	if expanded {
+		rowStep = 3
+	}
+	workspaceRow := 1 + (m.workspaceCursor-workspaceStart)*rowStep
+	agentRow := 1 + (m.agentCursor-agentStart)*rowStep
+	return workspaceRow, agentRow, true
+}
+
+func paintHierarchyConnector(
+	paneContent string,
+	width int,
+	workspaceRow int,
+	agentRow int,
+) string {
+	if width < 2 {
+		return paneContent
+	}
+	lines := strings.Split(paneContent, "\n")
+	if workspaceRow < 0 ||
+		workspaceRow >= len(lines) ||
+		agentRow < 0 ||
+		agentRow >= len(lines) {
+		return paneContent
+	}
+
+	// The connector lives in the padding column between the workspace text
+	// and the pane divider, so the divider stays continuous and the gold
+	// arc spans exactly its two endpoint rows — rounded caps, no spill.
+	style := lipgloss.NewStyle().Foreground(colorWaiting)
+	first := min(workspaceRow, agentRow)
+	last := max(workspaceRow, agentRow)
+	for row := first; row <= last; row++ {
+		glyph := "│"
+		switch {
+		case workspaceRow == agentRow:
+			glyph = "─"
+		case row == workspaceRow && workspaceRow < agentRow:
+			glyph = "╮"
+		case row == workspaceRow:
+			glyph = "╯"
+		case row == agentRow && agentRow < workspaceRow:
+			glyph = "╭"
+		case row == agentRow:
+			glyph = "╰"
+		}
+		lines[row] = replaceStyledCell(
+			lines[row],
+			width,
+			width-2,
+			glyph,
+			style,
+		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func replaceStyledCell(
+	line string,
+	width int,
+	column int,
+	value string,
+	style lipgloss.Style,
+) string {
+	if width <= 0 || column < 0 || column >= width {
+		return line
+	}
+	line = fitLine(line, width)
+	before := ansi.Cut(line, 0, column)
+	after := ansi.Cut(line, column+1, width)
+	restore := ""
+	if column+1 < width {
+		restore = sgrStateAt(line, column+1)
+	}
+	return fitLine(before, column) +
+		ansi.ResetStyle +
+		style.Render(value) +
+		ansi.ResetStyle +
+		restore +
+		fitLine(after, width-column-1)
+}
+
+func modalDimensions(
+	availableWidth int,
+	availableHeight int,
+	preferredWidth int,
+	preferredHeight int,
+) (int, int) {
+	widthMargin := 4
+	heightMargin := 2
+	if availableWidth < 28 {
+		widthMargin = 0
+	}
+	if availableHeight < 12 {
+		heightMargin = 0
+	}
+	width := min(preferredWidth, max(1, availableWidth-widthMargin))
+	height := min(preferredHeight, max(1, availableHeight-heightMargin))
+	return width, height
+}
+
+func renderModal(content string, width, height int) string {
+	if width < 3 || height < 3 {
+		return fitBlock(content, width, height)
+	}
+	innerWidth := width - 2
+	innerHeight := height - 2
+	content = fitBlock(content, innerWidth, innerHeight)
+	return lipgloss.NewStyle().
+		Width(innerWidth).
+		Height(innerHeight).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(colorWaiting).
+		Render(content)
+}
+
+func overlayCentered(background, foreground string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	backgroundLines := blockLines(background, width, height)
+	foregroundLines := strings.Split(foreground, "\n")
+	if len(foregroundLines) > height {
+		foregroundLines = foregroundLines[:height]
+	}
+	foregroundWidth := 0
+	for _, line := range foregroundLines {
+		foregroundWidth = max(foregroundWidth, ansi.StringWidth(line))
+	}
+	foregroundWidth = min(foregroundWidth, width)
+	if foregroundWidth == 0 || len(foregroundLines) == 0 {
+		return strings.Join(backgroundLines, "\n")
+	}
+
+	left := max(0, (width-foregroundWidth)/2)
+	top := max(0, (height-len(foregroundLines))/2)
+	for index, foregroundLine := range foregroundLines {
+		row := top + index
+		if row >= len(backgroundLines) {
+			break
+		}
+		foregroundLine = fitLine(foregroundLine, foregroundWidth)
+		backgroundLine := backgroundLines[row]
+		before := ansi.Cut(backgroundLine, 0, left)
+		rightStart := left + foregroundWidth
+		after := ansi.Cut(backgroundLine, rightStart, width)
+		backgroundLines[row] = fitLine(before, left) +
+			ansi.ResetStyle +
+			foregroundLine +
+			ansi.ResetStyle +
+			sgrStateAt(backgroundLine, rightStart) +
+			fitLine(after, width-rightStart)
+	}
+	return strings.Join(backgroundLines, "\n")
+}
+
+func fitBlock(content string, width, height int) string {
+	return strings.Join(blockLines(content, width, height), "\n")
+}
+
+func blockLines(content string, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	for index := range lines {
+		lines[index] = fitLine(lines[index], width)
+	}
+	return lines
+}
+
+func fitLine(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line = ansi.Truncate(line, width, "")
+	return line + strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
+}
+
+func sgrStateAt(value string, column int) string {
+	if column <= 0 {
+		return ""
+	}
+	var result strings.Builder
+	var state byte
+	width := 0
+	for len(value) > 0 && width < column {
+		sequence, cellWidth, consumed, nextState := ansi.DecodeSequence(
+			value,
+			state,
+			nil,
+		)
+		if consumed <= 0 {
+			break
+		}
+		if isSGRSequence(sequence) {
+			result.WriteString(sequence)
+		}
+		width += cellWidth
+		value = value[consumed:]
+		state = nextState
+	}
+	return result.String()
+}
+
+func (m Model) renderFocusedPane(width, height int) string {
+	switch m.activePane {
+	case paneAgents:
+		contextLabel := m.selectedWorkspaceLabel()
+		if width < 72 {
+			contextLabel = strings.TrimSpace(contextLabel + "  ›")
+		}
+		return m.renderPane(
+			"Agents",
+			contextLabel,
+			m.renderAgents(max(1, width-2), height-1),
+			width,
+			height,
+			true,
+			false,
+		)
+	case paneInteraction:
+		return m.renderPane(
+			"Spanreed",
+			"‹",
+			m.renderInteraction(max(1, width-2), height-1),
+			width,
+			height,
+			true,
+			false,
+		)
+	default:
+		return m.renderPane(
+			"Workspaces",
+			"Agents ›",
+			m.renderWorkspaces(max(1, width-2), height-1),
+			width,
+			height,
+			true,
+			false,
+		)
+	}
+}
+
+func (m Model) renderPane(
+	label string,
+	contextLabel string,
+	content string,
+	width int,
+	height int,
+	active bool,
+	borderRight bool,
+) string {
+	innerWidth := max(1, width)
+	style := lipgloss.NewStyle().Width(innerWidth).Height(height).MaxHeight(height)
+	if borderRight {
+		// Dividers are structure, not state: focus is shown by the header
+		// underline and the single hot cursor row, never the frame.
+		innerWidth = max(1, width-1)
+		style = style.Width(innerWidth).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderRight(true).
+			BorderForeground(colorBorder)
+	}
+	header := renderPaneHeader(label, contextLabel, innerWidth, active)
+	body := lipgloss.NewStyle().
+		Width(innerWidth).
+		MaxWidth(innerWidth).
+		Render(content)
+	return style.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
+}
+
+// renderPaneHeader underlines the entire header cell, padding included, so
+// the header reads as a full-width ruled box top rather than floating text.
+func renderPaneHeader(label, contextLabel string, width int, active bool) string {
+	underlined := func(style lipgloss.Style) lipgloss.Style {
+		return style.Underline(true)
+	}
+	fill := underlined(lipgloss.NewStyle().Foreground(colorBorder))
+
+	left := underlined(mutedStyle.Copy().Bold(true)).
+		Render(truncate(" "+label, width))
+	if active {
+		// The active pane's header rule renders in accent — the pane's
+		// "selected tab" indicator. The rule alone carries the signal; no
+		// rail, no extra chrome.
+		fill = underlined(lipgloss.NewStyle().Foreground(colorAccent))
+		left = underlined(titleStyle.Copy()).
+			Render(truncate(" "+label, width))
+	}
+
+	remaining := width - lipgloss.Width(left) - 2
+	if strings.TrimSpace(contextLabel) == "" || remaining < 4 {
+		pad := max(0, width-lipgloss.Width(left))
+		return left + fill.Render(strings.Repeat(" ", pad))
+	}
+
+	rightStyle := underlined(mutedStyle.Copy())
+	if strings.ContainsAny(contextLabel, "‹›") {
+		rightStyle = underlined(accentStyle.Copy())
+	}
+	right := rightStyle.Render(truncate(contextLabel, remaining))
+	gap := max(2, width-lipgloss.Width(left)-lipgloss.Width(right))
+	tail := max(0, width-lipgloss.Width(left)-gap-lipgloss.Width(right))
+	return left + fill.Render(strings.Repeat(" ", gap)) + right +
+		fill.Render(strings.Repeat(" ", tail))
+}
+
+func (m Model) interactionDimensions() (int, int) {
+	contentHeight := max(1, m.height-9)
+	width := max(1, m.width-1)
+	if width < 72 {
+		return max(1, width-2), contentHeight
+	}
+	_, _, interactionWidth := paneWidths(width)
+	return max(1, interactionWidth-2), contentHeight
+}
+
+// paneWidths splits a dashboard row between the three panes. The Spanreed
+// transcript is the pane people actually read, so it takes everything the
+// two list panes don't need.
+func paneWidths(width int) (workspaceWidth, agentWidth, interactionWidth int) {
+	workspaceWidth = clamp(width*20/100, 16, 26)
+	agentWidth = clamp(width*28/100, 26, 40)
+	interactionWidth = width - workspaceWidth - agentWidth
+	if interactionWidth < 24 {
+		deficit := 24 - interactionWidth
+		agentWidth = max(22, agentWidth-deficit)
+		interactionWidth = width - workspaceWidth - agentWidth
+	}
+	return workspaceWidth, agentWidth, interactionWidth
+}
+
+func (m Model) expandedRows() bool {
+	return m.rowsExpanded
+}
+
+func (m Model) visibleRows() int {
+	if m.activePane == paneInteraction && m.interaction.Height > 0 {
+		return m.interaction.Height
+	}
+	return max(1, (m.height-3)/2)
+}
