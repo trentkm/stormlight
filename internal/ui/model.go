@@ -4473,6 +4473,11 @@ func (m Model) refreshCmd() tea.Cmd {
 	}
 }
 
+// interactionCaptureLines is how much tmux scrollback the Spanreed
+// transcript requests, so scrolling up reaches history from before what
+// the pane currently shows.
+const interactionCaptureLines = 400
+
 func (m Model) loadInteractionCmd() tea.Cmd {
 	id := m.selectedAgentID()
 	if id == "" {
@@ -4481,7 +4486,7 @@ func (m Model) loadInteractionCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		content, err := m.backend.Capture(ctx, id, 120)
+		content, err := m.backend.Capture(ctx, id, interactionCaptureLines)
 		return interactionMsg{id: id, content: content, err: err}
 	}
 }

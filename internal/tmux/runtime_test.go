@@ -153,7 +153,7 @@ func TestMetadataValueCollapsesControlWhitespace(t *testing.T) {
 	}
 }
 
-func TestCaptureUsesCurrentScreenForLivePane(t *testing.T) {
+func TestCaptureIncludesScrollbackForLivePane(t *testing.T) {
 	runner := &captureRunner{agentLine: captureAgentLine(false)}
 	runtime := &Runtime{runner: runner}
 
@@ -164,7 +164,7 @@ func TestCaptureUsesCurrentScreenForLivePane(t *testing.T) {
 	if output != "pane output" {
 		t.Fatalf("output = %q", output)
 	}
-	want := []string{"capture-pane", "-p", "-e", "-t", "%1"}
+	want := []string{"capture-pane", "-p", "-e", "-t", "%1", "-S", "-120"}
 	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
 		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
 	}
@@ -178,6 +178,19 @@ func TestCaptureIncludesScrollbackForExitedPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"capture-pane", "-p", "-e", "-t", "%1", "-S", "-40"}
+	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
+		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestCaptureDefaultsLineBudget(t *testing.T) {
+	runner := &captureRunner{agentLine: captureAgentLine(false)}
+	runtime := &Runtime{runner: runner}
+
+	if _, err := runtime.Capture(context.Background(), "capture-id", 0); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"capture-pane", "-p", "-e", "-t", "%1", "-S", "-100"}
 	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
 		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
 	}

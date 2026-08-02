@@ -267,11 +267,10 @@ func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, er
 	if lines <= 0 {
 		lines = 100
 	}
-	args := []string{"capture-pane", "-p", "-e", "-t", managedAgent.PaneID}
-	if !managedAgent.ProcessLive {
-		args = append(args, "-S", fmt.Sprintf("-%d", lines))
-	}
-	return r.runner.Run(ctx, nil, args...)
+	return r.runner.Run(ctx, nil,
+		"capture-pane", "-p", "-e", "-t", managedAgent.PaneID,
+		"-S", fmt.Sprintf("-%d", lines),
+	)
 }
 
 func (r *Runtime) Attach(ctx context.Context, id string) (session.AttachResult, error) {
