@@ -51,7 +51,8 @@ agents keep running on the Stormlight server.
   state ([tmux/tmux#4942](https://github.com/tmux/tmux/issues/4942), fixed in
   3.7). Stormlight detects the version and falls back to full-screen takeover
   on older tmux instead of risking the server.
-- Optional: `yazi` for the directory picker, `nvim` for task editing.
+- `yazi` for the directory picker (installed automatically by the Homebrew
+  formula). Optional: `nvim` for task editing.
 
 ## Install
 
@@ -166,6 +167,9 @@ IDs may be shortened as long as the prefix remains unambiguous.
 In Spanreed, press `i` or `s` to open the reply box — it wraps and grows
 with your message, and stays open between messages. Press `Enter` to send,
 `Ctrl-j` for a newline, and `Esc` to leave.
+Press `/` to search the transcript (`n`/`N` between matches) and `y` to open
+it in a pager in the dashboard's pane — from there tmux copy-mode
+(`prefix [`, mouse drag, `v`/`y`) selects and copies text; `q` returns.
 Provider slash commands (`/compact`, `/clear`, custom skills) work from the
 reply box too — a single-line message starting with `/` is typed into the
 agent as a command instead of pasted as text. Normal-mode `Enter` opens the

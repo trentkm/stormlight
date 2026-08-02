@@ -43,10 +43,16 @@ brews:
     license: MIT
     # tmux >= 3.7 is required for popup overlays (older display-popup
     # crashes the server on DECRQM, tmux/tmux#4942); Homebrew ships 3.7+.
+    # yazi is the directory picker for workspaces and dispatch — core to
+    # the intended experience, so it installs alongside. Neovim stays
+    # optional: most people already have an editor opinion.
     dependencies:
       - name: tmux
+      - name: yazi
     directory: Formula
     install: |
       bin.install "stormlight"
+    caveats: |
+      Optional: install neovim to edit agent tasks in a popup (brew install neovim).
     test: |
       assert_match version.to_s, shell_output("#{bin}/stormlight --version")
