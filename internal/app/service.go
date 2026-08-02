@@ -235,7 +235,43 @@ func (s *Service) Rename(ctx context.Context, id, name string) error {
 }
 
 func (s *Service) Capture(ctx context.Context, id string, lines int) (string, error) {
+	if rendered, ok := s.transcriptCapture(ctx, id, lines); ok {
+		return rendered, nil
+	}
 	return s.runtime.Capture(ctx, id, lines)
+}
+
+// transcriptCapture renders the conversation from the provider's own
+// transcript file when the agent's hooks have reported one. The terminal
+// screen is all tmux can see of an alternate-screen agent, so the
+// transcript file is the only complete history; the live screen is
+// appended while a turn is in flight so streaming output stays visible.
+func (s *Service) transcriptCapture(ctx context.Context, id string, lines int) (string, bool) {
+	agents, err := s.runtime.ListAgents(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, managedAgent := range agents {
+		if managedAgent.ID != id {
+			continue
+		}
+		if managedAgent.TranscriptPath == "" {
+			return "", false
+		}
+		rendered, ok := provider.RenderClaudeTranscript(managedAgent.TranscriptPath)
+		if !ok {
+			return "", false
+		}
+		busy := managedAgent.Activity == agent.ActivityWorking ||
+			managedAgent.Attention.Urgent()
+		if busy && managedAgent.ProcessLive {
+			if live, err := s.runtime.Capture(ctx, id, lines); err == nil {
+				rendered += "\n──── live ────\n" + live
+			}
+		}
+		return rendered, true
+	}
+	return "", false
 }
 
 func (s *Service) Attach(ctx context.Context, id string) (AttachResult, error) {

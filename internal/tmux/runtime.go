@@ -47,7 +47,7 @@ const (
 	dynamicStatusStyle      = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
 	dynamicStatusLeft       = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
 	basePaneFieldCount      = 10
-	metadataFieldCount      = 18
+	metadataFieldCount      = 19
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -69,6 +69,7 @@ var agentMetadataFields = [metadataFieldCount]string{
 	"component_root",
 	"workspace_metadata",
 	"mode",
+	"transcript_path",
 }
 
 type Runtime struct {
@@ -609,6 +610,9 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 	if update.Activity != "" {
 		values["@stormlight_activity"] = string(update.Activity)
 	}
+	if update.TranscriptPath != "" {
+		values["@stormlight_transcript_path"] = update.TranscriptPath
+	}
 	switch {
 	case update.ClearAttention:
 		values["@stormlight_attention"] = ""
@@ -857,7 +861,8 @@ func parseAgent(line string) (agent.Agent, bool) {
 		PaneTitle:   parts[7],
 		ProcessLive: !paneDead,
 		ExitCode:    exitCode,
-		Mode:        agent.PermissionMode(core[17]),
+		Mode:           agent.PermissionMode(core[17]),
+		TranscriptPath: core[18],
 		Workspace: workspace.Context{
 			ID:            core[9],
 			Kind:          core[10],
@@ -887,6 +892,7 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		"@stormlight_attention":  string(managedAgent.Attention),
 		"@stormlight_pane":       managedAgent.PaneID,
 		"@stormlight_mode":       string(managedAgent.Mode),
+		"@stormlight_transcript_path": managedAgent.TranscriptPath,
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(managedAgent.Workspace)
 	if err != nil {

@@ -43,6 +43,9 @@ type Update struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// TranscriptPath records the provider's own transcript file when a
+	// hook reports it; empty means "leave as is".
+	TranscriptPath string
 	// ClearAttention removes any attention state without touching the
 	// rest of the record; an empty Attention alone means "leave as is".
 	ClearAttention bool

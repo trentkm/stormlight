@@ -43,6 +43,7 @@ func TestParseAgent(t *testing.T) {
 		"/tmp/project",
 		"eyJicmFuY2giOiJtYWluIn0",
 		"auto",
+		"/tmp/claude/session.jsonl",
 	}
 	line := strings.Join(parts, fieldSeparator)
 
@@ -68,6 +69,9 @@ func TestParseAgent(t *testing.T) {
 	}
 	if managedAgent.Mode != agent.ModeAuto {
 		t.Fatalf("mode = %q", managedAgent.Mode)
+	}
+	if managedAgent.TranscriptPath != "/tmp/claude/session.jsonl" {
+		t.Fatalf("transcript path = %q", managedAgent.TranscriptPath)
 	}
 }
 

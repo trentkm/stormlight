@@ -741,9 +741,10 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 			_ = service.Update(ctx, id, session.Update{
-				Activity:  event.Activity,
-				Attention: event.Attention,
-				Summary:   event.Summary,
+				Activity:       event.Activity,
+				Attention:      event.Attention,
+				Summary:        event.Summary,
+				TranscriptPath: event.TranscriptPath,
 			})
 			return nil
 		},

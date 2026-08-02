@@ -2696,7 +2696,8 @@ func (m Model) renderInteraction(width, height int) string {
 		m.sendInput.SetWidth(max(1, width))
 		inputHeight := composerHeight(m.sendInput.Value(), max(1, width))
 		m.sendInput.SetHeight(inputHeight)
-		rule := mutedStyle.Render(strings.Repeat("─", max(1, width)))
+		// The composer wears the wordmark gradient, like the footer rule.
+		rule := renderFooterRule(max(1, width))
 		composer = lipgloss.JoinVertical(
 			lipgloss.Left,
 			rule,
