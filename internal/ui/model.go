@@ -231,7 +231,7 @@ var (
 	colorSelect       = lipgloss.AdaptiveColor{Light: "#E1E4E6", Dark: "#3D4245"}
 	colorSelectedText = lipgloss.AdaptiveColor{Light: "#172027", Dark: "#F3F5F6"}
 	colorDangerBg     = lipgloss.AdaptiveColor{Light: "#F2D5D1", Dark: "#552B29"}
-	colorHeaderBand   = lipgloss.AdaptiveColor{Light: "#D9EAF0", Dark: "#1D3540"}
+	colorHeaderBand   = lipgloss.AdaptiveColor{Light: "#CBDDF3", Dark: "#1D3557"}
 
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
@@ -272,6 +272,24 @@ func shimmerBand(length, phase int) int {
 }
 
 func shimmerText(text string, phase int, background lipgloss.TerminalColor) string {
+	return shimmerTextWith(stormlightGlow, text, phase, background)
+}
+
+// headerGlow is the title's palette on the deep-blue band: white at rest,
+// sweeping to an icy crest while agents work.
+var headerGlow = []lipgloss.AdaptiveColor{
+	{Light: "#20406B", Dark: "#E9EFF5"},
+	{Light: "#16345C", Dark: "#F6FAFD"},
+	{Light: "#0D2748", Dark: "#FFFFFF"},
+	{Light: "#0A5E78", Dark: "#BDEFFF"},
+}
+
+func shimmerTextWith(
+	glow []lipgloss.AdaptiveColor,
+	text string,
+	phase int,
+	background lipgloss.TerminalColor,
+) string {
 	runes := []rune(text)
 	band := shimmerBand(len(runes), phase)
 	var out strings.Builder
@@ -280,10 +298,10 @@ func shimmerText(text string, phase int, background lipgloss.TerminalColor) stri
 		if distance < 0 {
 			distance = -distance
 		}
-		shade := max(0, len(stormlightGlow)-1-distance)
+		shade := max(0, len(glow)-1-distance)
 		style := lipgloss.NewStyle().
 			Bold(true).
-			Foreground(stormlightGlow[shade])
+			Foreground(glow[shade])
 		if background != nil {
 			style = style.Background(background)
 		}
@@ -1307,7 +1325,12 @@ func (m Model) renderHeader() string {
 	// counters ride on it. The title sits flush left, aligned with the
 	// pane labels beneath it.
 	band := lipgloss.NewStyle().Background(colorHeaderBand)
-	left := shimmerText(stormlightTitle, m.shimmerPhaseOrRest(), colorHeaderBand)
+	left := shimmerTextWith(
+		headerGlow,
+		stormlightTitle,
+		m.shimmerPhaseOrRest(),
+		colorHeaderBand,
+	)
 	right := band.Foreground(colorMuted).
 		Render(fmt.Sprintf("%d active", working))
 	if waiting > 0 {
