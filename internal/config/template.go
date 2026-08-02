@@ -11,7 +11,7 @@ const template = `# Stormlight configuration.
 # Precedence: command-line flags > environment variables > this file > defaults.
 
 [defaults]
-# provider = "codex"            # codex | claude | shell, or a custom provider
+# provider = "codex"            # codex | claude, or a custom provider
 # mode     = "edits"            # ask | edits | auto
 # session  = "stormlight-agents"
 

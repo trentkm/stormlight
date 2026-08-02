@@ -20,20 +20,9 @@ func TestRegistryRejectsUnknownProvider(t *testing.T) {
 
 func TestRegistryRejectsEmptyTask(t *testing.T) {
 	registry := NewRegistry()
-	_, err := registry.Resolve(agent.ProviderShell, "   ", agent.DefaultMode)
+	_, err := registry.Resolve(agent.ProviderClaude, "   ", agent.DefaultMode)
 	if err == nil {
 		t.Fatal("expected an error")
-	}
-}
-
-func TestShellProviderBuildsLoginShellCommand(t *testing.T) {
-	registry := NewRegistry()
-	launch, err := registry.Resolve(agent.ProviderShell, "printf test", agent.ModeAuto)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(launch.Args) != 2 || launch.Args[0] != "-lc" || launch.Args[1] != "printf test" {
-		t.Fatalf("unexpected args: %#v", launch.Args)
 	}
 }
 
@@ -181,7 +170,7 @@ func TestBuiltinSpecOverridesBinaryAndAppendsExtraArgs(t *testing.T) {
 	if launch.Args[0] != "--settings" {
 		t.Fatalf("lifecycle hooks lost: %#v", launch.Args)
 	}
-	if len(registry.IDs()) != 3 {
+	if len(registry.IDs()) != 2 {
 		t.Fatalf("builtin override changed provider order: %#v", registry.IDs())
 	}
 }

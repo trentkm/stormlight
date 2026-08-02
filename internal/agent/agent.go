@@ -15,7 +15,6 @@ type Provider string
 const (
 	ProviderClaude Provider = "claude"
 	ProviderCodex  Provider = "codex"
-	ProviderShell  Provider = "shell"
 )
 
 type Activity string

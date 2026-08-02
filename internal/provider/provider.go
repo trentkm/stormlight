@@ -3,9 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -82,15 +80,6 @@ func NewRegistry() *Registry {
 }
 
 func NewRegistryWithSpecs(specs []Spec) *Registry {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		if runtime.GOOS == "windows" {
-			shell = "cmd.exe"
-		} else {
-			shell = "/bin/sh"
-		}
-	}
-
 	adapters := []Adapter{
 		commandAdapter{
 			id:      agent.ProviderCodex,
@@ -103,14 +92,6 @@ func NewRegistryWithSpecs(specs []Spec) *Registry {
 			label:   "Claude",
 			binary:  "claude",
 			argsFor: claudeArgs,
-		},
-		commandAdapter{
-			id:     agent.ProviderShell,
-			label:  "Shell",
-			binary: shell,
-			argsFor: func(prompt string, _ agent.PermissionMode) ([]string, error) {
-				return []string{"-lc", prompt}, nil
-			},
 		},
 	}
 

@@ -2,8 +2,8 @@
 
 A workspace-native control surface for coding agents.
 
-`stormlight` dispatches Claude, Codex, and arbitrary shell tasks into isolated
-windows on a private, Stormlight-owned tmux server. Each agent is one provider
+`stormlight` dispatches Claude, Codex, and custom-configured coding agents
+into isolated windows on a private, Stormlight-owned tmux server. Each agent is one provider
 conversation.
 The dashboard organizes them as `Workspaces | Agents | Spanreed`, showing
 live process state, recent interaction, and agents that need attention without
@@ -31,7 +31,7 @@ preserving the checkout or worktree each agent is using.
 - Pane messages use tmux buffers, avoiding command interpolation.
 - The Spanreed pane combines structured actions with sampled terminal output.
 - Claude permission requests can be resolved without leaving the dashboard.
-- The shell adapter gives unsupported CLIs a generic fallback.
+- Custom provider specs give unsupported agent CLIs a fallback.
 
 An outside-tmux launch transparently hosts the dashboard in a temporary
 session on the Stormlight server; a launch from inside your own tmux uses the
