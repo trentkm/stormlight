@@ -104,6 +104,20 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 
 	workspaceWidth, agentWidth, interactionWidth := paneWidths(width)
 
+	// The selected rows upstream of the focused pane stay undimmed, so the
+	// hierarchy reads as a lit path: workspace → agent → transcript.
+	keepWorkspace := undimmedRows{}
+	if m.activePane != paneWorkspaces && len(m.groups) > 0 {
+		keepWorkspace = m.selectedRowRange(
+			len(m.groups), m.workspaceCursor, contentHeight-1)
+	}
+	keepAgent := undimmedRows{}
+	if agents := m.agentsForSelectedWorkspace(); m.activePane == paneInteraction &&
+		len(agents) > 0 {
+		keepAgent = m.selectedRowRange(
+			len(agents), m.agentCursor, contentHeight-1)
+	}
+
 	workspaces := m.renderPane(
 		"Workspaces",
 		"",
@@ -114,6 +128,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		contentHeight,
 		m.activePane == paneWorkspaces,
 		true,
+		keepWorkspace,
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
 		workspaces = paintHierarchyConnector(
@@ -131,6 +146,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		contentHeight,
 		m.activePane == paneAgents,
 		true,
+		keepAgent,
 	)
 	interaction := m.renderPane(
 		"Spanreed",
@@ -143,6 +159,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		contentHeight,
 		m.activePane == paneInteraction,
 		false,
+		undimmedRows{},
 	)
 	return lipgloss.JoinHorizontal(lipgloss.Top, workspaces, agents, interaction)
 }
@@ -403,6 +420,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			height,
 			true,
 			false,
+			undimmedRows{},
 		)
 	case paneInteraction:
 		return m.renderPane(
@@ -413,6 +431,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			height,
 			true,
 			false,
+			undimmedRows{},
 		)
 	default:
 		return m.renderPane(
@@ -423,8 +442,29 @@ func (m Model) renderFocusedPane(width, height int) string {
 			height,
 			true,
 			false,
+			undimmedRows{},
 		)
 	}
+}
+
+// undimmedRows marks body lines that stay at full strength inside a
+// dimmed pane: the selected path rows lighting the way to the focus.
+type undimmedRows struct{ start, count int }
+
+// selectedRowRange is the body-line range a list's selected entry occupies,
+// or a zero range when the selection is scrolled out of view.
+func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
+	expanded := m.expandedRows()
+	capacity := listRowCapacity(listHeight, expanded)
+	start, end := visibleRange(total, cursor, capacity)
+	if cursor < start || cursor >= end {
+		return undimmedRows{}
+	}
+	step, size := 1, 1
+	if expanded {
+		step, size = 3, 2
+	}
+	return undimmedRows{start: (cursor - start) * step, count: size}
 }
 
 func (m Model) renderPane(
@@ -435,6 +475,7 @@ func (m Model) renderPane(
 	height int,
 	active bool,
 	borderRight bool,
+	keep undimmedRows,
 ) string {
 	innerWidth := max(1, width)
 	style := lipgloss.NewStyle().Width(innerWidth).Height(height).MaxHeight(height)
@@ -449,7 +490,7 @@ func (m Model) renderPane(
 	}
 	header := renderPaneHeader(label, contextLabel, innerWidth, active)
 	if !active {
-		content = dimPane(content)
+		content = dimPane(content, keep)
 	}
 	body := lipgloss.NewStyle().
 		Width(innerWidth).
@@ -462,10 +503,15 @@ func (m Model) renderPane(
 // focused pane is the only one at full strength. Colors survive — an amber
 // attention marker still reads as amber, just recessed. Every SGR sequence
 // inside the block re-arms the faint (a reset would otherwise cancel it)
-// and drops bold, which defeats faint on most terminals.
-func dimPane(content string) string {
+// and drops bold, which defeats faint on most terminals. Rows inside keep
+// stay untouched: the selected workspace and agent light the path to the
+// focused pane.
+func dimPane(content string, keep undimmedRows) string {
 	lines := strings.Split(content, "\n")
 	for index, line := range lines {
+		if keep.count > 0 && index >= keep.start && index < keep.start+keep.count {
+			continue
+		}
 		line = sgrSequencePattern.ReplaceAllStringFunc(line, func(seq string) string {
 			return "\x1b[" + dimParams(seq[2:len(seq)-1]) + "m"
 		})

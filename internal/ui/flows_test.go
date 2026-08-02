@@ -286,7 +286,7 @@ func TestDimPaneLayersFaintWithoutBreakingColors(t *testing.T) {
 	// A truecolor sequence whose components include 1 and 2 must survive
 	// verbatim; standalone bold must drop; every sequence re-arms faint.
 	line := "\x1b[1mBold\x1b[0m and \x1b[38;2;1;2;3mtruecolor\x1b[m tail"
-	dimmed := dimPane(line)
+	dimmed := dimPane(line, undimmedRows{})
 	if !strings.Contains(dimmed, "\x1b[38;2;1;2;3;2m") {
 		t.Fatalf("truecolor params were mangled: %q", dimmed)
 	}
@@ -301,6 +301,15 @@ func TestDimPaneLayersFaintWithoutBreakingColors(t *testing.T) {
 	}
 	if got := dimParams("38;5;1;1"); got != "38;5;1;2" {
 		t.Fatalf("256-color guard failed: %q", got)
+	}
+
+	kept := dimPane("row zero\nrow one\nrow two", undimmedRows{start: 1, count: 1})
+	rows := strings.Split(kept, "\n")
+	if !strings.HasPrefix(rows[0], "\x1b[2m") || !strings.HasPrefix(rows[2], "\x1b[2m") {
+		t.Fatalf("unselected rows were not dimmed: %q", kept)
+	}
+	if strings.Contains(rows[1], "\x1b[2m") {
+		t.Fatalf("kept row was dimmed: %q", rows[1])
 	}
 }
 
