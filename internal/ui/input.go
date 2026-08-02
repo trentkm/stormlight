@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -9,6 +10,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// Fast wheel bursts can split SGR mouse reports (ESC [ < b ; x ; y M/m)
+// across input reads. Bubble Tea v1 parses the complete reports as mouse
+// events but delivers the fragments as literal key runes, which then type
+// mouse garbage into whatever input is focused. DropMouseFragments is a
+// tea.WithFilter hook that discards rune batches shaped like those
+// fragments; no human types "[<65;127;30M".
+var mouseFragmentPattern = regexp.MustCompile(`^\[?<[0-9;]{4,}[Mm]?$`)
+
+func DropMouseFragments(_ tea.Model, msg tea.Msg) tea.Msg {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok || key.Type != tea.KeyRunes {
+		return msg
+	}
+	if mouseFragmentPattern.MatchString(string(key.Runes)) {
+		return nil
+	}
+	return msg
+}
 
 type lineInput struct {
 	value       []rune

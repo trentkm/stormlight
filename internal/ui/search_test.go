@@ -175,6 +175,26 @@ func TestSearchEscRestoresViewportOffset(t *testing.T) {
 	}
 }
 
+func TestDropMouseFragmentsFiltersSGRNoise(t *testing.T) {
+	for _, fragment := range []string{
+		"[<65;127;30M", "[<65;127;30", "<64;124;39M", "[<65;110;33m",
+	} {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(fragment)}
+		if DropMouseFragments(nil, msg) != nil {
+			t.Fatalf("fragment %q was not dropped", fragment)
+		}
+	}
+	for _, legit := range []string{"M", "hello", "[<ok>]", "<3", "a[<65"} {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(legit)}
+		if DropMouseFragments(nil, msg) == nil {
+			t.Fatalf("legitimate input %q was dropped", legit)
+		}
+	}
+	if DropMouseFragments(nil, tea.KeyMsg{Type: tea.KeyEnter}) == nil {
+		t.Fatal("non-rune key was dropped")
+	}
+}
+
 func TestComposerStaysOpenAfterSending(t *testing.T) {
 	model := searchModelFixture(t)
 	updated, _ := model.updateNormal(runeKey("i"))
