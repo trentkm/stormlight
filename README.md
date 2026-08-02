@@ -140,6 +140,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `n` | Add a workspace in Workspaces; create an agent in the selected workspace elsewhere |
 | `o` | Create an agent with an explicit directory picker |
 | `i` / `s` | Write a reply in Spanreed |
+| `Ctrl-v` (while replying) | Paste a clipboard image as a file path |
 | `x` | Interrupt the selected agent |
 | `Ctrl-x`, then `x` / `y` / `Enter` | Remove a workspace or delete an agent |
 | `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
@@ -158,6 +159,13 @@ Provider slash commands (`/compact`, `/clear`, custom skills) work from the
 reply box too — a single-line message starting with `/` is typed into the
 agent as a command instead of pasted as text. Normal-mode `Enter` opens the
 complete provider terminal for controls that cannot be represented inline.
+
+Images paste too: press `Ctrl-v` while composing and Stormlight saves the
+clipboard image to a temp file and inserts its path at the cursor — Claude
+Code and Codex read image files referenced by path. On macOS this uses
+[`pngpaste`](https://github.com/jcsalterego/pngpaste) when installed
+(`brew install pngpaste`), falling back to AppleScript; on Linux it uses
+`wl-paste` or `xclip`.
 
 Claude permission requests replace the transcript with an inline action. Use
 `j` / `k` and `Enter`, or press `y` to allow once, `a` to accept Claude's
