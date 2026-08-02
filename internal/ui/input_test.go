@@ -1108,8 +1108,12 @@ func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {
 	early := model.renderWorkspaceRow(group, true, true, 30, false)
 	model.shimmerPhase = 7
 	late := model.renderWorkspaceRow(group, true, true, 30, false)
-	if !strings.Contains(ansi.Strip(early), "●") {
-		t.Fatalf("active marker missing:\n%s", ansi.Strip(early))
+	if !strings.Contains(ansi.Strip(early), "▌") {
+		t.Fatalf("focus bar missing:\n%s", ansi.Strip(early))
+	}
+	quiet := ansi.Strip(model.renderWorkspaceRow(group, false, false, 30, false))
+	if !strings.HasPrefix(quiet, "●") {
+		t.Fatalf("active glyph missing on quiet row:\n%s", quiet)
 	}
 	// Colors are unavailable under the test color profile, so the sweep
 	// itself is asserted via the band math.

@@ -1967,24 +1967,29 @@ func (m Model) renderWorkspaceRow(
 			break
 		}
 	}
-	activityMarker := "  "
+	// One indicator column: the most important glyph wins, and any state
+	// it displaces still speaks through the name styling.
+	indicator := " "
 	switch {
 	case urgent > 0:
-		activityMarker = "! "
+		indicator = "!"
 	case waiting > 0:
-		activityMarker = "○ "
+		indicator = "○"
 	case active > 0:
-		activityMarker = "● "
+		indicator = "●"
+	case selected && !focused:
+		indicator = "›"
 	}
+	gutter := indicator + " "
 	nameWidth := max(
 		1,
-		contentWidth-lipgloss.Width(activityMarker)-lipgloss.Width(suffix)-1,
+		contentWidth-lipgloss.Width(gutter)-lipgloss.Width(suffix)-1,
 	)
 	name := truncate(group.context.Name, nameWidth)
 	gap := max(
 		1,
 		contentWidth-
-			lipgloss.Width(activityMarker)-
+			lipgloss.Width(gutter)-
 			lipgloss.Width(name)-
 			lipgloss.Width(suffix),
 	)
@@ -1994,7 +1999,7 @@ func (m Model) renderWorkspaceRow(
 	tier := attentionTierOf(urgent, waiting)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
-			activityMarker,
+			" ",
 			name,
 			gap,
 			suffix,
@@ -2009,11 +2014,10 @@ func (m Model) renderWorkspaceRow(
 		)
 	}
 
-	marker := " "
-	if selected {
-		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("›")
+	indicatorStyle := mutedStyle
+	if indicator == "›" {
+		indicatorStyle = lipgloss.NewStyle().Foreground(colorBorder)
 	}
-	activityStyle := mutedStyle
 	renderedName := titleStyle.Render(name)
 	suffixStyle := mutedStyle
 	switch {
@@ -2021,25 +2025,25 @@ func (m Model) renderWorkspaceRow(
 		// Urgent attention outranks the working glow: the whole row goes
 		// loud amber.
 		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
-		activityStyle = attentionStyle
+		indicatorStyle = attentionStyle
 		renderedName = attentionStyle.Render(name)
 		suffixStyle = attentionStyle
 	case tier == tierWaiting:
 		// Soft tier: amber marker and count only; the row stays calm.
 		softStyle := lipgloss.NewStyle().Foreground(colorWaiting)
-		activityStyle = softStyle
+		indicatorStyle = softStyle
 		suffixStyle = softStyle
 	case active > 0:
-		activityStyle = lipgloss.NewStyle().
+		indicatorStyle = lipgloss.NewStyle().
 			Foreground(colorWorking).
 			Bold(true)
 		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
-	top := marker + activityStyle.Render(activityMarker) +
+	top := indicatorStyle.Render(gutter) +
 		renderedName +
 		strings.Repeat(" ", gap) +
 		suffixStyle.Render(suffix)
-	bottom := marker + mutedStyle.Render(bottomContent)
+	bottom := mutedStyle.Render(bottomContent)
 	if !m.expandedRows() {
 		return top
 	}
@@ -2244,7 +2248,10 @@ func renderAgentRowWithDensity(
 	titleWidth := max(1, contentWidth-2-ageWidth-1)
 	displayTitle := truncate(agentDisplayTitle(managedAgent), titleWidth)
 	gap := max(1, contentWidth-2-lipgloss.Width(displayTitle)-ageWidth)
-	topContent := symbol + " " + displayTitle + strings.Repeat(" ", gap) + age
+	// One indicator column: the focused row's bar comes from the theme, a
+	// remembered selection shows the chevron, everything else shows its
+	// status glyph. Displaced state speaks through the title styling.
+	topContent := " " + displayTitle + strings.Repeat(" ", gap) + age
 
 	state := string(managedAgent.Activity)
 	if managedAgent.NeedsAttention() {
@@ -2289,15 +2296,15 @@ func renderAgentRowWithDensity(
 		managedAgent.Activity == agent.ActivityStarting:
 		renderedTitle = shimmerText(displayTitle, shimmerPhase, nil)
 	}
-	marker := " "
+	indicator := statusStyle.Render(symbol)
 	if selected {
-		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("›")
+		indicator = lipgloss.NewStyle().Foreground(colorBorder).Render("›")
 	}
-	top := marker + statusStyle.Render(symbol) + " " +
+	top := indicator + " " +
 		renderedTitle +
 		strings.Repeat(" ", gap) +
 		detailStyle.Render(age)
-	bottom := marker + detailStyle.Render(bottomContent)
+	bottom := detailStyle.Render(bottomContent)
 	if !expanded {
 		return top
 	}
