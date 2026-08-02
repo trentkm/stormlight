@@ -4800,7 +4800,7 @@ func cleanInteraction(content string, width int, providerID agent.Provider) stri
 		line = normalizeTerminalLine(line)
 		wrapped := line
 		if width > 0 {
-			wrapped = ansi.Wrap(line, width, " /")
+			wrapped = wrapTranscriptLine(line, width)
 		}
 		wrappedLines := strings.Split(wrapped, "\n")
 		for index, wrappedLine := range wrappedLines {
@@ -4835,9 +4835,37 @@ func normalizeTerminalLine(line string) string {
 		if width <= 2 {
 			return ""
 		}
-		return trimANSIWhitespace(ansi.Cut(trimmedANSI, 1, width-1))
+		interior := trimANSIRight(ansi.Cut(trimmedANSI, 1, width-1))
+		// Frames pad content with one space after the border; anything
+		// beyond that is the program's own indentation and must survive.
+		if strings.HasPrefix(ansi.Strip(interior), " ") {
+			interior = ansi.Cut(interior, 1, ansi.StringWidth(interior))
+		}
+		return interior
 	}
 	return trimANSIRight(line)
+}
+
+// wrapTranscriptLine wraps a transcript line to the pane width with a
+// hanging indent: continuation rows inherit the line's leading whitespace,
+// so indented agent output keeps its shape instead of snapping back to
+// column zero every time the Spanreed pane is narrower than the agent's
+// tmux pane.
+func wrapTranscriptLine(line string, width int) string {
+	stripped := ansi.Strip(line)
+	if ansi.StringWidth(stripped) <= width {
+		return line
+	}
+	indent := len(stripped) - len(strings.TrimLeft(stripped, " "))
+	if indent == 0 || indent >= width/2 {
+		return ansi.Wrap(line, width, " /")
+	}
+	rows := strings.Split(ansi.Wrap(line, width-indent, " /"), "\n")
+	prefix := strings.Repeat(" ", indent)
+	for index := 1; index < len(rows); index++ {
+		rows[index] = prefix + rows[index]
+	}
+	return strings.Join(rows, "\n")
 }
 
 func sanitizeInteractionANSI(content string) string {

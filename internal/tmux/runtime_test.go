@@ -164,7 +164,7 @@ func TestCaptureIncludesScrollbackForLivePane(t *testing.T) {
 	if output != "pane output" {
 		t.Fatalf("output = %q", output)
 	}
-	want := []string{"capture-pane", "-p", "-e", "-t", "%1", "-S", "-120"}
+	want := []string{"capture-pane", "-p", "-e", "-J", "-t", "%1", "-S", "-120"}
 	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
 		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
 	}
@@ -177,7 +177,7 @@ func TestCaptureIncludesScrollbackForExitedPane(t *testing.T) {
 	if _, err := runtime.Capture(context.Background(), "capture-id", 40); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"capture-pane", "-p", "-e", "-t", "%1", "-S", "-40"}
+	want := []string{"capture-pane", "-p", "-e", "-J", "-t", "%1", "-S", "-40"}
 	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
 		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
 	}
@@ -190,7 +190,7 @@ func TestCaptureDefaultsLineBudget(t *testing.T) {
 	if _, err := runtime.Capture(context.Background(), "capture-id", 0); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"capture-pane", "-p", "-e", "-t", "%1", "-S", "-100"}
+	want := []string{"capture-pane", "-p", "-e", "-J", "-t", "%1", "-S", "-100"}
 	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
 		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
 	}
