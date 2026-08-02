@@ -1,0 +1,52 @@
+version: 2
+
+project_name: stormlight
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+
+brews:
+  - repository:
+      owner: trentkm
+      name: homebrew-stormlight
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/trentkm/stormlight
+    description: Workspace-native control surface for coding agents
+    license: MIT
+    # tmux >= 3.7 is required for popup overlays (older display-popup
+    # crashes the server on DECRQM, tmux/tmux#4942); Homebrew ships 3.7+.
+    dependencies:
+      - name: tmux
+    directory: Formula
+    install: |
+      bin.install "stormlight"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/stormlight --version")
