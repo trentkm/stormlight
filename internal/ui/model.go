@@ -3048,10 +3048,12 @@ func (m Model) renderDirectoryRow(
 			m.formFocus == dispatchDirectory,
 		)
 	}
+	// One space matches the selectable row's single-column marker, so
+	// selection doesn't shift the text sideways.
 	return lipgloss.NewStyle().
 		Width(width).
 		MaxWidth(width).
-		Render("  " + styled)
+		Render(" " + styled)
 }
 
 func renderSelectableRow(content string, width int, focused bool) string {
@@ -3145,7 +3147,7 @@ func (m Model) renderProviderRows(width int) []string {
 		rows = append(rows, "  "+lipgloss.NewStyle().
 			Width(width).
 			MaxWidth(width).
-			Render("  "+styled))
+			Render(" "+styled))
 	}
 	return rows
 }
