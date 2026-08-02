@@ -58,7 +58,5 @@ func (gitResolver) Resolve(ctx context.Context, path string) (Context, bool, err
 		Name:          pathName(root),
 		Root:          root,
 		ExecutionRoot: executionRoot,
-		ComponentName: pathName(executionRoot),
-		ComponentRoot: executionRoot,
 	}, true, nil
 }

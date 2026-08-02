@@ -1109,6 +1109,55 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 	if got := abbreviatePath("/Volumes/repos/alpha-service"); got != "/V/r/alpha-service" {
 		t.Fatalf("abbreviated path = %q", got)
 	}
+
+	worktree := workspace.Context{
+		Kind:          "git",
+		Name:          "alpha-service",
+		Root:          "/Volumes/repos/shared/alpha-service",
+		ExecutionRoot: "/Volumes/repos/shared/alpha-service-worktrees/fix-auth",
+	}
+	if detail := workspaceDetail(worktree, 60); !strings.HasSuffix(detail, " · fix-auth") {
+		t.Fatalf("worktree detail lost its tail: %q", detail)
+	}
+
+	mainCheckout := workspace.Context{
+		Kind:          "git",
+		Name:          "alpha-service",
+		Root:          "/Volumes/repos/shared/alpha-service",
+		ExecutionRoot: "/Volumes/repos/shared/alpha-service",
+	}
+	if detail := workspaceDetail(mainCheckout, 60); detail != "git · /Volumes/repos/shared" {
+		t.Fatalf("main-checkout detail = %q", detail)
+	}
+}
+
+func TestInfoModalCollapsesDegenerateRows(t *testing.T) {
+	plain := workspace.Context{
+		ID:            "git:/repo/.git",
+		Kind:          workspace.KindGit,
+		Name:          "repo",
+		Root:          "/repo",
+		ExecutionRoot: "/repo",
+	}
+	model := NewModel(stubBackend{})
+	model.catalogWorkspaces = []workspace.Context{plain}
+	model.rebuildGroups(plain.ID, "")
+
+	rendered := ansi.Strip(model.renderInfoModal(80, 24))
+	if strings.Contains(rendered, "Execution root") ||
+		strings.Contains(rendered, "Component") {
+		t.Fatalf("degenerate rows survived:\n%s", rendered)
+	}
+
+	worktree := plain
+	worktree.ExecutionRoot = "/repo-worktrees/fix-auth"
+	model.catalogWorkspaces = []workspace.Context{worktree}
+	model.rebuildGroups(worktree.ID, "")
+
+	rendered = ansi.Strip(model.renderInfoModal(80, 24))
+	if !strings.Contains(rendered, "Execution root") {
+		t.Fatalf("distinct execution root is missing:\n%s", rendered)
+	}
 }
 
 func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {
