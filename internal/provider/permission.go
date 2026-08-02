@@ -13,8 +13,10 @@ import (
 const maxPermissionDetailRunes = 6000
 
 type PermissionBridge struct {
-	Action      pending.Action
-	suggestions []json.RawMessage
+	Action        pending.Action
+	suggestions   []json.RawMessage
+	questionInput json.RawMessage
+	question      *claudeQuestion
 }
 
 func ParsePermissionRequest(
@@ -42,6 +44,13 @@ func (p PermissionBridge) Response(
 
 	decision := claudePermissionDecision{}
 	switch {
+	case strings.HasPrefix(resolution.OptionID, pending.OptionChoicePrefix):
+		updated, err := p.answeredQuestionInput(resolution.OptionID)
+		if err != nil {
+			return nil, false, err
+		}
+		decision.Behavior = "allow"
+		decision.UpdatedInput = updated
 	case resolution.OptionID == pending.OptionAllowOnce:
 		decision.Behavior = "allow"
 	case strings.HasPrefix(resolution.OptionID, pending.OptionAlwaysPrefix):
@@ -94,6 +103,7 @@ type claudePermissionOutput struct {
 
 type claudePermissionDecision struct {
 	Behavior           string            `json:"behavior"`
+	UpdatedInput       json.RawMessage   `json:"updatedInput,omitempty"`
 	UpdatedPermissions []json.RawMessage `json:"updatedPermissions,omitempty"`
 	Message            string            `json:"message,omitempty"`
 }
@@ -120,6 +130,12 @@ func parseClaudePermissionRequest(
 		return PermissionBridge{}, fmt.Errorf(
 			"Claude permission request is missing a tool name",
 		)
+	}
+
+	if input.ToolName == "AskUserQuestion" {
+		if bridge, ok := parseClaudeQuestionRequest(agentID, input); ok {
+			return bridge, nil
+		}
 	}
 
 	description, detail := describeClaudeToolInput(input.ToolName, input.ToolInput)
@@ -165,6 +181,119 @@ func parseClaudePermissionRequest(
 		},
 		suggestions: input.PermissionSuggestions,
 	}, nil
+}
+
+type claudeQuestionInput struct {
+	Questions []claudeQuestion `json:"questions"`
+}
+
+type claudeQuestion struct {
+	Question    string                 `json:"question"`
+	Header      string                 `json:"header"`
+	MultiSelect bool                   `json:"multiSelect"`
+	Options     []claudeQuestionOption `json:"options"`
+}
+
+type claudeQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// parseClaudeQuestionRequest maps an AskUserQuestion permission request onto
+// a question action whose options are the question's own choices. It reports
+// false when the payload does not match the single-select, single-question
+// shape Stormlight can answer, leaving the generic approval flow in place.
+func parseClaudeQuestionRequest(
+	agentID string,
+	input claudePermissionInput,
+) (PermissionBridge, bool) {
+	var question claudeQuestionInput
+	if err := json.Unmarshal(input.ToolInput, &question); err != nil {
+		return PermissionBridge{}, false
+	}
+	if len(question.Questions) != 1 || question.Questions[0].MultiSelect {
+		return PermissionBridge{}, false
+	}
+	first := question.Questions[0]
+	title := compactPermissionText(first.Question)
+	if title == "" || len(first.Options) == 0 {
+		return PermissionBridge{}, false
+	}
+
+	options := make([]pending.Option, 0, len(first.Options)+1)
+	descriptions := make([]string, 0, len(first.Options))
+	for index, choice := range first.Options {
+		label := compactPermissionText(choice.Label)
+		if label == "" {
+			return PermissionBridge{}, false
+		}
+		options = append(options, pending.Option{
+			ID:       pending.OptionChoicePrefix + strconv.Itoa(index),
+			Label:    label,
+			Shortcut: questionShortcut(index),
+		})
+		description := compactPermissionText(choice.Description)
+		if description != "" {
+			descriptions = append(descriptions, label+" — "+description)
+		}
+	}
+	options = append(options, pending.Option{
+		ID:       pending.OptionTerminal,
+		Label:    "Answer in terminal",
+		Shortcut: "t",
+	})
+
+	return PermissionBridge{
+		Action: pending.Action{
+			AgentID:     agentID,
+			Provider:    agent.ProviderClaude,
+			Kind:        pending.KindQuestion,
+			Title:       title,
+			Description: compactPermissionText(first.Header),
+			Detail:      boundedPermissionDetail(strings.Join(descriptions, "\n")),
+			ToolName:    input.ToolName,
+			Cwd:         compactPermissionText(input.Cwd),
+			Options:     options,
+		},
+		questionInput: input.ToolInput,
+		question:      &first,
+	}, true
+}
+
+// answeredQuestionInput echoes the original AskUserQuestion tool input with
+// an answers object mapping the question text to the chosen option label,
+// which is how the PermissionRequest hook contract selects an option.
+func (p PermissionBridge) answeredQuestionInput(
+	optionID string,
+) (json.RawMessage, error) {
+	index, err := strconv.Atoi(strings.TrimPrefix(
+		optionID,
+		pending.OptionChoicePrefix,
+	))
+	if p.question == nil || err != nil ||
+		index < 0 || index >= len(p.question.Options) {
+		return nil, fmt.Errorf("invalid question choice option")
+	}
+
+	var input map[string]any
+	if err := json.Unmarshal(p.questionInput, &input); err != nil {
+		return nil, fmt.Errorf("decode AskUserQuestion input: %w", err)
+	}
+	input["answers"] = map[string]string{
+		p.question.Question: p.question.Options[index].Label,
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode AskUserQuestion answer: %w", err)
+	}
+	return encoded, nil
+}
+
+func questionShortcut(index int) string {
+	if index < 9 {
+		return strconv.Itoa(index + 1)
+	}
+	return ""
 }
 
 func describeClaudeToolInput(

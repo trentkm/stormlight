@@ -763,13 +763,17 @@ func newProviderPermissionCommand(socket, sessionName *string, cfg config.Config
 				}
 			}()
 
+			attention := agent.AttentionApproval
+			if published.Kind == pending.KindQuestion {
+				attention = agent.AttentionQuestion
+			}
 			service, serviceErr := newService(*socket, *sessionName, cfg)
 			if serviceErr == nil {
 				updatePermissionAgent(
 					service,
 					id,
 					agent.ActivityIdle,
-					agent.AttentionApproval,
+					attention,
 					published.Title,
 				)
 			}
@@ -805,12 +809,16 @@ func newProviderPermissionCommand(socket, sessionName *string, cfg config.Config
 			}
 			if !handled {
 				if serviceErr == nil {
+					summary := "Review permission in terminal"
+					if published.Kind == pending.KindQuestion {
+						summary = "Answer question in terminal"
+					}
 					updatePermissionAgent(
 						service,
 						id,
 						agent.ActivityIdle,
-						agent.AttentionApproval,
-						"Review permission in terminal",
+						attention,
+						summary,
 					)
 				}
 				return nil
@@ -821,7 +829,9 @@ func newProviderPermissionCommand(socket, sessionName *string, cfg config.Config
 
 			if serviceErr == nil {
 				summary := "Permission approved"
-				if resolution.OptionID == pending.OptionDeny {
+				if published.Kind == pending.KindQuestion {
+					summary = "Question answered"
+				} else if resolution.OptionID == pending.OptionDeny {
 					summary = "Permission denied"
 				}
 				updatePermissionAgent(

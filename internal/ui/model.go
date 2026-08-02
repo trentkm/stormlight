@@ -970,6 +970,11 @@ func (m Model) updatePendingAction(
 		}
 		return m, nil, true
 	default:
+		for _, option := range action.Options {
+			if option.Shortcut != "" && option.Shortcut == key {
+				return m.resolvePendingOption(action, option.ID)
+			}
+		}
 		return m, nil, false
 	}
 }
@@ -3312,6 +3317,9 @@ func (m Model) commandHints() string {
 	}
 	if m.activePane == paneInteraction {
 		if action, ok := m.selectedPendingAction(); ok {
+			if action.Kind == pending.KindQuestion {
+				return "h agents  j/k choose  1-9 pick  t terminal  Enter answer"
+			}
 			hints := []string{"h agents", "j/k choose", "y allow"}
 			for _, option := range action.Options {
 				if strings.HasPrefix(option.ID, pending.OptionAlwaysPrefix) {
