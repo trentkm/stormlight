@@ -1820,6 +1820,10 @@ func (stubBackend) Delete(context.Context, string) error {
 	return nil
 }
 
+func (stubBackend) SyncAgentWindows(context.Context, int, int) error {
+	return nil
+}
+
 func (stubBackend) Providers() []provider.Info {
 	return nil
 }

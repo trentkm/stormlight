@@ -284,6 +284,10 @@ func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
 }
 
+func (s *Service) SyncAgentWindows(ctx context.Context, width, height int) error {
+	return s.runtime.SyncWindowSizes(ctx, width, height)
+}
+
 func (s *Service) Runtime() session.Runtime {
 	return s.runtime
 }

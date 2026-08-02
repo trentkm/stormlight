@@ -19,6 +19,9 @@ type Runtime interface {
 	Rename(context.Context, string, string) error
 	Update(context.Context, string, Update) error
 	SetWorkspace(context.Context, string, workspace.Context) error
+	// SyncWindowSizes resizes detached agent windows to the given cell
+	// size, so agents render at the width the dashboard displays.
+	SyncWindowSizes(context.Context, int, int) error
 }
 
 type DispatchRequest struct {

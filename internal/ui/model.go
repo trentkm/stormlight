@@ -44,6 +44,7 @@ type Backend interface {
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
+	SyncAgentWindows(context.Context, int, int) error
 	Providers() []provider.Info
 }
 
@@ -504,7 +505,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.interaction.Width = interactionWidth
 			m.interaction.Height = contentHeight
 		}
-		return m, m.loadInteractionCmd()
+		return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
 
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
@@ -531,11 +532,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
 		} else {
+			newAgents := len(msg.agents) > len(m.agents)
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
 			m.pendingActions = msg.actions
 			m.rebuildGroups(workspaceID, agentID)
 			m.initialWorkspaceID = ""
+			if newAgents {
+				// A fresh window boots at 80x24; size it like the rest.
+				return m, tea.Batch(
+					m.syncAgentWindowsCmd(),
+					m.loadInteractionCmd(),
+				)
+			}
 			if currentID := m.selectedPendingActionID(); currentID != pendingID {
 				m.pendingOption = 0
 			}
@@ -4712,6 +4721,27 @@ func (m Model) refreshCmd() tea.Cmd {
 // should reach everything the agent ever printed. A worst-case 50k-line
 // capture measures ~100ms and runs in a background command.
 const interactionCaptureLines = -1
+
+// syncAgentWindowsCmd sizes detached agent windows to the transcript
+// viewport, so agents render at exactly the width Spanreed displays and
+// captured lines never need re-wrapping. The window is taller than the
+// viewport: alternate-screen agents (Claude Code) expose only their visible
+// screen to tmux, so extra rows become extra reachable history.
+func (m Model) syncAgentWindowsCmd() tea.Cmd {
+	if !m.ready {
+		return nil
+	}
+	width, height := m.interactionDimensions()
+	rows := clamp(height*4, 24, 160)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := m.backend.SyncAgentWindows(ctx, width, rows); err != nil {
+			diagnostic.Logger().Warn("sync agent window sizes", "error", err)
+		}
+		return nil
+	}
+}
 
 func (m Model) loadInteractionCmd() tea.Cmd {
 	id := m.selectedAgentID()

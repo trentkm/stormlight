@@ -236,6 +236,9 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
+	)
+	wantCalls = append(wantCalls, releaseWindowSizeCalls()...)
+	wantCalls = append(wantCalls,
 		[]string{"select-window", "-t", "@1"},
 	)
 	assertCalls(t, runner.calls, wantCalls)
@@ -285,6 +288,9 @@ func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
 			wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 			wantCalls = append(wantCalls,
 				[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", "$7"},
+			)
+			wantCalls = append(wantCalls, releaseWindowSizeCalls()...)
+			wantCalls = append(wantCalls,
 				[]string{"switch-client", "-t", "@1"},
 			)
 			assertCalls(t, runner.calls, wantCalls)
@@ -348,6 +354,9 @@ func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
+	)
+	wantCalls = append(wantCalls, releaseWindowSizeCalls()...)
+	wantCalls = append(wantCalls,
 		[]string{"select-window", "-t", "@1"},
 	)
 	assertCalls(t, runner.calls, wantCalls)
@@ -481,6 +490,44 @@ func TestApplyServerOptionsAssertsPassthroughOnLiveServer(t *testing.T) {
 	}
 }
 
+func TestSyncWindowSizesResizesDetachedWindows(t *testing.T) {
+	runner := &captureRunner{}
+	runtime := &Runtime{runner: runner, sessionName: "stormlight-agents"}
+
+	if err := runtime.SyncWindowSizes(context.Background(), 76, 120); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"list-clients", "-t", "stormlight-agents", "-F", "#{client_name}"},
+		{"list-windows", "-t", "stormlight-agents", "-F", "#{window_id}"},
+		{"resize-window", "-t", "@1", "-x", "76", "-y", "120"},
+	}
+	assertCalls(t, runner.calls, want)
+}
+
+func TestSyncWindowSizesLeavesAttachedSessionsAlone(t *testing.T) {
+	runner := &captureRunner{clientLine: "/dev/ttys001"}
+	runtime := &Runtime{runner: runner, sessionName: "stormlight-agents"}
+
+	if err := runtime.SyncWindowSizes(context.Background(), 76, 120); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range runner.calls {
+		if call[0] == "resize-window" {
+			t.Fatalf("resized under an attached client: %#v", runner.calls)
+		}
+	}
+}
+
+// releaseWindowSizeCalls is Attach handing manually-sized windows back to
+// client-driven sizing before a client goes to look at them.
+func releaseWindowSizeCalls() [][]string {
+	return [][]string{
+		{"list-windows", "-t", "", "-F", "#{window_id}"},
+		{"set-option", "-w", "-t", "@1", "window-size", "latest"},
+	}
+}
+
 type captureRunner struct {
 	agentLine            string
 	sourceSessionID      string
@@ -488,6 +535,7 @@ type captureRunner struct {
 	rootBinding          string
 	feedbackVersion      string
 	savedStatusLeftWidth string
+	clientLine           string
 	calls                [][]string
 }
 
@@ -515,6 +563,10 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 			return r.rootBinding, nil
 		}
 		return r.binding, nil
+	case "list-windows":
+		return "@1", nil
+	case "list-clients":
+		return r.clientLine, nil
 	case "show-options":
 		switch args[len(args)-1] {
 		case prefixFeedbackOption:
