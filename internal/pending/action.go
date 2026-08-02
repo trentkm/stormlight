@@ -18,6 +18,7 @@ const (
 const (
 	OptionAllowOnce    = "allow_once"
 	OptionAlwaysPrefix = "allow_always:"
+	OptionChoicePrefix = "choice:"
 	OptionDeny         = "deny"
 	OptionTerminal     = "terminal"
 )
