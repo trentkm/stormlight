@@ -51,6 +51,15 @@ func (a Attention) Urgent() bool {
 	return false
 }
 
+// TerminalOwned reports whether the agent's own terminal UI holds the
+// input right now (a permission prompt, picker, or login flow). Text sent
+// from outside would type into that UI; answers belong in the terminal. A
+// plain question (the agent asked in text and idles at its composer) is
+// urgent but not terminal-owned — replying with text is the answer.
+func (a Attention) TerminalOwned() bool {
+	return a == AttentionApproval || a == AttentionAuth
+}
+
 // Rank orders attention for triage sorting: urgent, then waiting, then none.
 func (a Attention) Rank() int {
 	switch {
