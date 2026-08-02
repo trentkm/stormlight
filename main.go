@@ -236,6 +236,14 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 	if err != nil {
 		return err
 	}
+	// A running appliance server keeps the options it booted with, so a
+	// dashboard launch is the moment upgraded configuration reaches it. The
+	// user's default server (empty socket) is never touched.
+	if runtime, ok := service.Runtime().(*tmux.Runtime); ok && socket != "" {
+		if err := runtime.ApplyServerOptions(context.Background()); err != nil {
+			diagnostic.Logger().Warn("apply server options failed", "error", err)
+		}
+	}
 	options := ui.Options{
 		YaziPath:        cfg.Tools.Yazi,
 		NvimPath:        cfg.Tools.Nvim,

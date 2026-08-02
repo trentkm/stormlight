@@ -696,6 +696,25 @@ func (r *Runtime) SessionName() string {
 	return r.sessionName
 }
 
+// ApplyServerOptions asserts serverConfig's live-applicable options on a
+// running server, so configuration changes shipped in a Stormlight upgrade
+// reach appliance servers that never rebooted. A server that is not running
+// is left alone: whichever command starts it boots with the config file.
+func (r *Runtime) ApplyServerOptions(ctx context.Context) error {
+	for _, option := range serverOptions {
+		if _, err := r.runner.Run(ctx, nil,
+			"set-option", "-g", option[0], option[1],
+		); err != nil {
+			if strings.Contains(err.Error(), "no server running") ||
+				strings.Contains(err.Error(), "failed to connect to server") {
+				return nil
+			}
+			return fmt.Errorf("apply server option %s: %w", option[0], err)
+		}
+	}
+	return nil
+}
+
 type windowTarget struct {
 	windowID string
 	paneID   string

@@ -447,6 +447,27 @@ func TestSetWorkspaceResolvesRuntimeHandleFromAgentID(t *testing.T) {
 	}
 }
 
+func TestApplyServerOptionsAssertsPassthroughOnLiveServer(t *testing.T) {
+	runner := &captureRunner{}
+	runtime, err := NewRuntime(runner, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.ApplyServerOptions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"set-option", "-g", "allow-passthrough", "all"}
+	found := false
+	for _, call := range runner.calls {
+		if slices.Equal(call, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("allow-passthrough was not asserted: %#v", runner.calls)
+	}
+}
+
 type captureRunner struct {
 	agentLine            string
 	sourceSessionID      string
