@@ -152,6 +152,60 @@ func TestMouseWheelScrollsTranscriptWhileComposing(t *testing.T) {
 	}
 }
 
+func TestDragSelectsHighlightsAndCopies(t *testing.T) {
+	model := searchModelFixture(t)
+	model.interactionContent = strings.TrimRight(
+		strings.Repeat("content line\n", 40), "\n")
+	model.interaction.SetContent(model.interactionContent)
+	model.interaction.GotoTop()
+
+	press := tea.MouseMsg{
+		X: 90, Y: spanreedContentTop + 2,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	}
+	updated, _ := model.Update(press)
+	model = updated.(Model)
+	if !model.selectionActive || model.selectionAnchor != 2 {
+		t.Fatalf("press state: active=%v anchor=%d",
+			model.selectionActive, model.selectionAnchor)
+	}
+
+	motion := press
+	motion.Action = tea.MouseActionMotion
+	motion.Y = spanreedContentTop + 6
+	updated, _ = model.Update(motion)
+	model = updated.(Model)
+	start, end := model.selectionRange()
+	if start != 2 || end != 6 {
+		t.Fatalf("drag range = %d..%d", start, end)
+	}
+
+	painted := paintTranscriptSelection("a\nb\nc\nd", 1, 2, 3)
+	rows := strings.Split(painted, "\n")
+	if strings.Contains(rows[0], "\x1b[7m") || !strings.Contains(rows[1], "\x1b[7m") ||
+		!strings.Contains(rows[2], "\x1b[7m") || strings.Contains(rows[3], "\x1b[7m") {
+		t.Fatalf("selection painted wrong rows: %q", painted)
+	}
+
+	release := press
+	release.Action = tea.MouseActionRelease
+	release.Y = motion.Y
+	updated, cmd := model.Update(release)
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("release did not produce a copy command")
+	}
+	if model.selectionDragging {
+		t.Fatal("release left the drag active")
+	}
+
+	updated, _ = model.updateNormal(tea.KeyMsg{Type: tea.KeyEscape})
+	model = updated.(Model)
+	if model.selectionActive {
+		t.Fatal("esc did not clear the selection")
+	}
+}
+
 func TestSearchEscRestoresViewportOffset(t *testing.T) {
 	model := searchModelFixture(t)
 	model.interactionContent = strings.Repeat("filler\n", 80) + "needle at bottom"

@@ -149,6 +149,10 @@ type Model struct {
 	initialWorkspaceID      string
 	interactionContent      string
 	search                  transcriptSearch
+	selectionActive         bool
+	selectionDragging       bool
+	selectionAnchor         int
+	selectionHead           int
 	directories             []directoryChoice
 	directoryIndex          int
 	yaziPath                string
@@ -564,6 +568,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case interactionMsg:
 		if msg.id == m.selectedAgentID() {
+			if m.interactionID != msg.id {
+				m.selectionActive = false
+			}
 			followOutput := m.interactionID != msg.id || m.interaction.AtBottom()
 			previousOffset := m.interaction.YOffset
 			m.interactionID = msg.id
@@ -910,6 +917,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openCopyView()
 		}
 	case "esc", "ctrl+[":
+		if m.selectionActive {
+			m.selectionActive = false
+			return m, nil
+		}
 		if m.activePane == paneInteraction && m.search.query != "" {
 			m.clearSearch()
 			m.status = "Ready"
@@ -1648,6 +1659,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"o", "new agent with directory picker"},
 			{"i / s", "write a reply in Spanreed"},
 			{"/ then n/N", "search the Spanreed transcript"},
+			{"drag", "select transcript lines; release copies"},
 			{"y", "transcript in a pager; tmux copy-mode to select"},
 			{"Ctrl-v", "paste clipboard image into the reply"},
 			{"x", "interrupt the selected agent"},
@@ -2736,7 +2748,12 @@ func (m Model) renderInteraction(width, height int) string {
 			viewportCopy.GotoBottom()
 		}
 	}
-	transcript := viewportCopy.View() + ansi.ResetStyle
+	view := viewportCopy.View()
+	if m.selectionActive {
+		start, end := m.selectionRange()
+		view = paintTranscriptSelection(view, viewportCopy.YOffset, start, end)
+	}
+	transcript := view + ansi.ResetStyle
 	if m.interactionID != managedAgent.ID {
 		transcript = mutedStyle.Render(truncate("Loading interaction...", width))
 	}
@@ -4416,15 +4433,25 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 	}
 }
 
-// handleMouse scrolls whichever pane sits under the pointer: the wheel
-// works positionally, without moving keyboard focus. It stays live while
-// composing or searching — reading back through the transcript is most
-// needed mid-reply.
+// spanreedContentTop is the screen row where the transcript viewport
+// starts: header, pane title, then the agent heading's three rows.
+const spanreedContentTop = 5
+
+// handleMouse drives the transcript's two mouse behaviors: the wheel
+// scrolls it (positionally, without moving keyboard focus), and
+// press-drag-release highlights lines and copies them. Both stay live
+// while composing or searching — reading back is most needed mid-reply.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	scrollable := m.mode == modeNormal ||
 		m.mode == modeCompose ||
 		m.mode == modeSearch
-	if !m.ready || !scrollable || msg.Action != tea.MouseActionPress {
+	if !m.ready || !scrollable {
+		return m, nil
+	}
+	if msg.Button == tea.MouseButtonLeft && m.mode == modeNormal {
+		return m.handleSelectionMouse(msg)
+	}
+	if msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
 	direction := 0
@@ -4444,6 +4471,139 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	m.moveSelectionIn(paneInteraction, direction*3)
 	return m, nil
+}
+
+// handleSelectionMouse turns press-drag-release over the transcript into a
+// line-wise selection: the drag highlights, the release copies the lines
+// to the tmux buffer and system clipboard.
+func (m Model) handleSelectionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if m.paneAt(msg.X) != paneInteraction {
+			m.selectionActive = false
+			return m, nil
+		}
+		line, ok := m.transcriptLineAt(msg.Y)
+		if !ok {
+			m.selectionActive = false
+			return m, nil
+		}
+		m.selectionActive = true
+		m.selectionDragging = true
+		m.selectionAnchor = line
+		m.selectionHead = line
+		return m, nil
+	case tea.MouseActionMotion:
+		if !m.selectionDragging {
+			return m, nil
+		}
+		if line, ok := m.transcriptLineAt(msg.Y); ok {
+			m.selectionHead = line
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		if !m.selectionDragging {
+			return m, nil
+		}
+		m.selectionDragging = false
+		return m, m.copySelectionCmd()
+	}
+	return m, nil
+}
+
+// transcriptLineAt maps a screen row to a content line of the transcript,
+// clamped to the transcript's bounds.
+func (m Model) transcriptLineAt(y int) (int, bool) {
+	if _, ok := m.selectedAgent(); !ok || m.interactionContent == "" {
+		return 0, false
+	}
+	if _, pending := m.selectedPendingAction(); pending {
+		return 0, false
+	}
+	row := y - spanreedContentTop
+	if row < 0 {
+		row = 0
+	}
+	if row >= m.interaction.Height {
+		row = max(0, m.interaction.Height-1)
+	}
+	total := m.interaction.TotalLineCount()
+	if total == 0 {
+		return 0, false
+	}
+	return clamp(m.interaction.YOffset+row, 0, total-1), true
+}
+
+// paintTranscriptSelection reverses the video of the visible rows inside
+// the selected line range.
+func paintTranscriptSelection(view string, offset, start, end int) string {
+	lines := strings.Split(view, "\n")
+	for index := range lines {
+		global := offset + index
+		if global < start || global > end {
+			continue
+		}
+		lines[index] = searchMatchSGR + ansi.Strip(lines[index]) + searchResetSGR
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) selectionRange() (int, int) {
+	if m.selectionAnchor <= m.selectionHead {
+		return m.selectionAnchor, m.selectionHead
+	}
+	return m.selectionHead, m.selectionAnchor
+}
+
+// copySelectionCmd extracts the highlighted lines and hands them to the
+// clipboard: the tmux buffer plus the system clipboard through tmux's
+// OSC 52 (-w) when inside tmux, pbcopy/xclip otherwise.
+func (m Model) copySelectionCmd() tea.Cmd {
+	start, end := m.selectionRange()
+	lines := strings.Split(ansi.Strip(m.interactionContent), "\n")
+	if start >= len(lines) {
+		return nil
+	}
+	end = min(end, len(lines)-1)
+	selected := make([]string, 0, end-start+1)
+	for _, line := range lines[start : end+1] {
+		selected = append(selected, strings.TrimRight(line, " "))
+	}
+	text := strings.Join(selected, "\n")
+	count := end - start + 1
+	return func() tea.Msg {
+		if err := copyToClipboard(text); err != nil {
+			return actionMsg{status: "Action failed", err: err}
+		}
+		label := "line"
+		if count != 1 {
+			label = "lines"
+		}
+		return actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
+	}
+}
+
+// copyToClipboard prefers tmux: load-buffer -w fills the tmux paste buffer
+// and forwards to the system clipboard via OSC 52 in one step.
+func copyToClipboard(text string) error {
+	if os.Getenv("TMUX") != "" {
+		command := exec.Command("tmux", "load-buffer", "-w", "-")
+		command.Stdin = strings.NewReader(text)
+		if err := command.Run(); err == nil {
+			return nil
+		}
+	}
+	for _, candidate := range [][]string{
+		{"pbcopy"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"},
+	} {
+		if _, err := exec.LookPath(candidate[0]); err != nil {
+			continue
+		}
+		command := exec.Command(candidate[0], candidate[1:]...)
+		command.Stdin = strings.NewReader(text)
+		return command.Run()
+	}
+	return fmt.Errorf("no clipboard tool found (tmux, pbcopy, wl-copy, xclip)")
 }
 
 // paneAt maps a screen column to the dashboard pane rendered there.
