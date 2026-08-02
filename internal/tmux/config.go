@@ -25,6 +25,13 @@ set -s extended-keys on
 set -as terminal-features 'xterm*:extkeys'
 set -g history-limit 50000
 set -g mouse on
+# Yazi and other overlays probe the real terminal through tmux passthrough
+# and time out ("Terminal response timeout") when the sequences are
+# swallowed. Yazi does run "tmux set -p allow-passthrough on" itself, but
+# that lands mid-probe on whichever pane the popup sits over; enabling it
+# server-wide from boot removes the race and also lets image protocols
+# through.
+set -g allow-passthrough all
 `
 
 // EnsureServerConfig writes Stormlight's tmux configuration into the given
