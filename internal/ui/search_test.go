@@ -123,6 +123,35 @@ func TestSlashSearchFlowMatchesJumpsAndClears(t *testing.T) {
 	}
 }
 
+func TestMouseWheelScrollsTranscriptWhileComposing(t *testing.T) {
+	model := searchModelFixture(t)
+	model.interactionContent = strings.Repeat("filler line\n", 80)
+	model.interaction.SetContent(model.interactionContent)
+	model.interaction.GotoBottom()
+
+	updated, _ := model.updateNormal(runeKey("i"))
+	model = updated.(Model)
+	if model.mode != modeCompose {
+		t.Fatalf("mode after i = %d", model.mode)
+	}
+	offset := model.interaction.YOffset
+	wheel := tea.MouseMsg{
+		X:      90,
+		Y:      5,
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+	}
+	updated, _ = model.Update(wheel)
+	model = updated.(Model)
+	if model.interaction.YOffset >= offset {
+		t.Fatalf("wheel did not scroll while composing: %d -> %d",
+			offset, model.interaction.YOffset)
+	}
+	if model.mode != modeCompose {
+		t.Fatalf("wheel left compose mode: %d", model.mode)
+	}
+}
+
 func TestSearchEscRestoresViewportOffset(t *testing.T) {
 	model := searchModelFixture(t)
 	model.interactionContent = strings.Repeat("filler\n", 80) + "needle at bottom"

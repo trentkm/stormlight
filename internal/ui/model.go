@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2696,8 +2697,10 @@ func (m Model) renderInteraction(width, height int) string {
 		m.sendInput.SetWidth(max(1, width))
 		inputHeight := composerHeight(m.sendInput.Value(), max(1, width))
 		m.sendInput.SetHeight(inputHeight)
-		// The composer wears the wordmark gradient, like the footer rule.
-		rule := renderFooterRule(max(1, width))
+		// The composer wears the wordmark palette mirrored: sapphire at
+		// the edges rising to the crest at the center, light held between
+		// two rules.
+		rule := renderComposerRule(max(1, width))
 		composer = lipgloss.JoinVertical(
 			lipgloss.Left,
 			rule,
@@ -2705,7 +2708,13 @@ func (m Model) renderInteraction(width, height int) string {
 			rule,
 		)
 		// The bordered composer grows; the transcript yields the rows.
+		// Yield from the top: when the reader was at the bottom, the last
+		// output must stay visible above the composer.
+		atBottom := m.interaction.AtBottom()
 		viewportCopy.Height = max(1, viewportCopy.Height-inputHeight-2+1)
+		if atBottom {
+			viewportCopy.GotoBottom()
+		}
 	}
 	transcript := viewportCopy.View() + ansi.ResetStyle
 	if m.interactionID != managedAgent.ID {
@@ -3308,6 +3317,28 @@ func (m Model) renderFooter() string {
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
 		renderFooterRule(width) + "\n " + glint + content,
 	)
+}
+
+// renderComposerRule draws a symmetric rule: sapphire at both edges rising
+// through the wordmark gradient to the crest at the center.
+func renderComposerRule(width int) string {
+	var out strings.Builder
+	for index := 0; index < width; index++ {
+		t := 0.0
+		if width > 1 {
+			t = float64(index) / float64(width-1)
+		}
+		s := 1 - math.Abs(2*t-1)
+		dark := gradientStop(wordmarkStopsDark, s)
+		light := gradientStop(wordmarkStopsLight, s)
+		out.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{
+				Light: lerpHex(light, wordmarkCrest.Light, s*0.5),
+				Dark:  lerpHex(dark, wordmarkCrest.Dark, s*0.5),
+			}).
+			Render("─"))
+	}
+	return out.String()
 }
 
 // renderFooterRule tints the divider with the wordmark's sapphire→ice
@@ -4330,9 +4361,14 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 }
 
 // handleMouse scrolls whichever pane sits under the pointer: the wheel
-// works positionally, without moving keyboard focus.
+// works positionally, without moving keyboard focus. It stays live while
+// composing or searching — reading back through the transcript is most
+// needed mid-reply.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if !m.ready || m.mode != modeNormal || msg.Action != tea.MouseActionPress {
+	scrollable := m.mode == modeNormal ||
+		m.mode == modeCompose ||
+		m.mode == modeSearch
+	if !m.ready || !scrollable || msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
 	direction := 0
