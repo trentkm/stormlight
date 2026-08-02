@@ -1028,8 +1028,8 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		key != "esc" && key != "ctrl+c" && key != "ctrl+[" &&
 		key != "ctrl+s" && key != "shift+tab" {
 		if confirmed := m.handlePathNavKey(msg); confirmed {
-			m.cwdInput.SetValue(m.pathNav.base)
-			m.pickerStart = m.pathNav.base
+			m.cwdInput.SetValue(m.pathNav.chosen())
+			m.pickerStart = m.pathNav.chosen()
 			m.formFocus = dispatchTask
 			m.focusForm()
 		}
@@ -1288,7 +1288,7 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.formFocus == dispatchCustomPath &&
 		key != "esc" && key != "ctrl+c" && key != "ctrl+[" {
 		if confirmed := m.handlePathNavKey(msg); confirmed {
-			return m.submitAddWorkspace(m.pathNav.base)
+			return m.submitAddWorkspace(m.pathNav.chosen())
 		}
 		return m, nil
 	}
@@ -3302,7 +3302,7 @@ func (m Model) commandHints() string {
 		case dispatchDirectory:
 			return "j/k location  Enter choose  m mode  e edit path  Esc cancel"
 		case dispatchCustomPath:
-			return "type filter  Tab descend  Enter choose  Backspace up  Esc cancel"
+			return "type to filter  Enter choose  ↑/↓ pick  Backspace up  Esc cancel"
 		default:
 			hints := "Enter launch"
 			if m.nvimPath != "" {
@@ -3380,13 +3380,15 @@ func (m *Model) startPathNav() {
 // handlePathNavKey drives the interactive cd. The return value reports a
 // confirmation: Enter with nothing highlighted chooses the directory the
 // navigator is sitting in.
+// handlePathNavKey drives the fzf-style picker; a true return means Enter
+// chose a directory (available via pathNav.chosen()).
 func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
 	switch msg.String() {
 	case "tab", "down", "ctrl+n":
-		m.pathNav.complete(1)
+		m.pathNav.moveHighlight(1)
 		return false
 	case "up", "ctrl+p":
-		m.pathNav.complete(-1)
+		m.pathNav.moveHighlight(-1)
 		return false
 	case "backspace":
 		if m.pathNav.filterEmpty() {
@@ -3394,18 +3396,23 @@ func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
 			return false
 		}
 	case "enter":
-		switch m.pathNav.enter() {
-		case pathNavConfirm:
-			return true
-		case pathNavInvalid:
-			m.err = fmt.Errorf(
-				"no such directory: %s",
-				strings.TrimSpace(m.pathNav.filter.Value()),
-			)
-		default:
-			m.err = nil
+		if attempted, ok := m.pathNav.jump(); attempted {
+			if !ok {
+				m.err = fmt.Errorf(
+					"no such directory: %s",
+					strings.TrimSpace(m.pathNav.filter.Value()),
+				)
+			} else {
+				m.err = nil
+			}
+			return false
 		}
-		return false
+		if m.pathNav.chosen() == "" {
+			m.err = fmt.Errorf("no matching directory")
+			return false
+		}
+		m.err = nil
+		return true
 	}
 	m.pathNav.update(msg)
 	return false
