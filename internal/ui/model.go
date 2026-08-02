@@ -183,6 +183,11 @@ type dashboardMsg struct {
 	err        error
 }
 
+// copyViewMsg carries the transcript file the copy view should open.
+type copyViewMsg struct {
+	path string
+}
+
 type interactionMsg struct {
 	id      string
 	content string
@@ -697,6 +702,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Workspace added"
 		return m, nil
 
+	case copyViewMsg:
+		command := exec.Command("less", "-R", "+G", msg.path)
+		return m, tea.ExecProcess(command, func(err error) tea.Msg {
+			_ = os.Remove(msg.path)
+			if err != nil {
+				return actionMsg{status: "Action failed", err: err}
+			}
+			return actionMsg{status: "Ready"}
+		})
+
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
@@ -889,6 +904,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activePane == paneInteraction && m.search.query != "" {
 			m.jumpSearchMatch(-1)
 			return m, nil
+		}
+	case "y":
+		if m.activePane == paneInteraction && m.interactionSearchable() {
+			return m.openCopyView()
 		}
 	case "esc", "ctrl+[":
 		if m.activePane == paneInteraction && m.search.query != "" {
@@ -1629,6 +1648,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"o", "new agent with directory picker"},
 			{"i / s", "write a reply in Spanreed"},
 			{"/ then n/N", "search the Spanreed transcript"},
+			{"y", "transcript in a pager; tmux copy-mode to select"},
 			{"Ctrl-v", "paste clipboard image into the reply"},
 			{"x", "interrupt the selected agent"},
 			{"Ctrl-x then x/X", "delete agent / workspace (+agents)"},
@@ -3475,7 +3495,7 @@ func (m Model) commandHints() string {
 			return "h agents  j/k scroll  n/N match  Esc clear  Enter open"
 		}
 		return strings.TrimSpace(
-			"h agents  j/k scroll  i reply  / search  n new  " + rowMode + "  Enter open",
+			"h agents  j/k scroll  i reply  / search  y select  n new  " + rowMode + "  Enter open",
 		)
 	default:
 		return strings.TrimSpace(
@@ -3886,6 +3906,42 @@ func taskEditorCmd(
 			"surface returned unsupported presentation mode %d",
 			presentation.Mode,
 		)
+	}
+}
+
+// openCopyView suspends the dashboard into a pager over the agent's full
+// transcript, in the dashboard's own pane. Deliberately never a popup: a
+// real pane is what makes tmux copy-mode available — wheel, prefix-[, v/y
+// selection into the tmux buffer — which is the whole point of the view.
+// q returns to the dashboard.
+func (m Model) openCopyView() (tea.Model, tea.Cmd) {
+	selected, ok := m.selectedAgent()
+	if !ok {
+		return m, nil
+	}
+	id := selected.ID
+	backend := m.backend
+	m.status = "Opening transcript"
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		content, err := backend.Capture(ctx, id, interactionCaptureLines)
+		if err != nil {
+			return actionMsg{status: "Action failed", err: err}
+		}
+		file, err := os.CreateTemp("", "stormlight-transcript-*.txt")
+		if err != nil {
+			return actionMsg{status: "Action failed", err: err}
+		}
+		_, writeErr := file.WriteString(content)
+		if closeErr := file.Close(); writeErr == nil {
+			writeErr = closeErr
+		}
+		if writeErr != nil {
+			_ = os.Remove(file.Name())
+			return actionMsg{status: "Action failed", err: writeErr}
+		}
+		return copyViewMsg{path: file.Name()}
 	}
 }
 
