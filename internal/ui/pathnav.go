@@ -4,37 +4,41 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// pathNav is the interactive cd behind "Enter a path": a filterable list of
-// the current directory's subdirectories with zsh-completion ergonomics —
-// type to filter, Tab (or Enter on a match) descends, Backspace on an empty
-// filter (or the .. entry) goes up, Enter with nothing highlighted confirms
-// the directory it is sitting in.
+// pathNav is the fzf-shaped picker behind "Enter a path": every directory
+// under the root (a few levels deep) in one flat list, narrowed live as you
+// type, Enter picks the highlighted one. Backspace on an empty filter
+// re-roots one level up; a typed absolute or ~ path re-roots there.
 type pathNav struct {
-	base    string
-	filter  lineInput
-	entries []string
-	loadErr error
-	// cycle is the completion snapshot while Tab is walking candidates:
-	// the list is frozen at cycle start so filling a candidate's name into
-	// the filter doesn't narrow the very list being walked.
-	cycle      []string
-	cycleIndex int
+	root      string
+	filter    lineInput
+	entries   []string
+	highlight int
+	loadErr   error
 }
 
-const parentEntry = ".."
+// rootEntry represents the root itself at the top of the list, so pressing
+// Enter immediately chooses the directory the picker opened in.
+const rootEntry = "."
+
+const (
+	pathNavDepth      = 4
+	pathNavMaxEntries = 3000
+)
+
+// pathNavSkip are directory names that would flood the list with noise.
+var pathNavSkip = map[string]bool{"node_modules": true}
 
 func newPathNav(start string) pathNav {
 	if !isDirectory(start) {
 		start = string(filepath.Separator)
 	}
 	nav := pathNav{
-		base:   filepath.Clean(start),
+		root:   filepath.Clean(start),
 		filter: newLineInput("type to filter"),
 	}
 	nav.filter.Focus()
@@ -45,168 +49,117 @@ func newPathNav(start string) pathNav {
 func (n *pathNav) reload() {
 	n.entries = nil
 	n.loadErr = nil
-	items, err := os.ReadDir(n.base)
-	if err != nil {
+	n.highlight = 0
+	if _, err := os.ReadDir(n.root); err != nil {
 		n.loadErr = err
 		return
 	}
+	n.walk(n.root, "", 1)
+	sort.Slice(n.entries, func(a, b int) bool {
+		depthA := strings.Count(n.entries[a], string(filepath.Separator))
+		depthB := strings.Count(n.entries[b], string(filepath.Separator))
+		if depthA != depthB {
+			return depthA < depthB
+		}
+		return n.entries[a] < n.entries[b]
+	})
+}
+
+func (n *pathNav) walk(dir, prefix string, depth int) {
+	if depth > pathNavDepth || len(n.entries) >= pathNavMaxEntries {
+		return
+	}
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
 	for _, item := range items {
+		if len(n.entries) >= pathNavMaxEntries {
+			return
+		}
+		name := item.Name()
+		if strings.HasPrefix(name, ".") || pathNavSkip[name] {
+			continue
+		}
 		if !item.IsDir() {
 			if item.Type()&os.ModeSymlink == 0 {
 				continue
 			}
-			if info, err := os.Stat(filepath.Join(n.base, item.Name())); err != nil || !info.IsDir() {
+			if info, err := os.Stat(filepath.Join(dir, name)); err != nil || !info.IsDir() {
 				continue
 			}
-		}
-		n.entries = append(n.entries, item.Name())
-	}
-	sort.Strings(n.entries)
-}
-
-// matches filters entries by the typed text: prefix matches first, then
-// substring matches, case-insensitively. Hidden directories stay out of the
-// way unless the filter itself starts with a dot. An empty filter leads
-// with the parent entry so .. is always one keystroke away.
-func (n pathNav) matches() []string {
-	needle := strings.ToLower(strings.TrimSpace(n.filter.Value()))
-	var prefixed, contained []string
-	for _, entry := range n.entries {
-		lowered := strings.ToLower(entry)
-		if strings.HasPrefix(entry, ".") && !strings.HasPrefix(needle, ".") {
+			// Symlinked directories are listed but not walked, so cycles
+			// cannot recurse.
+			n.entries = append(n.entries, filepath.Join(prefix, name))
 			continue
 		}
-		switch {
-		case needle == "" || strings.HasPrefix(lowered, needle):
-			prefixed = append(prefixed, entry)
-		case strings.Contains(lowered, needle):
-			contained = append(contained, entry)
-		}
+		relative := filepath.Join(prefix, name)
+		n.entries = append(n.entries, relative)
+		n.walk(filepath.Join(dir, name), relative, depth+1)
 	}
-	results := append(prefixed, contained...)
-	if needle == "" && n.base != string(filepath.Separator) {
-		results = append([]string{parentEntry}, results...)
+}
+
+// matches narrows entries fzf-style: every whitespace-separated term must
+// appear in the relative path, case-insensitively. The root itself leads
+// the unfiltered list.
+func (n pathNav) matches() []string {
+	terms := strings.Fields(strings.ToLower(n.filter.Value()))
+	if len(terms) == 0 {
+		return append([]string{rootEntry}, n.entries...)
+	}
+	var results []string
+	for _, entry := range n.entries {
+		lowered := strings.ToLower(entry)
+		hit := true
+		for _, term := range terms {
+			if !strings.Contains(lowered, term) {
+				hit = false
+				break
+			}
+		}
+		if hit {
+			results = append(results, entry)
+		}
 	}
 	return results
 }
 
-// complete is the fish Tab: the first press extends the filter to the
-// candidates' longest common prefix; once no prefix progress is possible,
-// repeated presses cycle the candidates, filling each name into the filter.
-func (n *pathNav) complete(delta int) {
-	if n.cycle == nil {
-		candidates := n.matches()
-		if len(candidates) == 0 {
-			return
-		}
-		prefix := commonPrefix(candidates)
-		if len(prefix) > len(strings.TrimSpace(n.filter.Value())) {
-			n.filter.SetValue(prefix)
-			if len(candidates) == 1 {
-				return
-			}
-			// Prefix landed exactly on a full candidate: fall through to
-			// cycling so the next press moves on.
-			if !strings.EqualFold(prefix, candidates[0]) {
-				return
-			}
-		}
-		n.cycle = candidates
-		if delta >= 0 {
-			n.cycleIndex = 0
-		} else {
-			n.cycleIndex = len(candidates) - 1
-		}
-		n.filter.SetValue(n.cycle[n.cycleIndex])
+func (n *pathNav) moveHighlight(delta int) {
+	count := len(n.matches())
+	if count == 0 {
+		n.highlight = 0
 		return
 	}
-	n.cycleIndex = (n.cycleIndex + delta + len(n.cycle)) % len(n.cycle)
-	n.filter.SetValue(n.cycle[n.cycleIndex])
+	n.highlight = (n.highlight + delta + count) % count
 }
 
-// commonPrefix is the longest shared prefix of the candidates, compared
-// case-insensitively and spelled with the first candidate's casing. The
-// parent entry never participates.
-func commonPrefix(candidates []string) string {
-	prefix := ""
-	started := false
-	for _, candidate := range candidates {
-		if candidate == parentEntry {
-			continue
-		}
-		if !started {
-			prefix = candidate
-			started = true
-			continue
-		}
-		limit := min(len(prefix), len(candidate))
-		matched := 0
-		for matched < limit &&
-			strings.EqualFold(prefix[matched:matched+1], candidate[matched:matched+1]) {
-			matched++
-		}
-		prefix = prefix[:matched]
-	}
-	return prefix
-}
-
-type pathNavAction int
-
-const (
-	pathNavHandled pathNavAction = iota
-	pathNavConfirm
-	pathNavInvalid
-)
-
-// enter resolves the current line the way cd would: an empty line confirms
-// the directory the navigator is in; an absolute or ~ path jumps; anything
-// else descends into the current candidate (the cycled one, or the best
-// match for what was typed).
-func (n *pathNav) enter() pathNavAction {
-	if n.cycle != nil {
-		choice := n.cycle[n.cycleIndex]
-		n.cycle = nil
-		if choice == parentEntry {
-			n.up()
-			return pathNavHandled
-		}
-		n.setBase(filepath.Join(n.base, choice))
-		return pathNavHandled
-	}
-	if n.filterEmpty() {
-		return pathNavConfirm
-	}
-	if attempted, ok := n.jump(); attempted {
-		if !ok {
-			return pathNavInvalid
-		}
-		return pathNavHandled
-	}
+// chosen resolves the highlighted match to an absolute path, or "" when
+// nothing matches.
+func (n pathNav) chosen() string {
 	matches := n.matches()
 	if len(matches) == 0 {
-		return pathNavInvalid
+		return ""
 	}
-	if matches[0] == parentEntry {
-		n.up()
-		return pathNavHandled
+	pick := matches[min(n.highlight, len(matches)-1)]
+	if pick == rootEntry {
+		return n.root
 	}
-	n.setBase(filepath.Join(n.base, matches[0]))
-	return pathNavHandled
+	return filepath.Join(n.root, pick)
 }
 
-func (n *pathNav) up() {
-	n.setBase(filepath.Dir(n.base))
-}
-
-func (n *pathNav) setBase(dir string) {
-	n.base = filepath.Clean(dir)
+// reroot moves the picker's root, clearing the filter.
+func (n *pathNav) reroot(dir string) {
+	n.root = filepath.Clean(dir)
 	n.filter.SetValue("")
-	n.cycle = nil
 	n.reload()
 }
 
-// jump resolves a typed absolute or ~ path and enters it, reporting whether
-// the filter looked like such a path and whether it resolved.
+func (n *pathNav) up() {
+	n.reroot(filepath.Dir(n.root))
+}
+
+// jump re-roots at a typed absolute or ~ path, reporting whether the filter
+// looked like one and whether it resolved.
 func (n *pathNav) jump() (attempted, ok bool) {
 	typed := strings.TrimSpace(n.filter.Value())
 	if !strings.HasPrefix(typed, string(filepath.Separator)) &&
@@ -217,7 +170,7 @@ func (n *pathNav) jump() (attempted, ok bool) {
 	if !isDirectory(expanded) {
 		return true, false
 	}
-	n.setBase(expanded)
+	n.reroot(expanded)
 	return true, true
 }
 
@@ -230,13 +183,13 @@ func expandHomePath(path string) string {
 	return path
 }
 
-// update routes a key through the filter input and resets the highlight
-// whenever the text changes.
+// update routes a key to the filter and re-anchors the highlight on the
+// best match whenever the text changes.
 func (n *pathNav) update(msg tea.KeyMsg) {
 	before := n.filter.Value()
 	n.filter = n.filter.Update(msg)
 	if n.filter.Value() != before {
-		n.cycle = nil
+		n.highlight = 0
 	}
 }
 
@@ -244,13 +197,14 @@ func (n pathNav) filterEmpty() bool {
 	return strings.TrimSpace(n.filter.Value()) == ""
 }
 
-// view renders the cd header, the filter line, and up to maxRows matches.
+// view renders the root, the filter line, and the match list with the
+// highlight kept in view.
 func (n pathNav) view(width, maxRows int) string {
 	width = max(10, width)
 	n.filter.SetWidth(max(1, width-2))
 	lines := []string{
 		accentStyle.Render("cd ") +
-			mutedStyle.Render(truncatePathTail(shortPath(n.base), max(1, width-3))),
+			mutedStyle.Render(truncatePathTail(shortPath(n.root), max(1, width-3))),
 		"> " + n.filter.View(),
 	}
 	if n.loadErr != nil {
@@ -258,15 +212,11 @@ func (n pathNav) view(width, maxRows int) string {
 		return strings.Join(lines, "\n")
 	}
 	matches := n.matches()
-	highlight := -1
-	if n.cycle != nil {
-		matches = n.cycle
-		highlight = n.cycleIndex
-	}
 	if len(matches) == 0 {
 		lines = append(lines, mutedStyle.Render(truncate("no matching directories", width)))
 		return strings.Join(lines, "\n")
 	}
+	highlight := min(n.highlight, len(matches)-1)
 	rows := min(len(matches), max(1, maxRows))
 	start := 0
 	if highlight >= rows {
@@ -279,14 +229,26 @@ func (n pathNav) view(width, maxRows int) string {
 			continue
 		}
 		style := titleStyle
-		if name == parentEntry {
+		if name == rootEntry {
 			style = mutedStyle
 		}
 		lines = append(lines, " "+style.Render(truncate(name, max(1, width-1))))
 	}
-	if len(matches) > start+rows {
+	if remaining := len(matches) - start - rows; remaining > 0 {
 		lines = append(lines, mutedStyle.Render(truncate(
-			"… "+strconv.Itoa(len(matches)-start-rows)+" more", width)))
+			"… "+itoa(remaining)+" more", width)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func itoa(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	digits := ""
+	for value > 0 {
+		digits = string(rune('0'+value%10)) + digits
+		value /= 10
+	}
+	return digits
 }
