@@ -34,11 +34,16 @@ const (
 	statusStylePrefixOption = "@stormlight_status_style_prefix"
 	statusLeftBaseOption    = "@stormlight_status_left_base"
 	statusLeftPrefixOption  = "@stormlight_status_left_prefix"
-	statusLeftLengthOption  = "@stormlight_status_left_length_base"
 	prefixFeedbackOption    = "@stormlight_prefix_feedback"
-	prefixFeedbackVersion   = "1"
+	prefixFeedbackVersion   = "2"
 	prefixStatusStyle       = "bg=#e5c07b,fg=#1f2328,bold"
 	prefixStatusLeft        = " PREFIX  [Q] return  [?] all keys "
+	// The agents session lives on the Stormlight-owned server, so its
+	// status bar carries the dashboard's identity: a deep sapphire band
+	// with the glint-and-wordmark status-left, echoing the header.
+	baseStatusStyle      = "bg=#1B2740,fg=#C8D6F2"
+	baseStatusLeft       = " #[fg=#7DCFFF,bold]✦ #[fg=#E8EEF9,bold]#{session_name}#[default] "
+	baseStatusLeftLength = 40
 	dynamicStatusStyle      = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
 	dynamicStatusLeft       = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
 	basePaneFieldCount      = 10
@@ -449,67 +454,23 @@ func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName strin
 	if err != nil {
 		return fmt.Errorf("read prefix feedback version: %w", err)
 	}
-
-	baseLength := 0
-	if version != prefixFeedbackVersion {
-		baseStyle, err := r.readSessionOption(ctx, sessionName, "status-style")
-		if err != nil {
-			return err
-		}
-		baseLeft, err := r.readSessionOption(ctx, sessionName, "status-left")
-		if err != nil {
-			return err
-		}
-		baseLengthText, err := r.readSessionOption(
-			ctx,
-			sessionName,
-			"status-left-length",
-		)
-		if err != nil {
-			return err
-		}
-		baseLength, err = strconv.Atoi(baseLengthText)
-		if err != nil {
-			return fmt.Errorf("parse status left length %q: %w", baseLengthText, err)
-		}
-		baseOptions := []struct {
-			name  string
-			value string
-		}{
-			{statusStyleBaseOption, baseStyle},
-			{statusLeftBaseOption, baseLeft},
-			{statusLeftLengthOption, baseLengthText},
-			{prefixFeedbackOption, prefixFeedbackVersion},
-		}
-		for _, option := range baseOptions {
-			if _, err := r.runner.Run(ctx, nil,
-				"set-option", "-t", sessionName, option.name, option.value,
-			); err != nil {
-				return fmt.Errorf("set %s: %w", option.name, err)
-			}
-		}
-	} else {
-		baseLengthText, err := r.runner.Run(ctx, nil,
-			"show-options", "-qv", "-t", sessionName, statusLeftLengthOption,
-		)
-		if err != nil {
-			return fmt.Errorf("read saved status left length: %w", err)
-		}
-		baseLength, err = strconv.Atoi(baseLengthText)
-		if err != nil {
-			return fmt.Errorf("parse saved status left length %q: %w", baseLengthText, err)
-		}
+	if version == prefixFeedbackVersion {
+		return nil
 	}
 
 	options := []struct {
 		name  string
 		value string
 	}{
+		{statusStyleBaseOption, baseStatusStyle},
+		{statusLeftBaseOption, baseStatusLeft},
 		{statusStylePrefixOption, prefixStatusStyle},
 		{statusLeftPrefixOption, prefixStatusLeft},
+		{prefixFeedbackOption, prefixFeedbackVersion},
 		{"status-style", dynamicStatusStyle},
 		{"status-left", dynamicStatusLeft},
-		{"status-left-length", strconv.Itoa(max(baseLength, len(prefixStatusLeft)))},
+		{"status-left-length", strconv.Itoa(
+			max(baseStatusLeftLength, len(prefixStatusLeft)))},
 		{"status-right", r.statusRightHint()},
 		{"status-right-length", strconv.Itoa(len(r.statusRightHint()))},
 	}
@@ -521,21 +482,6 @@ func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName strin
 		}
 	}
 	return nil
-}
-
-func (r *Runtime) readSessionOption(ctx context.Context, sessionName, name string) (string, error) {
-	const delimiter = "|"
-	format := delimiter + "#{" + name + "}" + delimiter
-	value, err := r.runner.Run(ctx, nil,
-		"display-message", "-p", "-t", sessionName, format,
-	)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", name, err)
-	}
-	if len(value) < 2 || !strings.HasPrefix(value, delimiter) || !strings.HasSuffix(value, delimiter) {
-		return "", fmt.Errorf("read %s: tmux returned malformed output", name)
-	}
-	return value[1 : len(value)-1], nil
 }
 
 func (r *Runtime) Send(ctx context.Context, id, message string) error {
