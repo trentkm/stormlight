@@ -53,7 +53,7 @@ mode = "auto"
 
 [workspaces."/tmp"]
 mode = "ask"
-provider = "shell"
+provider = "codex"
 `)
 	cfg, warnings, err := Load()
 	if err != nil {
@@ -84,7 +84,7 @@ provider = "shell"
 		t.Fatalf("parent mode = %q, ok = %v", mode, ok)
 	}
 	provider, ok := cfg.ProviderForDir("/tmp/other")
-	if !ok || provider != agent.ProviderShell {
+	if !ok || provider != agent.ProviderCodex {
 		t.Fatalf("provider override = %q, ok = %v", provider, ok)
 	}
 	if _, ok := cfg.ModeForDir("/somewhere/else"); ok {

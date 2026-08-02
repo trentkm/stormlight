@@ -81,7 +81,7 @@ func TestParseAgentDerivesCompletedFromDeadPane(t *testing.T) {
 	parts[8] = "1"
 	parts[9] = "0"
 	parts[10] = "id"
-	parts[11] = "shell"
+	parts[11] = "codex"
 	parts[15] = "1700000000"
 	parts[16] = "working"
 	parts[18] = "%1"

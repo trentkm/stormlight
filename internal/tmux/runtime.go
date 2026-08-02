@@ -932,7 +932,6 @@ func windowName(providerID agent.Provider, task string) string {
 	prefix := map[agent.Provider]string{
 		agent.ProviderClaude: "cl",
 		agent.ProviderCodex:  "cx",
-		agent.ProviderShell:  "sh",
 	}[providerID]
 	if prefix == "" {
 		prefix = "ag"

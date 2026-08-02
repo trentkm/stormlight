@@ -404,12 +404,6 @@ func NewModel(backend Backend) Model {
 	return NewModelWithSurface(backend, surface.NewDirect())
 }
 
-func codingAgentProviders(infos []provider.Info) []provider.Info {
-	return slices.DeleteFunc(slices.Clone(infos), func(info provider.Info) bool {
-		return info.ID == agent.ProviderShell
-	})
-}
-
 // Options carries user-configuration defaults into the dashboard. Zero
 // values mean "use the built-in behavior".
 type Options struct {
@@ -460,7 +454,7 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 	model := Model{
 		backend:        backend,
 		surface:        current,
-		providers:      codingAgentProviders(backend.Providers()),
+		providers:      backend.Providers(),
 		cwdInput:       cwdInput,
 		taskInput:      taskInput,
 		sendInput:      sendInput,
@@ -2551,7 +2545,6 @@ func agentDisplayTitle(managedAgent agent.Agent) string {
 	prefix := map[agent.Provider]string{
 		agent.ProviderClaude: "cl-",
 		agent.ProviderCodex:  "cx-",
-		agent.ProviderShell:  "sh-",
 	}[managedAgent.Provider]
 
 	if prefix != "" && strings.HasPrefix(strings.ToLower(name), prefix) {

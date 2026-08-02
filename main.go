@@ -498,7 +498,7 @@ func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.C
 	}
 	command.Flags().StringVarP(&providerName, "provider", "p",
 		configValueOr(cfg.Defaults.Provider, string(agent.ProviderCodex)),
-		"provider: codex, claude, shell, or a configured provider")
+		"provider: codex, claude, or a configured provider")
 	command.Flags().StringVarP(&cwd, "cwd", "C", "", "working directory")
 	command.Flags().StringVarP(&name, "name", "n", "", "tmux window name")
 	command.Flags().StringVarP(&modeName, "mode", "m",

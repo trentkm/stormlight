@@ -71,7 +71,7 @@ func TestLineInputShowsFocusedPlaceholderAndPreservesSpaces(t *testing.T) {
 }
 
 func TestCleanInteractionCompactsBlankRuns(t *testing.T) {
-	got := cleanInteraction("result\n\n\n\nPane is dead\n", 80, agent.ProviderShell)
+	got := cleanInteraction("result\n\n\n\nPane is dead\n", 80, agent.Provider("custom"))
 	want := "result\n\nPane is dead"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -88,7 +88,7 @@ func TestCleanInteractionNormalizesTerminalFramesAndWraps(t *testing.T) {
 		"› Explain this codebase",
 	}, "\n")
 
-	got := cleanInteraction(content, 18, agent.ProviderShell)
+	got := cleanInteraction(content, 18, agent.Provider("custom"))
 	plain := ansi.Strip(got)
 	if strings.ContainsAny(plain, "╭╮╰╯│") {
 		t.Fatalf("terminal frame was not normalized:\n%s", got)
@@ -143,7 +143,7 @@ func TestCleanInteractionPreservesColorAndFocusesConversation(t *testing.T) {
 
 func TestCleanInteractionDropsNonStyleEscapeSequences(t *testing.T) {
 	content := "\x1b]0;unexpected title\x07\x1b[31mresult\x1b[0m"
-	got := cleanInteraction(content, 80, agent.ProviderShell)
+	got := cleanInteraction(content, 80, agent.Provider("custom"))
 	if strings.Contains(got, "]0;") || !strings.Contains(got, "\x1b[31m") {
 		t.Fatalf("unexpected sanitized output: %q", got)
 	}
@@ -183,8 +183,8 @@ func TestViewFitsEightyColumnTmuxPane(t *testing.T) {
 	model = updated.(Model)
 	model.agents = []agent.Agent{{
 		ID:        "12345678",
-		Provider:  agent.ProviderShell,
-		Name:      "sh-layout-check",
+		Provider:  agent.ProviderCodex,
+		Name:      "cx-layout-check",
 		Task:      "printf layout-check",
 		Cwd:       "/tmp/project",
 		CreatedAt: time.Now(),
@@ -212,7 +212,6 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 		providers: []provider.Info{
 			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
 			{ID: agent.ProviderClaude, Label: "Claude", Available: true},
-			{ID: agent.ProviderShell, Label: "Shell", Available: true},
 		},
 	}
 	model := NewModel(backend)
@@ -225,8 +224,7 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 
 	view := ansi.Strip(model.View())
 	if !strings.Contains(view, "Codex") ||
-		!strings.Contains(view, "Claude") ||
-		strings.Contains(view, "Shell") {
+		!strings.Contains(view, "Claude") {
 		t.Fatalf("provider selector is incomplete:\n%s", view)
 	}
 	if !strings.Contains(view, "Working directory") ||
@@ -272,7 +270,6 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 		providers: []provider.Info{
 			{ID: agent.ProviderCodex, Label: "Codex"},
 			{ID: agent.ProviderClaude, Label: "Claude"},
-			{ID: agent.ProviderShell, Label: "Shell"},
 		},
 	}
 	model := NewModel(backend)
@@ -283,8 +280,7 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 	view := ansi.Strip(model.View())
 	if !strings.Contains(view, "Codex") ||
 		!strings.Contains(view, "Claude") ||
-		!strings.Contains(view, "not found") ||
-		strings.Contains(view, "Shell") {
+		!strings.Contains(view, "not found") {
 		t.Fatalf("provider availability is unclear:\n%s", view)
 	}
 	if !strings.Contains(view, "Coding agent") ||
@@ -615,7 +611,6 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 		providers: []provider.Info{
 			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
 			{ID: agent.ProviderClaude, Label: "Claude", Available: true},
-			{ID: agent.ProviderShell, Label: "Shell", Available: true},
 		},
 	}
 	model := NewModel(backend)
@@ -634,8 +629,7 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 	}
 	selector := ansi.Strip(strings.Join(model.renderProviderRows(56), "\n"))
 	if !strings.Contains(selector, "Codex") ||
-		!strings.Contains(selector, "Claude") ||
-		strings.Contains(selector, "Shell") {
+		!strings.Contains(selector, "Claude") {
 		t.Fatalf("unexpected selector %q", selector)
 	}
 
@@ -655,23 +649,6 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 	}
 	if model.status != "Dispatching Codex" {
 		t.Fatalf("status = %q", model.status)
-	}
-}
-
-func TestNewAgentOnlyOffersCodingAgentProviders(t *testing.T) {
-	backend := &recordingBackend{
-		providers: []provider.Info{
-			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
-			{ID: agent.ProviderClaude, Label: "Claude", Available: true},
-			{ID: agent.ProviderShell, Label: "Shell", Available: true},
-		},
-	}
-	model := NewModel(backend)
-
-	if len(model.providers) != 2 ||
-		model.providers[0].ID != agent.ProviderCodex ||
-		model.providers[1].ID != agent.ProviderClaude {
-		t.Fatalf("coding agent providers = %#v", model.providers)
 	}
 }
 
@@ -760,7 +737,6 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 		providers: []provider.Info{
 			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
 			{ID: agent.ProviderClaude, Label: "Claude", Available: true},
-			{ID: agent.ProviderShell, Label: "Shell", Available: true},
 		},
 	}
 	model := NewModel(backend)
@@ -1737,7 +1713,7 @@ func (stubBackend) Delete(context.Context, string) error {
 }
 
 func (stubBackend) Providers() []provider.Info {
-	return []provider.Info{{ID: agent.ProviderShell, Label: "Shell", Available: true}}
+	return nil
 }
 
 type recordingBackend struct {

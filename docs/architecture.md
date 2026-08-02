@@ -6,9 +6,9 @@
 
 ### Provider adapters
 
-Provider adapters translate a task into an executable plus arguments. The first
-spike includes Claude, Codex, and shell adapters. They deliberately do not own
-tmux behavior.
+Provider adapters translate a task into an executable plus arguments. The
+built-ins are Claude and Codex; custom provider specs cover other agent CLIs.
+Adapters deliberately do not own tmux behavior.
 
 The CLI adapters currently add provider-native lifecycle callbacks:
 
