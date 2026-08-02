@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
@@ -102,7 +103,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		return m.renderFocusedPane(width, contentHeight)
 	}
 
-	workspaceWidth, agentWidth, interactionWidth := paneWidths(width)
+	workspaceWidth, agentWidth, interactionWidth := m.paneWidths(width)
 
 	// The selected rows upstream of the focused pane stay undimmed, so the
 	// hierarchy reads as a lit path: workspace → agent → transcript.
@@ -447,6 +448,49 @@ func (m Model) renderFocusedPane(width, height int) string {
 	}
 }
 
+// resizeColumns grows (>) or shrinks (<) the focused pane. The Spanreed
+// has no width of its own to store — it takes what the lists leave — so
+// its adjustments trade columns with the Agents pane. A press that the
+// clamps would swallow reverts, keeping the stored adjustment honest, and
+// the layout persists across relaunches.
+func (m Model) resizeColumns(key string) (tea.Model, tea.Cmd) {
+	width := max(1, m.width-1)
+	if width < 72 {
+		return m, nil
+	}
+	delta := 2
+	if key == "<" {
+		delta = -2
+	}
+	previous := m.columns
+	beforeW, beforeA, beforeI := m.paneWidths(width)
+	switch m.activePane {
+	case paneWorkspaces:
+		m.columns.WorkspaceAdjust += delta
+	case paneAgents:
+		m.columns.AgentAdjust += delta
+	case paneInteraction:
+		m.columns.AgentAdjust -= delta
+	}
+	afterW, afterA, afterI := m.paneWidths(width)
+	if afterW == beforeW && afterA == beforeA && afterI == beforeI {
+		m.columns = previous
+		return m, nil
+	}
+	// Snap the stored adjustment to what the clamps actually granted, so a
+	// press swallowed at a boundary never becomes debt the user has to
+	// press their way back out of.
+	baseW, baseA, _ := basePaneWidths(width)
+	m.columns.WorkspaceAdjust = afterW - baseW
+	m.columns.AgentAdjust = afterA - baseA
+	saveColumnPrefs(m.columns)
+	interactionWidth, contentHeight := m.interactionDimensions()
+	m.interaction.Width = interactionWidth
+	m.interaction.Height = contentHeight
+	m.status = fmt.Sprintf("Columns %d · %d · %d", afterW, afterA, afterI)
+	return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
+}
+
 // undimmedRows marks body lines that stay at full strength inside a
 // dimmed pane: the selected path rows lighting the way to the focus.
 type undimmedRows struct{ start, count int }
@@ -602,20 +646,42 @@ func (m Model) interactionDimensions() (int, int) {
 	if width < 72 {
 		return max(1, width-2), contentHeight
 	}
-	_, _, interactionWidth := paneWidths(width)
+	_, _, interactionWidth := m.paneWidths(width)
 	return max(1, interactionWidth-2), contentHeight
 }
 
-// paneWidths splits a dashboard row between the three panes. The Spanreed
-// transcript is the pane people actually read, so it takes everything the
-// two list panes don't need.
-func paneWidths(width int) (workspaceWidth, agentWidth, interactionWidth int) {
+// basePaneWidths splits a dashboard row between the three panes. The
+// Spanreed transcript is the pane people actually read, so it takes
+// everything the two list panes don't need.
+func basePaneWidths(width int) (workspaceWidth, agentWidth, interactionWidth int) {
 	workspaceWidth = clamp(width*20/100, 16, 26)
 	agentWidth = clamp(width*28/100, 26, 40)
 	interactionWidth = width - workspaceWidth - agentWidth
 	if interactionWidth < 24 {
 		deficit := 24 - interactionWidth
 		agentWidth = max(22, agentWidth-deficit)
+		interactionWidth = width - workspaceWidth - agentWidth
+	}
+	return workspaceWidth, agentWidth, interactionWidth
+}
+
+// paneWidths applies the user's < > adjustments on top of the built-in
+// split, clamped so every pane stays usable at any terminal width.
+func (m Model) paneWidths(width int) (workspaceWidth, agentWidth, interactionWidth int) {
+	workspaceWidth, agentWidth, _ = basePaneWidths(width)
+	workspaceWidth = clamp(
+		workspaceWidth+m.columns.WorkspaceAdjust, 14, max(14, width*40/100))
+	agentWidth = clamp(
+		agentWidth+m.columns.AgentAdjust, 20, max(20, width*50/100))
+	interactionWidth = width - workspaceWidth - agentWidth
+	if interactionWidth < 24 {
+		deficit := 24 - interactionWidth
+		agentWidth = max(20, agentWidth-deficit)
+		interactionWidth = width - workspaceWidth - agentWidth
+	}
+	if interactionWidth < 24 {
+		deficit := 24 - interactionWidth
+		workspaceWidth = max(14, workspaceWidth-deficit)
 		interactionWidth = width - workspaceWidth - agentWidth
 	}
 	return workspaceWidth, agentWidth, interactionWidth
