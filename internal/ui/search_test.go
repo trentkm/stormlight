@@ -195,14 +195,8 @@ func TestDragSelectsHighlightsAndCopies(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("release did not produce a copy command")
 	}
-	if model.selectionDragging {
-		t.Fatal("release left the drag active")
-	}
-
-	updated, _ = model.updateNormal(tea.KeyMsg{Type: tea.KeyEscape})
-	model = updated.(Model)
-	if model.selectionActive {
-		t.Fatal("esc did not clear the selection")
+	if model.selectionDragging || model.selectionActive {
+		t.Fatal("release did not clear the highlight")
 	}
 }
 

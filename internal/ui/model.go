@@ -187,11 +187,6 @@ type dashboardMsg struct {
 	err        error
 }
 
-// copyViewMsg carries the transcript file the copy view should open.
-type copyViewMsg struct {
-	path string
-}
-
 type interactionMsg struct {
 	id      string
 	content string
@@ -629,7 +624,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = msg.status
 		}
-		return m, m.refreshCmd()
+		// Bubble Tea does not restore mouse reporting after ExecProcess
+		// (external attach, suspended overlays); without it the terminal
+		// falls back to native tmux selection. Re-asserting is free.
+		return m, tea.Batch(m.refreshCmd(), tea.EnableMouseCellMotion)
 
 	case pendingResolvedMsg:
 		if msg.err != nil {
@@ -654,11 +652,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 
 	case directoryPickedMsg:
+		// The picker may have run via ExecProcess, which loses mouse
+		// reporting on resume; re-assert it (free when already on).
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "Action failed"
 			diagnostic.Logger().Error("directory picker failed", "error", msg.err)
-			return m, nil
+			return m, tea.EnableMouseCellMotion
 		}
 		if msg.path == "" {
 			if m.mode == modeAddWorkspace {
@@ -666,33 +666,36 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.status = "New agent"
 			}
-			return m, nil
+			return m, tea.EnableMouseCellMotion
 		}
 		if m.mode == modeAddWorkspace {
 			m.cwdInput.SetValue(msg.path)
 			m.status = "Adding workspace"
-			return m, addWorkspaceCmd(m.backend, msg.path)
+			return m, tea.Batch(
+				addWorkspaceCmd(m.backend, msg.path),
+				tea.EnableMouseCellMotion,
+			)
 		}
 		m.prepareDirectoryChoices(msg.path)
 		m.cwdInput.SetValue(msg.path)
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.status = "Directory selected"
-		return m, nil
+		return m, tea.EnableMouseCellMotion
 
 	case taskEditedMsg:
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "Action failed"
 			diagnostic.Logger().Error("task editor failed", "error", msg.err)
-			return m, nil
+			return m, tea.EnableMouseCellMotion
 		}
 		m.taskInput.SetValue(msg.task)
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.err = nil
 		m.status = "Task updated"
-		return m, nil
+		return m, tea.EnableMouseCellMotion
 
 	case workspaceAddedMsg:
 		if msg.err != nil {
@@ -708,16 +711,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.activePane = paneWorkspaces
 		m.status = "Workspace added"
 		return m, nil
-
-	case copyViewMsg:
-		command := exec.Command("less", "-R", "+G", msg.path)
-		return m, tea.ExecProcess(command, func(err error) tea.Msg {
-			_ = os.Remove(msg.path)
-			if err != nil {
-				return actionMsg{status: "Action failed", err: err}
-			}
-			return actionMsg{status: "Ready"}
-		})
 
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -911,10 +904,6 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activePane == paneInteraction && m.search.query != "" {
 			m.jumpSearchMatch(-1)
 			return m, nil
-		}
-	case "y":
-		if m.activePane == paneInteraction && m.interactionSearchable() {
-			return m.openCopyView()
 		}
 	case "esc", "ctrl+[":
 		if m.selectionActive {
@@ -1660,7 +1649,6 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"i / s", "write a reply in Spanreed"},
 			{"/ then n/N", "search the Spanreed transcript"},
 			{"drag", "select transcript lines; release copies"},
-			{"y", "transcript in a pager; tmux copy-mode to select"},
 			{"Ctrl-v", "paste clipboard image into the reply"},
 			{"x", "interrupt the selected agent"},
 			{"Ctrl-x then x/X", "delete agent / workspace (+agents)"},
@@ -3512,7 +3500,7 @@ func (m Model) commandHints() string {
 			return "h agents  j/k scroll  n/N match  Esc clear  Enter open"
 		}
 		return strings.TrimSpace(
-			"h agents  j/k scroll  i reply  / search  y select  n new  " + rowMode + "  Enter open",
+			"h agents  j/k scroll  i reply  / search  n new  " + rowMode + "  Enter open",
 		)
 	default:
 		return strings.TrimSpace(
@@ -3923,42 +3911,6 @@ func taskEditorCmd(
 			"surface returned unsupported presentation mode %d",
 			presentation.Mode,
 		)
-	}
-}
-
-// openCopyView suspends the dashboard into a pager over the agent's full
-// transcript, in the dashboard's own pane. Deliberately never a popup: a
-// real pane is what makes tmux copy-mode available — wheel, prefix-[, v/y
-// selection into the tmux buffer — which is the whole point of the view.
-// q returns to the dashboard.
-func (m Model) openCopyView() (tea.Model, tea.Cmd) {
-	selected, ok := m.selectedAgent()
-	if !ok {
-		return m, nil
-	}
-	id := selected.ID
-	backend := m.backend
-	m.status = "Opening transcript"
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		content, err := backend.Capture(ctx, id, interactionCaptureLines)
-		if err != nil {
-			return actionMsg{status: "Action failed", err: err}
-		}
-		file, err := os.CreateTemp("", "stormlight-transcript-*.txt")
-		if err != nil {
-			return actionMsg{status: "Action failed", err: err}
-		}
-		_, writeErr := file.WriteString(content)
-		if closeErr := file.Close(); writeErr == nil {
-			writeErr = closeErr
-		}
-		if writeErr != nil {
-			_ = os.Remove(file.Name())
-			return actionMsg{status: "Action failed", err: writeErr}
-		}
-		return copyViewMsg{path: file.Name()}
 	}
 }
 
@@ -4506,7 +4458,11 @@ func (m Model) handleSelectionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.selectionDragging = false
-		return m, m.copySelectionCmd()
+		command := m.copySelectionCmd()
+		// The copy is the point; once it's made the highlight has done
+		// its job, like tmux's own mouse selection.
+		m.selectionActive = false
+		return m, command
 	}
 	return m, nil
 }
