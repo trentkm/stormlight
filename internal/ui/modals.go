@@ -166,6 +166,7 @@ func (m Model) renderHelpModal(width, height int) string {
 		}},
 		{"View", [][2]string{
 			{", then a/n/c", "sort: attention, name, newest"},
+			{"< / >", "narrow or widen the focused pane"},
 			{"z", "toggle compact and expanded rows"},
 			{"r / Ctrl-l", "refresh"},
 			{"?", "this help"},

@@ -193,7 +193,7 @@ func (m Model) paneAt(x int) pane {
 	if width < 72 {
 		return m.activePane
 	}
-	workspaceWidth, agentWidth, _ := paneWidths(width)
+	workspaceWidth, agentWidth, _ := m.paneWidths(width)
 	switch {
 	case x < workspaceWidth:
 		return paneWorkspaces

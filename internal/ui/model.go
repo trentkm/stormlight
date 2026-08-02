@@ -165,6 +165,7 @@ type Model struct {
 	normalPrefix   string
 	sortMode       sortMode
 	dispatchPrefix string
+	columns        ColumnPrefs
 }
 
 type dashboardMsg struct {
@@ -225,6 +226,8 @@ type Options struct {
 	// SelectWorkspaceID names the workspace the first dashboard refresh
 	// should land on, for launches like `stormlight <path>`.
 	SelectWorkspaceID string
+	// Columns restores the user's saved < > pane-width adjustments.
+	Columns ColumnPrefs
 }
 
 func NewModelWithSurface(backend Backend, current surface.Surface) Model {
@@ -280,6 +283,7 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		providerForDir:     options.ProviderForDir,
 		shimmerRunning:     true,
 		status:             "Ready",
+		columns:            options.Columns,
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -648,6 +652,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "z":
 		m.rowsExpanded = !m.rowsExpanded
 		return m, nil
+	case "<", ">":
+		return m.resizeColumns(key)
 	case "enter":
 		if m.activePane == paneWorkspaces {
 			m.activePane = paneAgents

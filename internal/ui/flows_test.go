@@ -282,6 +282,52 @@ func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 	}
 }
 
+func TestColumnResizeAdjustsPersistsAndClamps(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	model := flowModelFixture(t, &flowBackend{})
+	width := max(1, model.width-1)
+	baseW, baseA, baseI := model.paneWidths(width)
+
+	// Widen the focused Workspaces pane.
+	updated, _ := model.updateNormal(runeKey(">"))
+	model = updated.(Model)
+	w, _, _ := model.paneWidths(width)
+	if w != baseW+2 {
+		t.Fatalf("workspace width %d, want %d", w, baseW+2)
+	}
+
+	// Growing Spanreed takes columns from Agents.
+	model.activePane = paneInteraction
+	updated, _ = model.updateNormal(runeKey(">"))
+	model = updated.(Model)
+	_, a, i := model.paneWidths(width)
+	if a != baseA-2 || i != baseI {
+		t.Fatalf("after spanreed grow: agents=%d spanreed=%d (base %d/%d)",
+			a, i, baseA, baseI)
+	}
+
+	// The adjustment survives a reload through the prefs file.
+	restored := LoadColumnPrefs()
+	if restored != model.columns {
+		t.Fatalf("prefs did not round-trip: %+v vs %+v", restored, model.columns)
+	}
+
+	// Shrinking against the clamp reverts instead of accruing debt.
+	model.activePane = paneWorkspaces
+	for range 30 {
+		updated, _ = model.updateNormal(runeKey("<"))
+		model = updated.(Model)
+	}
+	floorW, _, _ := model.paneWidths(width)
+	updated, _ = model.updateNormal(runeKey(">"))
+	model = updated.(Model)
+	afterW, _, _ := model.paneWidths(width)
+	if afterW != floorW+2 {
+		t.Fatalf("one > after clamping should recover immediately: %d -> %d",
+			floorW, afterW)
+	}
+}
+
 func TestDimPaneLayersFaintWithoutBreakingColors(t *testing.T) {
 	// A truecolor sequence whose components include 1 and 2 must survive
 	// verbatim; standalone bold must drop; every sequence re-arms faint.

@@ -146,6 +146,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `gg` / `G` | Move to the first or last item |
 | `Ctrl-d` / `Ctrl-u` | Move down or up half a page |
 | `Ctrl-f` / `Ctrl-b` | Move down or up a full page |
+| `<` / `>` | Narrow or widen the focused pane (persists across launches) |
 | `z` | Toggle compact and expanded list rows |
 | `Enter` | Enter Agents from Workspaces, or open the selected agent terminal |
 | `Ctrl-6` | Return from an agent to the dashboard (vim's alternate-buffer toggle; also shown in the agent status bar, which is clickable) |

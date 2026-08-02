@@ -249,6 +249,7 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 		ExpandedRows:    cfg.UI.Rows == "expanded",
 		ModeForDir:      cfg.ModeForDir,
 		ProviderForDir:  cfg.ProviderForDir,
+		Columns:         ui.LoadColumnPrefs(),
 	}
 	if openPath != "" {
 		value, err := service.AddWorkspace(context.Background(), openPath)
