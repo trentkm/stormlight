@@ -1954,7 +1954,7 @@ func (m Model) renderWorkspaceRow(
 		suffixes = append(suffixes, fmt.Sprintf("%d active", active))
 	}
 	suffixes = append(suffixes, countLabel)
-	contentWidth := max(1, width-2)
+	contentWidth := max(1, width-1)
 	minimumNameWidth := min(10, max(1, contentWidth/2))
 	maxSuffixWidth := max(
 		1,
@@ -2009,9 +2009,9 @@ func (m Model) renderWorkspaceRow(
 		)
 	}
 
-	marker := "  "
+	marker := " "
 	if selected {
-		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("› ")
+		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("›")
 	}
 	activityStyle := mutedStyle
 	renderedName := titleStyle.Render(name)
@@ -2074,10 +2074,10 @@ func renderSelectedWorkspaceRow(
 		return theme.contextRow(top, bottom, width)
 	}
 
-	marker := "▏ "
+	marker := "▏"
 	markerColor := theme.restMark
 	if focused {
-		marker = "▌ "
+		marker = "▌"
 		markerColor = theme.focusMark
 	}
 	markerStyle := lipgloss.NewStyle().
@@ -2104,7 +2104,7 @@ func renderSelectedWorkspaceRow(
 		renderedName = shimmerText(name, shimmerPhase, theme.background)
 	}
 
-	contentWidth := width - 2
+	contentWidth := width - 1
 	tailWidth := max(
 		0,
 		contentWidth-lipgloss.Width(activityMarker)-lipgloss.Width(name),
@@ -2239,7 +2239,7 @@ func renderAgentRowWithDensity(
 		providerName = providerName[:6]
 	}
 	age := timeAgo(managedAgent.CreatedAt)
-	contentWidth := max(1, width-2)
+	contentWidth := max(1, width-1)
 	ageWidth := lipgloss.Width(age)
 	titleWidth := max(1, contentWidth-2-ageWidth-1)
 	displayTitle := truncate(agentDisplayTitle(managedAgent), titleWidth)
@@ -2289,9 +2289,9 @@ func renderAgentRowWithDensity(
 		managedAgent.Activity == agent.ActivityStarting:
 		renderedTitle = shimmerText(displayTitle, shimmerPhase, nil)
 	}
-	marker := "  "
+	marker := " "
 	if selected {
-		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("› ")
+		marker = lipgloss.NewStyle().Foreground(colorBorder).Render("›")
 	}
 	top := marker + statusStyle.Render(symbol) + " " +
 		renderedTitle +
@@ -2328,7 +2328,7 @@ func (t rowTheme) focusedRow(top, bottom string, width int) string {
 		)
 	}
 
-	contentWidth := width - 2
+	contentWidth := width - 1
 	markerStyle := lipgloss.NewStyle().
 		Foreground(t.focusMark).
 		Background(t.background).
@@ -2346,8 +2346,8 @@ func (t rowTheme) focusedRow(top, bottom string, width int) string {
 		MaxWidth(contentWidth)
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		markerStyle.Render("▌ ")+topStyle.Render(top),
-		markerStyle.Render("▌ ")+bottomStyle.Render(bottom),
+		markerStyle.Render("▌")+topStyle.Render(top),
+		markerStyle.Render("▌")+bottomStyle.Render(bottom),
 	)
 }
 
@@ -2368,7 +2368,7 @@ func (t rowTheme) contextRow(top, bottom string, width int) string {
 		)
 	}
 
-	contentWidth := width - 2
+	contentWidth := width - 1
 	markerStyle := lipgloss.NewStyle().
 		Foreground(t.restMark).
 		Background(t.background)
@@ -2385,8 +2385,8 @@ func (t rowTheme) contextRow(top, bottom string, width int) string {
 		MaxWidth(contentWidth)
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		markerStyle.Render("▏ ")+topStyle.Render(top),
-		markerStyle.Render("▏ ")+bottomStyle.Render(bottom),
+		markerStyle.Render("▏")+topStyle.Render(top),
+		markerStyle.Render("▏")+bottomStyle.Render(bottom),
 	)
 }
 
@@ -2987,11 +2987,11 @@ func (t rowTheme) selectableRow(content string, width int, focused bool) string 
 			Width(max(1, width)).
 			Render(ansi.Truncate(content, width, ""))
 	}
-	contentWidth := width - 2
-	marker := "▏ "
+	contentWidth := width - 1
+	marker := "▏"
 	markerColor := t.restMark
 	if focused {
-		marker = "▌ "
+		marker = "▌"
 		markerColor = t.focusMark
 	}
 	markerStyle := lipgloss.NewStyle().
