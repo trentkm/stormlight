@@ -273,6 +273,7 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 		ui.NewModelWithOptions(service, currentSurface, options),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithFilter(ui.DropMouseFragments),
 	)
 	_, err = program.Run()
 	return err
