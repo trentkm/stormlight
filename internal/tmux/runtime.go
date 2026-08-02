@@ -264,15 +264,20 @@ func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, er
 	if err != nil {
 		return "", err
 	}
-	if lines <= 0 {
+	if lines == 0 {
 		lines = 100
+	}
+	// Negative budgets ask for the pane's entire history.
+	start := "-"
+	if lines > 0 {
+		start = fmt.Sprintf("-%d", lines)
 	}
 	// -J rejoins lines the pane hard-wrapped at its own width, so the
 	// dashboard re-wraps whole logical lines instead of the pane's
 	// fragments — indentation survives the width difference.
 	return r.runner.Run(ctx, nil,
 		"capture-pane", "-p", "-e", "-J", "-t", managedAgent.PaneID,
-		"-S", fmt.Sprintf("-%d", lines),
+		"-S", start,
 	)
 }
 

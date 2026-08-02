@@ -183,6 +183,19 @@ func TestCaptureIncludesScrollbackForExitedPane(t *testing.T) {
 	}
 }
 
+func TestCaptureNegativeBudgetTakesFullHistory(t *testing.T) {
+	runner := &captureRunner{agentLine: captureAgentLine(false)}
+	runtime := &Runtime{runner: runner}
+
+	if _, err := runtime.Capture(context.Background(), "capture-id", -1); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"capture-pane", "-p", "-e", "-J", "-t", "%1", "-S", "-"}
+	if len(runner.calls) != 2 || !slices.Equal(runner.calls[1], want) {
+		t.Fatalf("capture call = %#v, want %#v", runner.calls, want)
+	}
+}
+
 func TestCaptureDefaultsLineBudget(t *testing.T) {
 	runner := &captureRunner{agentLine: captureAgentLine(false)}
 	runtime := &Runtime{runner: runner}

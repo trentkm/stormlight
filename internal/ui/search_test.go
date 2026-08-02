@@ -146,6 +146,32 @@ func TestSearchEscRestoresViewportOffset(t *testing.T) {
 	}
 }
 
+func TestComposerStaysOpenAfterSending(t *testing.T) {
+	model := searchModelFixture(t)
+	updated, _ := model.updateNormal(runeKey("i"))
+	model = updated.(Model)
+	if model.mode != modeCompose {
+		t.Fatalf("mode after i = %d", model.mode)
+	}
+	model.sendInput.SetValue("first message")
+	next, cmd := model.updateCompose(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(Model)
+	if cmd == nil {
+		t.Fatal("send command was not created")
+	}
+	if model.mode != modeCompose {
+		t.Fatalf("composer closed after send: mode = %d", model.mode)
+	}
+	if model.sendInput.Value() != "" {
+		t.Fatalf("composer kept the sent text: %q", model.sendInput.Value())
+	}
+	next, _ = model.updateCompose(tea.KeyMsg{Type: tea.KeyEscape})
+	model = next.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("esc did not leave the composer: mode = %d", model.mode)
+	}
+}
+
 func TestMouseWheelScrollsPaneUnderPointer(t *testing.T) {
 	model := searchModelFixture(t)
 	model.activePane = paneWorkspaces

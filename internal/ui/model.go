@@ -1220,8 +1220,10 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("message cannot be empty")
 			return m, nil
 		}
-		m.mode = modeNormal
-		m.sendInput.Blur()
+		// The composer stays open for the next message; one i enters the
+		// conversation, Esc leaves it.
+		m.sendInput.SetValue("")
+		m.syncComposerSize()
 		m.status = "Sending to " + selected.Name
 		return m, actionCmd("Message sent", func(ctx context.Context) error {
 			return m.backend.Send(ctx, selected.ID, text)
@@ -4711,10 +4713,11 @@ func (m Model) refreshCmd() tea.Cmd {
 	}
 }
 
-// interactionCaptureLines is how much tmux scrollback the Spanreed
-// transcript requests, so scrolling up reaches history from before what
-// the pane currently shows.
-const interactionCaptureLines = 400
+// interactionCaptureLines asks for the pane's entire history (negative
+// budgets mean "from the beginning"): the transcript, and / search over it,
+// should reach everything the agent ever printed. A worst-case 50k-line
+// capture measures ~100ms and runs in a background command.
+const interactionCaptureLines = -1
 
 func (m Model) loadInteractionCmd() tea.Cmd {
 	id := m.selectedAgentID()
