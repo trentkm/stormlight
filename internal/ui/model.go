@@ -1660,14 +1660,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		return m.renderFocusedPane(width, contentHeight)
 	}
 
-	workspaceWidth := clamp(width*24/100, 18, 30)
-	agentWidth := clamp(width*33/100, 26, 44)
-	interactionWidth := width - workspaceWidth - agentWidth
-	if interactionWidth < 24 {
-		deficit := 24 - interactionWidth
-		agentWidth = max(22, agentWidth-deficit)
-		interactionWidth = width - workspaceWidth - agentWidth
-	}
+	workspaceWidth, agentWidth, interactionWidth := paneWidths(width)
 
 	workspaces := m.renderPane(
 		"Workspaces",
@@ -4612,14 +4605,23 @@ func (m Model) interactionDimensions() (int, int) {
 	if width < 72 {
 		return max(1, width-2), contentHeight
 	}
-	workspaceWidth := clamp(width*24/100, 18, 30)
-	agentWidth := clamp(width*33/100, 26, 44)
-	interactionWidth := width - workspaceWidth - agentWidth
+	_, _, interactionWidth := paneWidths(width)
+	return max(1, interactionWidth-2), contentHeight
+}
+
+// paneWidths splits a dashboard row between the three panes. The Spanreed
+// transcript is the pane people actually read, so it takes everything the
+// two list panes don't need.
+func paneWidths(width int) (workspaceWidth, agentWidth, interactionWidth int) {
+	workspaceWidth = clamp(width*20/100, 16, 26)
+	agentWidth = clamp(width*28/100, 26, 40)
+	interactionWidth = width - workspaceWidth - agentWidth
 	if interactionWidth < 24 {
-		agentWidth = max(22, agentWidth-(24-interactionWidth))
+		deficit := 24 - interactionWidth
+		agentWidth = max(22, agentWidth-deficit)
 		interactionWidth = width - workspaceWidth - agentWidth
 	}
-	return max(1, interactionWidth-2), contentHeight
+	return workspaceWidth, agentWidth, interactionWidth
 }
 
 func (m Model) expandedRows() bool {
