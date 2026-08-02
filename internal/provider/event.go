@@ -17,6 +17,10 @@ type Event struct {
 	// TranscriptPath is the provider's transcript file for the session,
 	// when the event carries one (Claude hook payloads always do).
 	TranscriptPath string
+	// TurnEnded is true for the provider's end-of-turn event, which is
+	// allowed to downgrade urgent attention: a finished turn proves any
+	// pending prompt was resolved.
+	TurnEnded bool
 }
 
 func ParseEvent(providerID agent.Provider, payload []byte) (Event, bool, error) {
@@ -45,6 +49,7 @@ func parseCodexEvent(payload []byte) (Event, bool, error) {
 		Activity:  agent.ActivityIdle,
 		Attention: turnEndAttention(notification.LastAssistantMessage),
 		Summary:   eventSummary(notification.LastAssistantMessage),
+		TurnEnded: true,
 	}, true, nil
 }
 
@@ -119,6 +124,7 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 			Attention:      turnEndAttention(hook.LastAssistantMessage),
 			Summary:        eventSummary(hook.LastAssistantMessage),
 			TranscriptPath: hook.TranscriptPath,
+			TurnEnded:      true,
 		}, true, nil
 	default:
 		return Event{}, false, nil

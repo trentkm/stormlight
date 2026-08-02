@@ -46,6 +46,10 @@ type Update struct {
 	// TranscriptPath records the provider's own transcript file when a
 	// hook reports it; empty means "leave as is".
 	TranscriptPath string
+	// TurnEnded marks an update produced by the provider's end-of-turn
+	// event; it may downgrade urgent attention, because a finished turn
+	// proves any pending prompt was resolved.
+	TurnEnded bool
 	// ClearAttention removes any attention state without touching the
 	// rest of the record; an empty Attention alone means "leave as is".
 	ClearAttention bool
