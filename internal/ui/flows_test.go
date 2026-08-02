@@ -224,6 +224,42 @@ func TestComposerRefusesToSendIntoAnActivePrompt(t *testing.T) {
 	}
 }
 
+func TestComposerYieldsWhenPromptArrivesMidCompose(t *testing.T) {
+	backend := &flowBackend{}
+	model := flowModelFixture(t, backend)
+	updated, _ := model.updateNormal(runeKey("i"))
+	model = updated.(Model)
+	model.sendInput.SetValue("half a thought")
+
+	agents := append([]agent.Agent(nil), model.agents...)
+	agents[0].Attention = agent.AttentionApproval
+	next, _ := model.Update(dashboardMsg{
+		agents:     agents,
+		workspaces: model.catalogWorkspaces,
+	})
+	model = next.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("composer did not yield: mode = %d", model.mode)
+	}
+	if model.sendInput.Value() != "half a thought" {
+		t.Fatalf("draft was discarded: %q", model.sendInput.Value())
+	}
+
+	// After the prompt clears, i picks the draft back up.
+	agents[0].Attention = agent.AttentionNone
+	next, _ = model.Update(dashboardMsg{
+		agents:     agents,
+		workspaces: model.catalogWorkspaces,
+	})
+	model = next.(Model)
+	updated, _ = model.updateNormal(runeKey("i"))
+	model = updated.(Model)
+	if model.mode != modeCompose || model.sendInput.Value() != "half a thought" {
+		t.Fatalf("draft not restored: mode=%d value=%q",
+			model.mode, model.sendInput.Value())
+	}
+}
+
 func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 	model := flowModelFixture(t, &flowBackend{})
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 45})
