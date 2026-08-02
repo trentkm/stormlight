@@ -24,31 +24,61 @@ func pathNavFixture(t *testing.T) string {
 	return root
 }
 
-func TestPathNavFiltersAndDescends(t *testing.T) {
+func TestPathNavTabCompletesThenCycles(t *testing.T) {
 	root := pathNavFixture(t)
 	nav := newPathNav(root)
 
-	matches := nav.matches()
-	if len(matches) != 4 || matches[0] != parentEntry {
-		t.Fatalf("initial matches = %#v", matches)
-	}
-
+	// "bet" + Tab extends to the common prefix "beta" without moving.
 	nav.update(runeKey("bet"))
-	matches = nav.matches()
-	if len(matches) != 2 || matches[0] != "beta" || matches[1] != "beta-service" {
-		t.Fatalf("filtered matches = %#v", matches)
+	nav.complete(1)
+	if nav.filter.Value() != "beta" || nav.base != root {
+		t.Fatalf("prefix completion = %q at %q", nav.filter.Value(), nav.base)
 	}
 
-	if !nav.descend() {
-		t.Fatal("descend refused with matches present")
+	// The prefix is itself a full candidate, so Tab is already cycling:
+	// the next press moves to beta-service, then wraps back.
+	nav.complete(1)
+	if nav.filter.Value() != "beta-service" {
+		t.Fatalf("cycle #2 = %q", nav.filter.Value())
 	}
-	if filepath.Base(nav.base) != "beta" || nav.filter.Value() != "" {
-		t.Fatalf("descend landed at %q filter %q", nav.base, nav.filter.Value())
+	nav.complete(1)
+	if nav.filter.Value() != "beta" {
+		t.Fatalf("cycle wrap = %q", nav.filter.Value())
+	}
+
+	// Enter accepts the cycled candidate: cd beta.
+	if action := nav.enter(); action != pathNavHandled {
+		t.Fatalf("enter action = %v", action)
+	}
+	if filepath.Base(nav.base) != "beta" || !nav.filterEmpty() {
+		t.Fatalf("enter landed at %q filter %q", nav.base, nav.filter.Value())
+	}
+
+	// Enter on the empty line confirms the directory itself.
+	if action := nav.enter(); action != pathNavConfirm {
+		t.Fatalf("empty enter action = %v", action)
 	}
 
 	nav.up()
 	if nav.base != root {
 		t.Fatalf("up landed at %q, want %q", nav.base, root)
+	}
+}
+
+func TestPathNavTypedEnterDescendsBestMatch(t *testing.T) {
+	root := pathNavFixture(t)
+	nav := newPathNav(root)
+	nav.update(runeKey("alp"))
+	if action := nav.enter(); action != pathNavHandled {
+		t.Fatalf("action = %v", action)
+	}
+	if filepath.Base(nav.base) != "alpha" {
+		t.Fatalf("base = %q", nav.base)
+	}
+
+	nav.update(runeKey("zzz"))
+	if action := nav.enter(); action != pathNavInvalid {
+		t.Fatalf("bogus enter action = %v", action)
 	}
 }
 
@@ -70,15 +100,13 @@ func TestPathNavJumpsToTypedAbsolutePaths(t *testing.T) {
 	root := pathNavFixture(t)
 	nav := newPathNav(t.TempDir())
 	nav.update(runeKey(root))
-	attempted, ok := nav.jump()
-	if !attempted || !ok || nav.base != filepath.Clean(root) {
-		t.Fatalf("jump attempted=%v ok=%v base=%q", attempted, ok, nav.base)
+	if action := nav.enter(); action != pathNavHandled || nav.base != filepath.Clean(root) {
+		t.Fatalf("jump action=%v base=%q", action, nav.base)
 	}
 
 	nav.update(runeKey("/definitely/not/a/dir"))
-	attempted, ok = nav.jump()
-	if !attempted || ok {
-		t.Fatalf("bogus jump attempted=%v ok=%v", attempted, ok)
+	if action := nav.enter(); action != pathNavInvalid {
+		t.Fatalf("bogus jump action = %v", action)
 	}
 }
 
@@ -96,14 +124,20 @@ func TestDispatchPathNavConfirmsIntoTask(t *testing.T) {
 	model = updated.(Model)
 	updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyTab})
 	model = updated.(Model)
+	if model.pathNav.filter.Value() != "alpha" {
+		t.Fatalf("tab completion = %q", model.pathNav.filter.Value())
+	}
+
+	updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
 	if filepath.Base(model.pathNav.base) != "alpha" {
-		t.Fatalf("tab did not descend: %q", model.pathNav.base)
+		t.Fatalf("enter did not descend: %q", model.pathNav.base)
 	}
 
 	updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
 	if model.formFocus != dispatchTask {
-		t.Fatalf("enter did not confirm; focus = %v", model.formFocus)
+		t.Fatalf("confirm did not reach task; focus = %v", model.formFocus)
 	}
 	if filepath.Base(strings.TrimSpace(model.cwdInput.Value())) != "alpha" {
 		t.Fatalf("confirmed path = %q", model.cwdInput.Value())
@@ -117,5 +151,21 @@ func TestPathNavViewListsMatches(t *testing.T) {
 		!strings.Contains(view, "alpha") ||
 		!strings.Contains(view, parentEntry) {
 		t.Fatalf("view missing content:\n%s", view)
+	}
+}
+
+func TestPathNavEmptyFilterTabCyclesFromParent(t *testing.T) {
+	nav := newPathNav(pathNavFixture(t))
+	nav.complete(1)
+	if nav.filter.Value() != parentEntry || nav.cycle == nil {
+		t.Fatalf("first tab = %q cycling=%v", nav.filter.Value(), nav.cycle != nil)
+	}
+	nav.complete(1)
+	if nav.filter.Value() != "alpha" {
+		t.Fatalf("second tab = %q", nav.filter.Value())
+	}
+	nav.complete(-1)
+	if nav.filter.Value() != parentEntry {
+		t.Fatalf("reverse tab = %q", nav.filter.Value())
 	}
 }

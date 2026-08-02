@@ -3382,14 +3382,11 @@ func (m *Model) startPathNav() {
 // navigator is sitting in.
 func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
 	switch msg.String() {
-	case "tab":
-		m.pathNav.descend()
-		return false
-	case "down", "ctrl+n":
-		m.pathNav.moveHighlight(1)
+	case "tab", "down", "ctrl+n":
+		m.pathNav.complete(1)
 		return false
 	case "up", "ctrl+p":
-		m.pathNav.moveHighlight(-1)
+		m.pathNav.complete(-1)
 		return false
 	case "backspace":
 		if m.pathNav.filterEmpty() {
@@ -3397,22 +3394,18 @@ func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
 			return false
 		}
 	case "enter":
-		if m.pathNav.highlight >= 0 {
-			m.pathNav.descend()
-			return false
+		switch m.pathNav.enter() {
+		case pathNavConfirm:
+			return true
+		case pathNavInvalid:
+			m.err = fmt.Errorf(
+				"no such directory: %s",
+				strings.TrimSpace(m.pathNav.filter.Value()),
+			)
+		default:
+			m.err = nil
 		}
-		if attempted, ok := m.pathNav.jump(); attempted {
-			if !ok {
-				m.err = fmt.Errorf(
-					"not a directory: %s",
-					strings.TrimSpace(m.pathNav.filter.Value()),
-				)
-			} else {
-				m.err = nil
-			}
-			return false
-		}
-		return true
+		return false
 	}
 	m.pathNav.update(msg)
 	return false
