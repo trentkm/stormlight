@@ -4343,13 +4343,14 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-	if pane := m.paneAt(msg.X); pane == paneInteraction {
-		m.moveSelectionIn(paneInteraction, direction*3)
+	// Only the transcript wheels: scrolling a list would move its
+	// selection, and losing the selected agent to a stray wheel tick is
+	// worse than no scroll at all.
+	if m.paneAt(msg.X) != paneInteraction {
 		return m, nil
-	} else {
-		m.moveSelectionIn(pane, direction)
 	}
-	return m, m.loadInteractionCmd()
+	m.moveSelectionIn(paneInteraction, direction*3)
+	return m, nil
 }
 
 // paneAt maps a screen column to the dashboard pane rendered there.

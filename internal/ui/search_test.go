@@ -195,11 +195,15 @@ func TestMouseWheelScrollsPaneUnderPointer(t *testing.T) {
 	}
 
 	offset := model.interaction.YOffset
+	cursor := model.workspaceCursor
 	wheel.X = 5
 	updated, _ = model.Update(wheel)
 	model = updated.(Model)
 	if model.interaction.YOffset != offset {
 		t.Fatal("wheel over the workspace list scrolled the transcript")
+	}
+	if model.workspaceCursor != cursor {
+		t.Fatal("wheel over the workspace list moved the selection")
 	}
 }
 
