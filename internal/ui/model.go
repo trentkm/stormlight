@@ -690,14 +690,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
-	case modifiedKeyMsg:
-		// Chords decoded from the terminal's modifyOtherKeys reporting
-		// that Bubble Tea v1 cannot express as a tea.KeyMsg.
-		if msg == chordShiftEnter && m.mode == modeCompose {
-			return m.insertComposerNewline()
-		}
-		return m, nil
-
 	case tea.KeyMsg:
 		if m.err != nil {
 			m.err = nil
@@ -1193,7 +1185,7 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sendInput.Blur()
 		m.status = "Ready"
 		return m, nil
-	case "ctrl+j", "shift+enter":
+	case "ctrl+j":
 		return m.insertComposerNewline()
 	case "ctrl+v":
 		// Terminal paste cannot carry image bytes into a TUI, so Ctrl-v
@@ -1235,8 +1227,10 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// insertComposerNewline breaks the line under the cursor. It is reached
-// both by ctrl+j and by the decoded shift+enter chord (see extkeys.go).
+// insertComposerNewline breaks the line under the cursor (ctrl+j).
+// Shift+Enter was scrapped: it needs the full modifyOtherKeys relay chain
+// terminal→tmux→pane to hold, and it silently submits instead of inserting
+// a newline anywhere it doesn't. Ctrl+j works everywhere.
 func (m Model) insertComposerNewline() (tea.Model, tea.Cmd) {
 	m.sendInput.InsertString("\n")
 	m.syncComposerSize()
@@ -3345,7 +3339,7 @@ func renderFooterStatus(
 func (m Model) commandHints() string {
 	switch m.mode {
 	case modeCompose:
-		return "Enter send  Shift-Enter newline  Ctrl-v image  Esc cancel"
+		return "Enter send  Ctrl-j newline  Ctrl-v image  Esc cancel"
 	case modeSearch:
 		return "type to search  Enter keep  n/N move  Esc cancel"
 	case modeDelete:
