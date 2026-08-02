@@ -1988,8 +1988,9 @@ func (m Model) renderWorkspaceRow(
 			lipgloss.Width(name)-
 			lipgloss.Width(suffix),
 	)
-	path, kind, detailGap := workspaceDetail(group.context, contentWidth)
-	bottomContent := path + strings.Repeat(" ", detailGap) + kind
+	// Subtitle indents to sit under the name, reading as detail of the
+	// title rather than a second row of equal weight.
+	bottomContent := "  " + workspaceDetail(group.context, max(1, contentWidth-2))
 	tier := attentionTierOf(urgent, waiting)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
@@ -2038,9 +2039,7 @@ func (m Model) renderWorkspaceRow(
 		renderedName +
 		strings.Repeat(" ", gap) +
 		suffixStyle.Render(suffix)
-	bottom := marker + mutedStyle.Render(path) +
-		strings.Repeat(" ", detailGap) +
-		mutedStyle.Render(kind)
+	bottom := marker + mutedStyle.Render(bottomContent)
 	if !m.expandedRows() {
 		return top
 	}
@@ -2128,22 +2127,34 @@ func renderSelectedWorkspaceRow(
 	return lipgloss.JoinVertical(lipgloss.Left, topLine, bottomLine)
 }
 
-func workspaceDetail(value workspace.Context, width int) (string, string, int) {
+// workspaceDetail is the expanded row's subtitle: quiet middot-joined
+// tokens — resolver kind, home-relative root, and the component when it
+// adds information — indented under the name rather than justified across
+// the row.
+func workspaceDetail(value workspace.Context, width int) string {
 	width = max(1, width)
-	path := strings.TrimSpace(value.Root)
-	if path != "" {
-		path = truncatePathTail(path, width)
+	kind := strings.ToLower(strings.TrimSpace(value.Kind))
+	path := shortPath(strings.TrimSpace(value.Root))
+	join := func(pathToken string) string {
+		parts := []string{}
+		if kind != "" {
+			parts = append(parts, kind)
+		}
+		if pathToken != "" {
+			parts = append(parts, pathToken)
+		}
+		if value.ComponentName != "" && value.ComponentName != value.Name {
+			parts = append(parts, value.ComponentName)
+		}
+		return strings.Join(parts, " · ")
 	}
-	kind := strings.ToUpper(strings.TrimSpace(value.Kind))
-	if kind == "" || width < 32 {
-		return path, "", 0
+	detail := join(path)
+	if lipgloss.Width(detail) > width && path != "" {
+		// The path yields first, keeping its distinguishing tail.
+		overhead := lipgloss.Width(detail) - lipgloss.Width(path)
+		detail = join(truncatePathTail(path, max(1, width-overhead)))
 	}
-
-	kindWidth := lipgloss.Width(kind)
-	pathWidth := max(1, width-kindWidth-2)
-	path = truncatePathTail(value.Root, pathWidth)
-	gap := max(2, width-lipgloss.Width(path)-kindWidth)
-	return path, kind, gap
+	return ansi.Truncate(detail, width, "…")
 }
 
 func (m Model) renderAgents(width, height int) string {
@@ -2201,7 +2212,7 @@ func renderAgentRowWithDensity(
 	shimmerPhase int,
 ) string {
 	symbol, statusStyle := statusVisual(managedAgent)
-	providerName := strings.ToUpper(string(managedAgent.Provider))
+	providerName := strings.ToLower(string(managedAgent.Provider))
 	if len(providerName) > 6 {
 		providerName = providerName[:6]
 	}
@@ -2224,7 +2235,10 @@ func renderAgentRowWithDensity(
 	if location := agentLocation(managedAgent); location != "" {
 		details = append(details, location)
 	}
-	bottomContent := truncate("  "+strings.Join(details, "  "), contentWidth)
+	bottomContent := "  " + truncate(
+		strings.Join(details, " · "),
+		max(1, contentWidth-2),
+	)
 	// Only the active pane's cursor row gets the filled background; a
 	// selection remembered in an inactive pane keeps just a faint marker,
 	// so exactly one row on screen is hot.
