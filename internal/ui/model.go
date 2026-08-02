@@ -53,6 +53,7 @@ const (
 	modeNormal mode = iota
 	modeDispatch
 	modeCompose
+	modeSearch
 	modeDelete
 	modeAddWorkspace
 	modeRename
@@ -144,6 +145,8 @@ type Model struct {
 	sendInput               textarea.Model
 	initialCwd              string
 	initialWorkspaceID      string
+	interactionContent      string
+	search                  transcriptSearch
 	directories             []directoryChoice
 	directoryIndex          int
 	yaziPath                string
@@ -553,11 +556,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.interaction.SetContent(errorStyle.Render(msg.err.Error()))
 			} else {
 				selected, _ := m.selectedAgent()
-				m.interaction.SetContent(cleanInteraction(
+				m.interactionContent = cleanInteraction(
 					msg.content,
 					m.interaction.Width,
 					selected.Provider,
-				))
+				)
+				m.refreshSearch()
+				m.interaction.SetContent(m.searchDecorated())
 				if !followOutput {
 					m.interaction.SetYOffset(previousOffset)
 				}
@@ -702,6 +707,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDispatch(msg)
 		case modeCompose:
 			return m.updateCompose(msg)
+		case modeSearch:
+			return m.updateSearch(msg)
 		case modeDelete:
 			return m.updateDelete(msg)
 		case modeAddWorkspace:
@@ -859,11 +866,31 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Opening " + displayTitle
 			return m, attachCmd(m.backend, selected.ID, displayTitle)
 		}
+	case "/":
+		if m.activePane == paneInteraction && m.interactionSearchable() {
+			m.beginSearch()
+			return m, nil
+		}
 	case "n":
 		if m.activePane == paneWorkspaces {
 			return m.beginAddWorkspace()
 		}
+		if m.activePane == paneInteraction && m.search.query != "" {
+			m.jumpSearchMatch(1)
+			return m, nil
+		}
 		return m.beginDispatch(false)
+	case "N":
+		if m.activePane == paneInteraction && m.search.query != "" {
+			m.jumpSearchMatch(-1)
+			return m, nil
+		}
+	case "esc", "ctrl+[":
+		if m.activePane == paneInteraction && m.search.query != "" {
+			m.clearSearch()
+			m.status = "Ready"
+			return m, nil
+		}
 	case "o":
 		return m.beginDispatch(true)
 	case "i", "s":
@@ -1592,6 +1619,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"n", "new agent (or add workspace)"},
 			{"o", "new agent with directory picker"},
 			{"i / s", "write a reply in Spanreed"},
+			{"/ then n/N", "search the Spanreed transcript"},
 			{"Ctrl-v", "paste clipboard image into the reply"},
 			{"x", "interrupt the selected agent"},
 			{"Ctrl-x then x/X", "delete agent / workspace (+agents)"},
@@ -2645,7 +2673,24 @@ func (m Model) renderInteraction(width, height int) string {
 	}
 
 	viewportCopy := m.interaction
-	composer := mutedStyle.Render(truncate("i reply  Enter open terminal", width))
+	composer := mutedStyle.Render(truncate("i reply  / search  Enter open terminal", width))
+	if m.mode == modeSearch {
+		m.search.input.SetWidth(max(1, width-2))
+		composer = accentStyle.Render("/") + m.search.input.View()
+	} else if m.search.query != "" {
+		position := "no matches"
+		if len(m.search.matches) > 0 {
+			position = fmt.Sprintf(
+				"match %d/%d",
+				m.search.index+1,
+				len(m.search.matches),
+			)
+		}
+		composer = mutedStyle.Render(truncate(
+			"/"+m.search.query+"  "+position+"  n next  N prev  Esc clear",
+			width,
+		))
+	}
 	if m.mode == modeCompose {
 		m.sendInput.SetWidth(max(1, width))
 		inputHeight := composerHeight(m.sendInput.Value(), max(1, width))
@@ -3303,6 +3348,8 @@ func (m Model) commandHints() string {
 	switch m.mode {
 	case modeCompose:
 		return "Enter send  Shift-Enter newline  Ctrl-v image  Esc cancel"
+	case modeSearch:
+		return "type to search  Enter keep  n/N move  Esc cancel"
 	case modeDelete:
 		if m.activePane == paneWorkspaces &&
 			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) &&
@@ -3367,8 +3414,11 @@ func (m Model) commandHints() string {
 			"h/l panes  j/k select  n new  M seen  , sort  " + rowMode + "  Enter open",
 		)
 	case paneInteraction:
+		if m.search.query != "" {
+			return "h agents  j/k scroll  n/N match  Esc clear  Enter open"
+		}
 		return strings.TrimSpace(
-			"h agents  j/k scroll  i reply  n new  " + rowMode + "  Enter open",
+			"h agents  j/k scroll  i reply  / search  n new  " + rowMode + "  Enter open",
 		)
 	default:
 		return strings.TrimSpace(
