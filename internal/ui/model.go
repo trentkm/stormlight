@@ -1146,6 +1146,20 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sendInput.InsertString("\n")
 		m.syncComposerSize()
 		return m, nil
+	case "ctrl+v":
+		// Terminal paste cannot carry image bytes into a TUI, so Ctrl-v
+		// bridges: read the clipboard image, park it in a temp file, and
+		// insert the path — coding agents read images referenced by path.
+		// (Text paste still arrives through the terminal's own paste.)
+		path, err := pasteClipboardImage()
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.err = nil
+		m.insertComposerToken(path)
+		m.syncComposerSize()
+		return m, nil
 	case "enter":
 		selected, ok := m.selectedAgent()
 		if !ok {
@@ -1198,6 +1212,40 @@ func (m *Model) syncComposerSize() {
 		}
 		m.sendInput.SetCursor(column)
 	}
+}
+
+// insertComposerToken inserts text into the reply at the cursor, padded
+// with spaces so it stays its own token instead of fusing with what the
+// user already typed — pasted file paths must survive shell-style parsing.
+func (m *Model) insertComposerToken(token string) {
+	lines := strings.Split(m.sendInput.Value(), "\n")
+	row := m.sendInput.Line()
+	info := m.sendInput.LineInfo()
+	column := info.StartColumn + info.ColumnOffset
+	var before, after rune
+	if row >= 0 && row < len(lines) {
+		line := []rune(lines[row])
+		if column > 0 && column <= len(line) {
+			before = line[column-1]
+		}
+		if column >= 0 && column < len(line) {
+			after = line[column]
+		}
+	}
+	m.sendInput.InsertString(padToken(token, before, after))
+}
+
+// padToken surrounds an inserted token with spaces as needed: before and
+// after are the runes adjacent to the cursor, zero at a line boundary. A
+// trailing space is always ensured so the user can keep typing.
+func padToken(token string, before, after rune) string {
+	if before != 0 && !unicode.IsSpace(before) {
+		token = " " + token
+	}
+	if after == 0 || !unicode.IsSpace(after) {
+		token += " "
+	}
+	return token
 }
 
 func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1509,6 +1557,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"n", "new agent (or add workspace)"},
 			{"o", "new agent with directory picker"},
 			{"i / s", "write a reply in Spanreed"},
+			{"Ctrl-v", "paste clipboard image into the reply"},
 			{"x", "interrupt the selected agent"},
 			{"Ctrl-x then x/X", "delete agent / workspace (+agents)"},
 			{"R", "rename workspace or agent"},
@@ -3218,7 +3267,7 @@ func renderFooterStatus(
 func (m Model) commandHints() string {
 	switch m.mode {
 	case modeCompose:
-		return "Enter send  Ctrl-j newline  Esc cancel"
+		return "Enter send  Ctrl-j newline  Ctrl-v image  Esc cancel"
 	case modeDelete:
 		if m.activePane == paneWorkspaces &&
 			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) &&
