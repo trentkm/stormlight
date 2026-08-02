@@ -282,6 +282,28 @@ func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 	}
 }
 
+func TestDimPaneLayersFaintWithoutBreakingColors(t *testing.T) {
+	// A truecolor sequence whose components include 1 and 2 must survive
+	// verbatim; standalone bold must drop; every sequence re-arms faint.
+	line := "\x1b[1mBold\x1b[0m and \x1b[38;2;1;2;3mtruecolor\x1b[m tail"
+	dimmed := dimPane(line)
+	if !strings.Contains(dimmed, "\x1b[38;2;1;2;3;2m") {
+		t.Fatalf("truecolor params were mangled: %q", dimmed)
+	}
+	if strings.Contains(dimmed, "\x1b[1m") || strings.Contains(dimmed, ";1m") {
+		t.Fatalf("bold survived the dim layer: %q", dimmed)
+	}
+	if !strings.HasPrefix(dimmed, "\x1b[2m") || !strings.HasSuffix(dimmed, "\x1b[22m") {
+		t.Fatalf("faint framing missing: %q", dimmed)
+	}
+	if got := dimParams(""); got != "0;2" {
+		t.Fatalf("bare reset rewrote to %q", got)
+	}
+	if got := dimParams("38;5;1;1"); got != "38;5;1;2" {
+		t.Fatalf("256-color guard failed: %q", got)
+	}
+}
+
 func TestNarrowLayoutFocusesOnePane(t *testing.T) {
 	model := flowModelFixture(t, &flowBackend{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})

@@ -5,6 +5,7 @@ package ui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -447,11 +448,70 @@ func (m Model) renderPane(
 			BorderForeground(colorBorder)
 	}
 	header := renderPaneHeader(label, contextLabel, innerWidth, active)
+	if !active {
+		content = dimPane(content)
+	}
 	body := lipgloss.NewStyle().
 		Width(innerWidth).
 		MaxWidth(innerWidth).
 		Render(content)
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
+}
+
+// dimPane lays the terminal's faint attribute over an inactive pane so the
+// focused pane is the only one at full strength. Colors survive — an amber
+// attention marker still reads as amber, just recessed. Every SGR sequence
+// inside the block re-arms the faint (a reset would otherwise cancel it)
+// and drops bold, which defeats faint on most terminals.
+func dimPane(content string) string {
+	lines := strings.Split(content, "\n")
+	for index, line := range lines {
+		line = sgrSequencePattern.ReplaceAllStringFunc(line, func(seq string) string {
+			return "\x1b[" + dimParams(seq[2:len(seq)-1]) + "m"
+		})
+		lines[index] = "\x1b[2m" + line + "\x1b[22m"
+	}
+	return strings.Join(lines, "\n")
+}
+
+var sgrSequencePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// dimParams rewrites one SGR parameter list: standalone bold (1) is
+// dropped and faint (2) is appended. Extended color introducers (38/48/58)
+// consume their arguments verbatim, so a color component that happens to
+// be 1 or 2 is never touched.
+func dimParams(params string) string {
+	if params == "" {
+		return "0;2"
+	}
+	tokens := strings.Split(params, ";")
+	out := make([]string, 0, len(tokens)+1)
+	for index := 0; index < len(tokens); index++ {
+		token := tokens[index]
+		switch token {
+		case "38", "48", "58":
+			out = append(out, token)
+			if index+1 >= len(tokens) {
+				break
+			}
+			consume := 0
+			switch tokens[index+1] {
+			case "2":
+				consume = 4 // mode + r + g + b
+			case "5":
+				consume = 2 // mode + palette index
+			}
+			for step := 1; step <= consume && index+step < len(tokens); step++ {
+				out = append(out, tokens[index+step])
+			}
+			index += consume
+		case "1":
+			// Bold defeats faint; the dim layer wins in inactive panes.
+		default:
+			out = append(out, token)
+		}
+	}
+	return strings.Join(append(out, "2"), ";")
 }
 
 // renderPaneHeader underlines the entire header cell, padding included, so
