@@ -111,7 +111,10 @@ type Agent struct {
 	ProcessLive bool              `json:"process_live"`
 	ExitCode    *int              `json:"exit_code,omitempty"`
 	Mode        PermissionMode    `json:"mode,omitempty"`
-	Workspace   workspace.Context `json:"workspace"`
+	// TranscriptPath is the provider's own transcript file for this
+	// conversation (Claude Code session JSONL), reported by its hooks.
+	TranscriptPath string            `json:"transcript_path,omitempty"`
+	Workspace      workspace.Context `json:"workspace"`
 }
 
 func (a Agent) NeedsAttention() bool {

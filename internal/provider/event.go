@@ -14,6 +14,9 @@ type Event struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// TranscriptPath is the provider's transcript file for the session,
+	// when the event carries one (Claude hook payloads always do).
+	TranscriptPath string
 }
 
 func ParseEvent(providerID agent.Provider, payload []byte) (Event, bool, error) {
@@ -80,6 +83,7 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 		Message              string `json:"message"`
 		NotificationType     string `json:"notification_type"`
 		LastAssistantMessage string `json:"last_assistant_message"`
+		TranscriptPath       string `json:"transcript_path"`
 	}
 	if err := json.Unmarshal(payload, &hook); err != nil {
 		return Event{}, false, fmt.Errorf("decode Claude hook event: %w", err)
@@ -88,8 +92,9 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 	switch hook.Name {
 	case "UserPromptSubmit":
 		return Event{
-			Activity: agent.ActivityWorking,
-			Summary:  eventSummary(hook.Prompt),
+			Activity:       agent.ActivityWorking,
+			Summary:        eventSummary(hook.Prompt),
+			TranscriptPath: hook.TranscriptPath,
 		}, true, nil
 	case "Notification":
 		if hook.NotificationType == "idle_prompt" {
@@ -103,15 +108,17 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 			summary = "Needs approval"
 		}
 		return Event{
-			Activity:  agent.ActivityIdle,
-			Attention: agent.AttentionApproval,
-			Summary:   summary,
+			Activity:       agent.ActivityIdle,
+			Attention:      agent.AttentionApproval,
+			Summary:        summary,
+			TranscriptPath: hook.TranscriptPath,
 		}, true, nil
 	case "Stop":
 		return Event{
-			Activity:  agent.ActivityIdle,
-			Attention: turnEndAttention(hook.LastAssistantMessage),
-			Summary:   eventSummary(hook.LastAssistantMessage),
+			Activity:       agent.ActivityIdle,
+			Attention:      turnEndAttention(hook.LastAssistantMessage),
+			Summary:        eventSummary(hook.LastAssistantMessage),
+			TranscriptPath: hook.TranscriptPath,
 		}, true, nil
 	default:
 		return Event{}, false, nil
