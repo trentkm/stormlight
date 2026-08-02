@@ -158,20 +158,26 @@ func (n *pathNav) up() {
 	n.reroot(filepath.Dir(n.root))
 }
 
-// jump re-roots at a typed absolute or ~ path, reporting whether the filter
-// looked like one and whether it resolved.
-func (n *pathNav) jump() (attempted, ok bool) {
+// jumpTarget reports what Enter would re-root to: the expanded path, whether
+// the filter looks like an absolute or ~ path, and whether it exists.
+func (n pathNav) jumpTarget() (target string, attempted, ok bool) {
 	typed := strings.TrimSpace(n.filter.Value())
 	if !strings.HasPrefix(typed, string(filepath.Separator)) &&
 		!strings.HasPrefix(typed, "~") {
-		return false, false
+		return "", false, false
 	}
 	expanded := expandHomePath(typed)
-	if !isDirectory(expanded) {
-		return true, false
+	return expanded, true, isDirectory(expanded)
+}
+
+// jump re-roots at a typed absolute or ~ path, reporting whether the filter
+// looked like one and whether it resolved.
+func (n *pathNav) jump() (attempted, ok bool) {
+	target, attempted, ok := n.jumpTarget()
+	if attempted && ok {
+		n.reroot(target)
 	}
-	n.reroot(expanded)
-	return true, true
+	return attempted, ok
 }
 
 func expandHomePath(path string) string {
@@ -209,6 +215,17 @@ func (n pathNav) view(width, maxRows int) string {
 	}
 	if n.loadErr != nil {
 		lines = append(lines, errorStyle.Render(truncate("cannot read directory", width)))
+		return strings.Join(lines, "\n")
+	}
+	// A typed absolute or ~ path puts the picker in cd mode: Enter re-roots
+	// there instead of choosing a match, so show that action, not the list.
+	if target, attempted, ok := n.jumpTarget(); attempted {
+		if ok {
+			lines = append(lines, accentStyle.Render(" cd ")+
+				truncatePathTail(shortPath(target), max(1, width-4)))
+		} else {
+			lines = append(lines, mutedStyle.Render(truncate("no such directory", width)))
+		}
 		return strings.Join(lines, "\n")
 	}
 	matches := n.matches()
