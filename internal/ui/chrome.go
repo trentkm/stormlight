@@ -168,7 +168,7 @@ func (m Model) commandHints() string {
 	}
 	if m.activePane == paneInteraction {
 		if selected, ok := m.selectedAgent(); ok &&
-			selected.ProcessLive && selected.Attention.Urgent() {
+			selected.ProcessLive && selected.Attention.TerminalOwned() {
 			return "Enter answer in terminal  h agents  j/k scroll  M seen"
 		}
 	}

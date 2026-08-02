@@ -41,9 +41,13 @@ func (m Model) renderInteraction(width, height int) string {
 	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
 		// Prompts are answered in the agent's own terminal; the dashboard's
 		// job is pointing at the pane, loudly.
+		hint := " — i to reply"
+		if managedAgent.Attention.TerminalOwned() {
+			hint = " — Enter opens the terminal"
+		}
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
 			Render(truncate(
-				"Needs "+string(managedAgent.Attention)+" — Enter opens the terminal",
+				"Needs "+string(managedAgent.Attention)+hint,
 				width,
 			))
 	} else if managedAgent.ProcessLive &&
@@ -55,6 +59,18 @@ func (m Model) renderInteraction(width, height int) string {
 
 	viewportCopy := m.interaction
 	composer := mutedStyle.Render(truncate("i reply  / search  Enter open terminal", width))
+	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() &&
+		m.mode != modeCompose && m.mode != modeSearch {
+		// The heading line is easy to slide past; the band above the
+		// composer row is not. It replaces the input affordances entirely
+		// when the agent's own terminal holds the prompt.
+		guidance := " ⚠ Agent asked a question — i to reply, Enter for its terminal"
+		if managedAgent.Attention.TerminalOwned() {
+			guidance = " ⚠ Needs " + string(managedAgent.Attention) +
+				" — Enter opens the terminal"
+		}
+		composer = attentionBandStyle.Width(width).Render(truncate(guidance, width))
+	}
 	if m.mode == modeSearch {
 		m.search.input.SetWidth(max(1, width-2))
 		composer = accentStyle.Render("/") + m.search.input.View()

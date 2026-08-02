@@ -24,7 +24,13 @@ var (
 	colorSelectedText = lipgloss.AdaptiveColor{Light: "#172027", Dark: "#F3F5F6"}
 	colorDangerBg     = lipgloss.AdaptiveColor{Light: "#F2D5D1", Dark: "#552B29"}
 
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorText)
+	// attentionBandStyle is the unmissable full-width bar for an agent
+	// blocked on human input — amber ground, dark text, no subtlety.
+	attentionBandStyle = lipgloss.NewStyle().
+				Bold(true).
+				Background(colorWaiting).
+				Foreground(lipgloss.AdaptiveColor{Light: "#FFF6E5", Dark: "#1F2328"})
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
 	accentStyle  = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 	errorStyle   = lipgloss.NewStyle().Foreground(colorFailed)

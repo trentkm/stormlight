@@ -11,7 +11,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/trentkm/stormlight/internal/agent"
 )
 
 func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -43,7 +42,7 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNormal
 			return m, nil
 		}
-		if selected.ProcessLive && selected.Attention == agent.AttentionApproval {
+		if selected.ProcessLive && selected.Attention.TerminalOwned() {
 			// The agent is showing a prompt or picker; a pasted message
 			// would type into it and Enter would pick whatever is
 			// highlighted. Answer where the prompt lives.

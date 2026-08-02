@@ -673,7 +673,14 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m.beginDispatch(true)
 	case "i", "s":
-		if _, ok := m.selectedAgent(); ok {
+		if selected, ok := m.selectedAgent(); ok {
+			if selected.ProcessLive && selected.Attention.TerminalOwned() {
+				// An active prompt owns the agent's input; composing here
+				// would type into it. The band already says where to go.
+				m.err = fmt.Errorf(
+					"agent is waiting on a prompt — Enter opens its terminal")
+				return m, nil
+			}
 			m.activePane = paneInteraction
 			m.mode = modeCompose
 			m.sendInput.SetValue("")
