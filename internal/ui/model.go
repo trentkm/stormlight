@@ -789,7 +789,6 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ",":
 		m.normalPrefix = ","
-		m.status = "Sort: a attention  n name  c newest"
 		return m, nil
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -3154,12 +3153,17 @@ func (m Model) renderProviderRows(width int) []string {
 
 func (m Model) renderFooter() string {
 	width := max(1, m.width-1)
-	hints := m.commandHints()
-	content := mutedStyle.Render(" " + truncate(hints, max(1, width-1)))
-	if m.err != nil {
-		content = renderFooterStatus(width, m.err.Error(), hints, errorStyle)
-	} else if m.status != "Ready" {
-		content = renderFooterStatus(width, m.status, hints, successStyle)
+	var content string
+	if chord := m.chordHints(); chord != "" {
+		content = " " + chord
+	} else {
+		hints := m.commandHints()
+		content = mutedStyle.Render(" " + truncate(hints, max(1, width-1)))
+		if m.err != nil {
+			content = renderFooterStatus(width, m.err.Error(), hints, errorStyle)
+		} else if m.status != "Ready" {
+			content = renderFooterStatus(width, m.status, hints, successStyle)
+		}
 	}
 	rule := lipgloss.NewStyle().
 		Foreground(colorBorder).
@@ -3167,6 +3171,29 @@ func (m Model) renderFooter() string {
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
 		rule + "\n" + content,
 	)
+}
+
+func (m Model) chordHints() string {
+	var label string
+	var options [][2]string
+	switch m.normalPrefix {
+	case ",":
+		label = "Sort:"
+		options = [][2]string{{"a", "attention"}, {"n", "name"}, {"c", "newest"}}
+	case "g":
+		label = "Go:"
+		options = [][2]string{{"g", "top"}}
+	default:
+		return ""
+	}
+	parts := make([]string, 0, len(options)+2)
+	parts = append(parts, titleStyle.Render(label))
+	for _, option := range options {
+		parts = append(parts,
+			accentStyle.Render(option[0])+" "+mutedStyle.Render(option[1]))
+	}
+	parts = append(parts, mutedStyle.Render("Esc cancel"))
+	return strings.Join(parts, "  ")
 }
 
 func renderFooterStatus(
