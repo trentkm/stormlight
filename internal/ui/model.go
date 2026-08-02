@@ -338,6 +338,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.catalogWorkspaces = msg.workspaces
 			m.rebuildGroups(workspaceID, agentID)
 			m.initialWorkspaceID = ""
+			if m.mode == modeCompose {
+				if selected, ok := m.selectedAgent(); ok &&
+					selected.ProcessLive && selected.Attention.TerminalOwned() {
+					// A prompt arrived mid-compose: the agent can no longer
+					// receive text, so the composer yields to the attention
+					// band without waiting for an Esc. The draft stays in
+					// the box.
+					m.mode = modeNormal
+					m.sendInput.Blur()
+					m.status = "Agent needs input"
+				}
+			}
 			if newAgents {
 				// A fresh window boots at 80x24; size it like the rest.
 				return m, tea.Batch(
@@ -683,7 +695,9 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.activePane = paneInteraction
 			m.mode = modeCompose
-			m.sendInput.SetValue("")
+			// Whatever is in the box is a draft — including one parked
+			// there when a prompt auto-closed the composer — so entering
+			// again picks it back up rather than discarding it.
 			m.syncComposerSize()
 			m.sendInput.Focus()
 			m.err = nil
