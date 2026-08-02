@@ -386,11 +386,8 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 	}
 }
 
-func TestConfigurePrefixFeedbackReusesSavedBaseOptions(t *testing.T) {
-	runner := &captureRunner{
-		feedbackVersion:      "1",
-		savedStatusLeftWidth: "48",
-	}
+func TestConfigurePrefixFeedbackSkipsCurrentVersion(t *testing.T) {
+	runner := &captureRunner{feedbackVersion: prefixFeedbackVersion}
 	runtime := &Runtime{runner: runner}
 
 	if err := runtime.configurePrefixFeedback(context.Background(), "custom-agents"); err != nil {
@@ -398,17 +395,6 @@ func TestConfigurePrefixFeedbackReusesSavedBaseOptions(t *testing.T) {
 	}
 	assertCalls(t, runner.calls, [][]string{
 		{"show-options", "-qv", "-t", "custom-agents", "@stormlight_prefix_feedback"},
-		{"show-options", "-qv", "-t", "custom-agents", "@stormlight_status_left_length_base"},
-		{"set-option", "-t", "custom-agents", "@stormlight_status_style_prefix",
-			"bg=#e5c07b,fg=#1f2328,bold"},
-		{"set-option", "-t", "custom-agents", "@stormlight_status_left_prefix",
-			" PREFIX  [Q] return  [?] all keys "},
-		{"set-option", "-t", "custom-agents", "status-style", dynamicStatusStyle},
-		{"set-option", "-t", "custom-agents", "status-left", dynamicStatusLeft},
-		{"set-option", "-t", "custom-agents", "status-left-length", "48"},
-		{"set-option", "-t", "custom-agents", "status-right", (&Runtime{}).statusRightHint()},
-		{"set-option", "-t", "custom-agents", "status-right-length",
-			strconv.Itoa(len((&Runtime{}).statusRightHint()))},
 	})
 }
 
@@ -534,8 +520,7 @@ type captureRunner struct {
 	binding              string
 	rootBinding          string
 	feedbackVersion      string
-	savedStatusLeftWidth string
-	clientLine           string
+	clientLine string
 	calls                [][]string
 }
 
@@ -568,14 +553,10 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 	case "list-clients":
 		return r.clientLine, nil
 	case "show-options":
-		switch args[len(args)-1] {
-		case prefixFeedbackOption:
+		if args[len(args)-1] == prefixFeedbackOption {
 			return r.feedbackVersion, nil
-		case statusLeftLengthOption:
-			return r.savedStatusLeftWidth, nil
-		default:
-			return "", nil
 		}
+		return "", nil
 	}
 	return "pane output", nil
 }
@@ -583,22 +564,19 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 func prefixFeedbackCalls(sessionName string) [][]string {
 	return [][]string{
 		{"show-options", "-qv", "-t", sessionName, "@stormlight_prefix_feedback"},
-		{"display-message", "-p", "-t", sessionName, "|#{status-style}|"},
-		{"display-message", "-p", "-t", sessionName, "|#{status-left}|"},
-		{"display-message", "-p", "-t", sessionName, "|#{status-left-length}|"},
 		{"set-option", "-t", sessionName, "@stormlight_status_style_base",
-			"fg=terminal,bg=terminal"},
+			baseStatusStyle},
 		{"set-option", "-t", sessionName, "@stormlight_status_left_base",
-			" #[bold] #{session_name} "},
-		{"set-option", "-t", sessionName, "@stormlight_status_left_length_base", "30"},
-		{"set-option", "-t", sessionName, "@stormlight_prefix_feedback", "1"},
+			baseStatusLeft},
 		{"set-option", "-t", sessionName, "@stormlight_status_style_prefix",
 			"bg=#e5c07b,fg=#1f2328,bold"},
 		{"set-option", "-t", sessionName, "@stormlight_status_left_prefix",
 			" PREFIX  [Q] return  [?] all keys "},
+		{"set-option", "-t", sessionName, "@stormlight_prefix_feedback",
+			prefixFeedbackVersion},
 		{"set-option", "-t", sessionName, "status-style", dynamicStatusStyle},
 		{"set-option", "-t", sessionName, "status-left", dynamicStatusLeft},
-		{"set-option", "-t", sessionName, "status-left-length", "34"},
+		{"set-option", "-t", sessionName, "status-left-length", "40"},
 		{"set-option", "-t", sessionName, "status-right", (&Runtime{}).statusRightHint()},
 		{"set-option", "-t", sessionName, "status-right-length",
 			strconv.Itoa(len((&Runtime{}).statusRightHint()))},

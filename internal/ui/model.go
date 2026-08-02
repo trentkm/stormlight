@@ -3285,24 +3285,48 @@ func (m Model) renderProviderRows(width int) []string {
 
 func (m Model) renderFooter() string {
 	width := max(1, m.width-1)
+	inner := max(1, width-3)
 	var content string
 	if chord := m.chordHints(); chord != "" {
-		content = " " + chord
+		content = chord
 	} else {
 		hints := m.commandHints()
-		content = mutedStyle.Render(" " + truncate(hints, max(1, width-1)))
+		content = mutedStyle.Render(truncate(hints, inner))
 		if m.err != nil {
-			content = renderFooterStatus(width, m.err.Error(), hints, errorStyle)
+			content = renderFooterStatus(inner, m.err.Error(), hints, errorStyle)
 		} else if m.status != "Ready" {
-			content = renderFooterStatus(width, m.status, hints, successStyle)
+			content = renderFooterStatus(inner, m.status, hints, successStyle)
 		}
 	}
-	rule := lipgloss.NewStyle().
-		Foreground(colorBorder).
-		Render(strings.Repeat("─", width))
+	glint := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{
+			Light: wordmarkStopsLight[1],
+			Dark:  wordmarkStopsDark[1],
+		}).
+		Render("✦ ")
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
-		rule + "\n" + content,
+		renderFooterRule(width) + "\n " + glint + content,
 	)
+}
+
+// renderFooterRule tints the divider with the wordmark's sapphire→ice
+// gradient, dimmed toward the border grey — the footer's quiet echo of the
+// header identity.
+func renderFooterRule(width int) string {
+	var out strings.Builder
+	for index := 0; index < width; index++ {
+		t := 0.0
+		if width > 1 {
+			t = float64(index) / float64(width-1)
+		}
+		out.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{
+				Light: lerpHex(gradientStop(wordmarkStopsLight, t), "#AAB3B9", 0.55),
+				Dark:  lerpHex(gradientStop(wordmarkStopsDark, t), "#59636B", 0.55),
+			}).
+			Render("─"))
+	}
+	return out.String()
 }
 
 func (m Model) chordHints() string {
@@ -3334,15 +3358,15 @@ func renderFooterStatus(
 	hints string,
 	statusStyle lipgloss.Style,
 ) string {
-	available := max(1, width-1)
+	available := max(1, width)
 	statusWidth := clamp(available/3, 8, 28)
 	hintWidth := available - statusWidth - 2
 	if hintWidth < 12 {
-		return mutedStyle.Render(" " + truncate(hints, available))
+		return mutedStyle.Render(truncate(hints, available))
 	}
 	renderedStatus := statusStyle.Render(truncate(status, statusWidth))
 	renderedHints := mutedStyle.Render(truncate(hints, hintWidth))
-	return " " + renderedStatus + "  " + renderedHints
+	return renderedStatus + "  " + renderedHints
 }
 
 func (m Model) commandHints() string {
