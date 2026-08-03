@@ -25,3 +25,26 @@ var (
 	// substance than prose without competing with the status colors.
 	Code = lipgloss.AdaptiveColor{Light: "#0E7C6B", Dark: "#8FDCCB"}
 )
+
+// Hex resolves a palette color to a literal hex string.
+//
+// lipgloss carries an AdaptiveColor unresolved and picks a variant when it
+// renders, once it knows the terminal. A markdown stylesheet is not rendered
+// through lipgloss — it is a data structure of color strings handed to the
+// markdown renderer before any output exists — so the choice has to be made
+// here instead, against the background lipgloss detected at startup.
+func Hex(color lipgloss.TerminalColor) string {
+	switch resolved := color.(type) {
+	case lipgloss.Color:
+		return string(resolved)
+	case lipgloss.AdaptiveColor:
+		if Dark() {
+			return resolved.Dark
+		}
+		return resolved.Light
+	}
+	return ""
+}
+
+// Dark reports whether the palette is resolving against a dark terminal.
+func Dark() bool { return lipgloss.HasDarkBackground() }

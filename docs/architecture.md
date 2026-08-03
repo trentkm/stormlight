@@ -107,8 +107,11 @@ styling from tmux capture
 output; other terminal control sequences are discarded. A session rendered
 from a provider's own JSONL transcript arrives unstyled, so the renderer
 paints it: prompts, replies, tool calls, and trimmed results take the
-palette in `internal/theme`, and the markdown Claude writes (headings,
-literals, emphasis) is read back as styling. Wrapping replays the styling in
+palette in `internal/theme`, and the markdown Claude writes is read back as
+styling by Glamour, against a stylesheet built from that same palette in
+`internal/provider/markdown.go`. Glamour's own wrapping is switched off —
+the pane is resizable, so line breaking belongs to the pane, which knows the
+current width. Wrapping replays the styling in
 effect at the head of every continuation row and closes it at the row's end,
 so no color runs into the neighboring pane. Claude and Codex
 interactions focus on content from the first populated prompt and remove only
