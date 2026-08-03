@@ -37,7 +37,7 @@ func (m Model) renderInteraction(width, height int) string {
 	}
 	meta := interactionMeta(
 		strings.Join(metaParts, "  "),
-		worktreeLabel(managedAgent),
+		agentCheckout(managedAgent),
 		shortPath(managedAgent.Cwd),
 		width,
 	)
@@ -131,32 +131,47 @@ func (m Model) renderInteraction(width, height int) string {
 	)
 }
 
-// interactionMeta renders the heading's subtitle. In the main checkout it is
-// one muted line — status tokens then path — truncated as a whole. In a
-// linked worktree the tree's name is set in accent between the two: a path
-// alone never says which of a workspace's checkouts an agent is editing, so
-// the badge is the last token to yield width, and the path — which merely
-// restates it — is the first.
-func interactionMeta(status, worktree, path string, width int) string {
-	if worktree == "" {
+// interactionMeta renders the heading's subtitle. Outside Git it is one muted
+// line — status tokens then path — truncated as a whole. In a Git workspace
+// the checkout is named between the two: a path alone never says which of a
+// workspace's checkouts an agent is editing, and saying nothing for the
+// primary one leaves the reader unable to tell an unbadged agent from a
+// dashboard that does not know. Either way the badge is the last token to
+// yield width, and the path — which merely restates it — is the first.
+func interactionMeta(status string, checkout checkoutBadge, path string, width int) string {
+	if checkout.text == "" {
 		return mutedStyle.Render(
 			truncate(strings.TrimSpace(status+"  "+path), width),
 		)
 	}
 	rendered := mutedStyle.Render(truncate(status, width))
 	badge := truncate(
-		"worktree "+worktree,
+		checkout.text,
 		max(0, width-lipgloss.Width(rendered)-2),
 	)
 	if badge == "" {
 		return rendered
 	}
-	rendered += "  " + accentStyle.Render(badge)
+	rendered += "  " + checkoutStyle(checkout).Render(badge)
 	remaining := width - lipgloss.Width(rendered) - 2
 	if path != "" && remaining > 0 {
 		rendered += "  " + mutedStyle.Render(truncate(path, remaining))
 	}
 	return rendered
+}
+
+// checkoutStyle picks the badge's color. A linked worktree is the tree worth
+// naming loudly, so it keeps the accent; the primary checkout is stated in
+// the muted tone the rest of the meta line uses, because in most repositories
+// working there is simply where the work happens. Only this repository asks
+// otherwise, and painting every workspace's normal case as a problem would be
+// the dashboard shouting a house rule at people who never agreed to it. The
+// alarm belongs to a per-workspace setting (#47); the fact belongs here.
+func checkoutStyle(checkout checkoutBadge) lipgloss.Style {
+	if checkout.primary {
+		return mutedStyle
+	}
+	return accentStyle
 }
 
 func cleanInteraction(content string, width int, providerID agent.Provider) string {

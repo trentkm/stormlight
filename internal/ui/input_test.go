@@ -1741,7 +1741,7 @@ func TestInteractionHidesPreviousAgentTranscript(t *testing.T) {
 	}
 }
 
-func TestInteractionHeadingNamesTheWorktree(t *testing.T) {
+func TestInteractionHeadingNamesTheCheckout(t *testing.T) {
 	checkout := workspace.Context{
 		ID:            "git:/repo/.git",
 		Kind:          workspace.KindGit,
@@ -1751,9 +1751,10 @@ func TestInteractionHeadingNamesTheWorktree(t *testing.T) {
 	}
 	worktree := checkout
 	worktree.ExecutionRoot = "/repo/.claude/worktrees/fix-auth"
+	loose := workspace.DirectoryContext("/scratch")
 
 	model := NewModel(stubBackend{})
-	model.catalogWorkspaces = []workspace.Context{checkout}
+	model.catalogWorkspaces = []workspace.Context{checkout, loose}
 	model.agents = []agent.Agent{
 		{ID: "main", Name: "main", Cwd: "/repo", Workspace: checkout},
 		{
@@ -1762,45 +1763,121 @@ func TestInteractionHeadingNamesTheWorktree(t *testing.T) {
 			Cwd:       "/repo/.claude/worktrees/fix-auth",
 			Workspace: worktree,
 		},
+		{ID: "loose", Name: "loose", Cwd: "/scratch", Workspace: loose},
 	}
 
-	model.rebuildGroups(checkout.ID, "linked")
-	model.interactionID = "linked"
-	rendered := ansi.Strip(model.renderInteraction(80, 20))
-	if !strings.Contains(rendered, "worktree fix-auth") {
-		t.Fatalf("heading hides the worktree:\n%s", rendered)
+	for _, testCase := range []struct {
+		name      string
+		workspace string
+		agent     string
+		want      string
+		absent    []string
+	}{
+		{
+			name:      "linked worktree wears its own name",
+			workspace: checkout.ID,
+			agent:     "linked",
+			want:      "worktree fix-auth",
+			absent:    []string{"main checkout"},
+		},
+		{
+			name:      "primary checkout says so",
+			workspace: checkout.ID,
+			agent:     "main",
+			want:      "main checkout",
+			absent:    []string{"worktree"},
+		},
+		{
+			name:      "outside git names no checkout",
+			workspace: loose.ID,
+			agent:     "loose",
+			absent:    []string{"worktree", "main checkout"},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			model.rebuildGroups(testCase.workspace, testCase.agent)
+			model.interactionID = testCase.agent
+			rendered := ansi.Strip(model.renderInteraction(80, 20))
+			if testCase.want != "" && !strings.Contains(rendered, testCase.want) {
+				t.Fatalf("heading hides %q:\n%s", testCase.want, rendered)
+			}
+			for _, absent := range testCase.absent {
+				if strings.Contains(rendered, absent) {
+					t.Fatalf("heading claims %q:\n%s", absent, rendered)
+				}
+			}
+		})
 	}
+}
 
-	model.rebuildGroups(checkout.ID, "main")
-	model.interactionID = "main"
-	rendered = ansi.Strip(model.renderInteraction(80, 20))
-	if strings.Contains(rendered, "worktree") {
-		t.Fatalf("main checkout claims a worktree:\n%s", rendered)
+// The accent marks the checkout worth picking out of several; the primary one
+// is stated, not flagged, because in most repositories it is simply where the
+// work happens.
+func TestCheckoutBadgeColors(t *testing.T) {
+	linked := checkoutStyle(checkoutBadge{text: "worktree fix-auth"})
+	if linked.GetForeground() != colorAccent {
+		t.Fatalf("linked worktree lost its accent: %v", linked.GetForeground())
+	}
+	primary := checkoutStyle(checkoutBadge{text: "main checkout", primary: true})
+	if primary.GetForeground() != colorMuted {
+		t.Fatalf("primary checkout is not muted: %v", primary.GetForeground())
 	}
 }
 
 // A narrow pane drops the path before the badge: the path restates the
-// worktree, the badge is the only token that names it.
-func TestInteractionMetaKeepsWorktreeOverPath(t *testing.T) {
-	wide := ansi.Strip(interactionMeta(
-		"claude  working", "fix-auth", "~/repo/.claude/worktrees/fix-auth", 80,
-	))
-	if !strings.Contains(wide, "worktree fix-auth") ||
-		!strings.Contains(wide, "~/repo") {
-		t.Fatalf("wide meta line lost a token: %q", wide)
-	}
+// checkout, the badge is the only token that names it.
+func TestInteractionMetaKeepsCheckoutOverPath(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		badge   checkoutBadge
+		path    string
+		narrow  int
+		keeps   string
+		dropped string
+	}{
+		{
+			name:    "linked worktree",
+			badge:   checkoutBadge{text: "worktree fix-auth"},
+			path:    "~/repo/.claude/worktrees/fix-auth",
+			narrow:  34,
+			keeps:   "worktree fix-auth",
+			dropped: "~/repo",
+		},
+		{
+			name:    "primary checkout",
+			badge:   checkoutBadge{text: "main checkout", primary: true},
+			path:    "~/repos/stormlight",
+			narrow:  32,
+			keeps:   "main checkout",
+			dropped: "~/repos",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			wide := ansi.Strip(interactionMeta(
+				"claude  working", testCase.badge, testCase.path, 80,
+			))
+			if !strings.Contains(wide, testCase.keeps) ||
+				!strings.Contains(wide, testCase.dropped) {
+				t.Fatalf("wide meta line lost a token: %q", wide)
+			}
 
-	narrow := ansi.Strip(interactionMeta(
-		"claude  working", "fix-auth", "~/repo/.claude/worktrees/fix-auth", 34,
-	))
-	if !strings.Contains(narrow, "worktree fix-auth") {
-		t.Fatalf("narrow meta line dropped the worktree: %q", narrow)
-	}
-	if strings.Contains(narrow, "~/repo") {
-		t.Fatalf("narrow meta line kept the path: %q", narrow)
-	}
-	if width := ansi.StringWidth(narrow); width > 34 {
-		t.Fatalf("meta line overflows the pane: %d columns in %q", width, narrow)
+			narrow := ansi.Strip(interactionMeta(
+				"claude  working", testCase.badge, testCase.path, testCase.narrow,
+			))
+			if !strings.Contains(narrow, testCase.keeps) {
+				t.Fatalf("narrow meta line dropped the checkout: %q", narrow)
+			}
+			if strings.Contains(narrow, testCase.dropped) {
+				t.Fatalf("narrow meta line kept the path: %q", narrow)
+			}
+			if width := ansi.StringWidth(narrow); width > testCase.narrow {
+				t.Fatalf(
+					"meta line overflows the pane: %d columns in %q",
+					width,
+					narrow,
+				)
+			}
+		})
 	}
 }
 
