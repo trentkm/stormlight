@@ -107,6 +107,7 @@ const (
 	dispatchProvider dispatchFocus = iota
 	dispatchDirectory
 	dispatchCustomPath
+	dispatchName
 	dispatchTask
 )
 
@@ -131,6 +132,7 @@ type Model struct {
 	providers               []provider.Info
 	providerIndex           int
 	cwdInput                lineInput
+	nameInput               lineInput
 	taskInput               textarea.Model
 	sendInput               textarea.Model
 	initialCwd              string
@@ -255,6 +257,8 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 	cwdInput := newLineInput("")
 	cwdInput.SetValue(cwd)
 
+	nameInput := newLineInput("Named after the task")
+
 	taskInput := newTaskInput("What should the agent do?")
 
 	sendInput := newTaskInput("Reply to the selected agent")
@@ -270,6 +274,7 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		surface:            current,
 		providers:          backend.Providers(),
 		cwdInput:           cwdInput,
+		nameInput:          nameInput,
 		taskInput:          taskInput,
 		sendInput:          sendInput,
 		initialCwd:         cwd,
@@ -311,6 +316,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.interaction.Width = interactionWidth
 			m.interaction.Height = contentHeight
+		}
+		// A shrink can drop the optional name row out of the form; typing
+		// must not keep landing in a field that is no longer drawn.
+		if m.mode == modeDispatch && m.formFocus == dispatchName &&
+			!m.dispatchNameVisible() {
+			m.formFocus = dispatchTask
+			m.focusForm()
 		}
 		return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
 

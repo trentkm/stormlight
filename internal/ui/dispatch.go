@@ -145,12 +145,19 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.focusForm()
 			return m, nil
+		case dispatchName:
+			m.formFocus = dispatchTask
+			m.focusForm()
+			return m, nil
 		case dispatchTask:
 			return m.submitDispatch()
 		}
 	}
 
 	switch m.formFocus {
+	case dispatchName:
+		m.nameInput = m.nameInput.Update(msg)
+		return m, nil
 	case dispatchTask:
 		var cmd tea.Cmd
 		m.taskInput, cmd = m.taskInput.Update(msg)
@@ -159,19 +166,18 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) renderDispatchModal(width, height int) string {
+func (m Model) dispatchModalDimensions(width, height int) (int, int) {
 	preferredWidth := 62
-	preferredHeight := 18
+	preferredHeight := 21
 	if m.chooseDispatchDirectory {
 		preferredWidth = 78
-		preferredHeight = 24
+		preferredHeight = 27
 	}
-	modalWidth, modalHeight := modalDimensions(
-		width,
-		height,
-		preferredWidth,
-		preferredHeight,
-	)
+	return modalDimensions(width, height, preferredWidth, preferredHeight)
+}
+
+func (m Model) renderDispatchModal(width, height int) string {
+	modalWidth, modalHeight := m.dispatchModalDimensions(width, height)
 	innerWidth := max(1, modalWidth-2)
 	innerHeight := max(1, modalHeight-2)
 	return renderModal(
@@ -242,6 +248,21 @@ func (m Model) renderDispatch(width int) string {
 	return m.renderDispatchAt(width, max(12, m.height-5))
 }
 
+// roomyForm reports whether the new-agent form has height to spare. A tight
+// form drops its breathing room and the optional name row; the task
+// composer is never what gets cut.
+func roomyForm(height int) bool {
+	return height >= 15
+}
+
+// dispatchNameVisible answers the same question against the modal the
+// current terminal actually produces, so focus can skip a field that isn't
+// drawn — a cursor in an invisible input is worse than no field at all.
+func (m Model) dispatchNameVisible() bool {
+	_, modalHeight := m.dispatchModalDimensions(m.bodyDimensions())
+	return roomyForm(max(1, modalHeight-2))
+}
+
 func (m Model) renderDispatchAt(width, height int) string {
 	providerStyle := titleStyle
 	if m.formFocus == dispatchProvider {
@@ -249,9 +270,13 @@ func (m Model) renderDispatchAt(width, height int) string {
 	}
 
 	directoryStyle := titleStyle
+	nameStyle := titleStyle
 	taskStyle := titleStyle
 	if m.formFocus == dispatchDirectory {
 		directoryStyle = accentStyle
+	}
+	if m.formFocus == dispatchName {
+		nameStyle = accentStyle
 	}
 	if m.formFocus == dispatchTask {
 		taskStyle = accentStyle
@@ -302,11 +327,24 @@ func (m Model) renderDispatchAt(width, height int) string {
 		}
 	}
 
-	roomy := height >= 15
+	roomy := roomyForm(height)
 	if roomy {
 		lines = append(lines, "")
 	}
 	lines = append(lines, "  "+m.renderDispatchModeLine(contentWidth))
+
+	if roomy {
+		lines = append(lines,
+			"",
+			"  "+m.renderDispatchSectionTitle(
+				nameStyle,
+				"Name",
+				"optional",
+				contentWidth,
+			),
+			"    "+m.renderNameField(max(10, contentWidth-2)),
+		)
+	}
 
 	taskDetail := fmt.Sprintf(
 		"%d chars",
@@ -338,6 +376,15 @@ func indentLines(block, prefix string) string {
 		rows[i] = prefix + row
 	}
 	return strings.Join(rows, "\n")
+}
+
+// renderNameField draws the optional agent name as a single row. It stays
+// unboxed on purpose: the task composer's border marks where the multi-line
+// field is, and a second box around a one-liner would read as equal weight.
+func (m Model) renderNameField(width int) string {
+	input := m.nameInput
+	input.SetWidth(width)
+	return input.View()
 }
 
 func (m Model) renderTaskComposer(width, height int) string {
@@ -629,10 +676,13 @@ func (m Model) renderProviderRows(width int) []string {
 
 func (m *Model) focusForm() {
 	m.cwdInput.Blur()
+	m.nameInput.Blur()
 	m.taskInput.Blur()
 	switch m.formFocus {
 	case dispatchCustomPath:
 		m.pathNav.filter.Focus()
+	case dispatchName:
+		m.nameInput.Focus()
 	case dispatchTask:
 		m.taskInput.Focus()
 	}
@@ -689,6 +739,7 @@ func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
 
 func (m *Model) blurForm() {
 	m.cwdInput.Blur()
+	m.nameInput.Blur()
 	m.taskInput.Blur()
 }
 
@@ -855,31 +906,25 @@ func (m *Model) editSelectedDirectory() {
 	m.focusForm()
 }
 
+// dispatchFocusOrder is the tab cycle through the new-agent form, in the
+// order the fields are drawn.
+func (m Model) dispatchFocusOrder() []dispatchFocus {
+	focuses := []dispatchFocus{dispatchProvider}
+	if m.chooseDispatchDirectory {
+		focuses = append(focuses, dispatchDirectory)
+		if selected, ok := m.selectedDirectory(); ok &&
+			selected.kind == directoryCustom {
+			focuses = append(focuses, dispatchCustomPath)
+		}
+	}
+	if m.dispatchNameVisible() {
+		focuses = append(focuses, dispatchName)
+	}
+	return append(focuses, dispatchTask)
+}
+
 func (m *Model) moveDispatchFocus(delta int) {
-	if !m.chooseDispatchDirectory {
-		focuses := []dispatchFocus{dispatchProvider, dispatchTask}
-		current := 0
-		if m.formFocus == dispatchTask {
-			current = 1
-		}
-		m.formFocus = focuses[(current+delta+len(focuses))%len(focuses)]
-		m.focusForm()
-		return
-	}
-	focuses := []dispatchFocus{
-		dispatchProvider,
-		dispatchDirectory,
-		dispatchTask,
-	}
-	if selected, ok := m.selectedDirectory(); ok &&
-		selected.kind == directoryCustom {
-		focuses = []dispatchFocus{
-			dispatchProvider,
-			dispatchDirectory,
-			dispatchCustomPath,
-			dispatchTask,
-		}
-	}
+	focuses := m.dispatchFocusOrder()
 	current := 0
 	for index, focus := range focuses {
 		if focus == m.formFocus {
@@ -887,8 +932,7 @@ func (m *Model) moveDispatchFocus(delta int) {
 			break
 		}
 	}
-	current = (current + delta + len(focuses)) % len(focuses)
-	m.formFocus = focuses[current]
+	m.formFocus = focuses[(current+delta+len(focuses))%len(focuses)]
 	m.focusForm()
 }
 
@@ -899,6 +943,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	}
 	request := app.DispatchRequest{
 		Provider: m.providers[m.providerIndex].ID,
+		Name:     strings.TrimSpace(m.nameInput.Value()),
 		Cwd:      strings.TrimSpace(m.cwdInput.Value()),
 		Task:     strings.TrimSpace(m.taskInput.Value()),
 		Mode:     m.dispatchMode,
@@ -915,6 +960,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	m.blurForm()
 	m.status = "Dispatching " + m.providers[m.providerIndex].Label
 	m.taskInput.SetValue("")
+	m.nameInput.SetValue("")
 	return m, dispatchCmd(m.backend, request)
 }
 
