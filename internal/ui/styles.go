@@ -5,40 +5,67 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
 // The palette lives in internal/theme so the transcript renderer can paint
 // with the same colors; these are the names the dashboard reads by.
-var (
-	colorAccent       = theme.Accent
-	colorText         = theme.Text
-	colorMuted        = theme.Muted
-	colorWorking      = theme.Working
-	colorWaiting      = theme.Waiting
-	colorDone         = theme.Done
-	colorFailed       = theme.Failed
-	colorBorder       = theme.Border
-	colorSelect       = theme.Select
-	colorSelectedText = theme.SelectedText
-	colorDangerBg     = theme.DangerBg
+//
+// They are functions rather than variables because a palette entry cannot
+// resolve until the terminal has answered which background it draws on, and
+// that answer arrives as a message well after package initialization. A
+// variable would capture the guess made before the answer; a function
+// re-resolves on every frame, so the first frame after the answer lands is
+// already painted correctly.
+func colorAccent() color.Color       { return theme.Color(theme.Accent) }
+func colorText() color.Color         { return theme.Color(theme.Text) }
+func colorMuted() color.Color        { return theme.Color(theme.Muted) }
+func colorWorking() color.Color      { return theme.Color(theme.Working) }
+func colorWaiting() color.Color      { return theme.Color(theme.Waiting) }
+func colorDone() color.Color         { return theme.Color(theme.Done) }
+func colorFailed() color.Color       { return theme.Color(theme.Failed) }
+func colorBorder() color.Color       { return theme.Color(theme.Border) }
+func colorSelect() color.Color       { return theme.Color(theme.Select) }
+func colorSelectedText() color.Color { return theme.Color(theme.SelectedText) }
+func colorDangerBg() color.Color     { return theme.Color(theme.DangerBg) }
 
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorText)
-	// attentionBandStyle is the unmissable full-width bar for an agent
-	// blocked on human input — amber ground, dark text, no subtlety.
-	attentionBandStyle = lipgloss.NewStyle().
-				Bold(true).
-				Background(colorWaiting).
-				Foreground(lipgloss.AdaptiveColor{Light: "#FFF6E5", Dark: "#1F2328"})
-	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted)
-	accentStyle  = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	errorStyle   = lipgloss.NewStyle().Foreground(colorFailed)
-	successStyle = lipgloss.NewStyle().Foreground(colorDone)
-)
+func titleStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(colorText())
+}
+
+// attentionBandInk is the band's own ink rather than a shared palette entry:
+// it is picked to sit on the amber ground, not on the terminal's background.
+var attentionBandInk = theme.Pair{Light: "#FFF6E5", Dark: "#1F2328"}
+
+// attentionBandStyle() is the unmissable full-width bar for an agent blocked
+// on human input — amber ground, dark text, no subtlety.
+func attentionBandStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Bold(true).
+		Background(colorWaiting()).
+		Foreground(theme.Color(attentionBandInk))
+}
+
+func mutedStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(colorMuted())
+}
+
+func accentStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(colorAccent()).Bold(true)
+}
+
+func errorStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(colorFailed())
+}
+
+func successStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(colorDone())
+}
 
 // Working things glow: a brighter band sweeps across their text — the
 // closest a terminal gets to holding stormlight. stormlightGlow orders the
@@ -51,7 +78,7 @@ const stormlightTitle = "Stormlight"
 // rests at the base shade between passes instead of wrapping abruptly.
 const shimmerRest = 14
 
-var stormlightGlow = []lipgloss.AdaptiveColor{
+var stormlightGlow = []theme.Pair{
 	{Light: "#0F7A90", Dark: "#3BA8BD"},
 	{Light: "#0A93AE", Dark: "#5CC6DB"},
 	{Light: "#00A9C9", Dark: "#8AE7F8"},
@@ -71,7 +98,7 @@ func shimmerBand(length, phase int) int {
 	return phase%(length+shimmerRest) - 4
 }
 
-func shimmerText(text string, phase int, background lipgloss.TerminalColor) string {
+func shimmerText(text string, phase int, background color.Color) string {
 	return shimmerTextWith(stormlightGlow, text, phase, background)
 }
 
@@ -81,7 +108,7 @@ func shimmerText(text string, phase int, background lipgloss.TerminalColor) stri
 var (
 	wordmarkStopsDark  = [3]string{"#7AA2F7", "#7DCFFF", "#C8F7EF"}
 	wordmarkStopsLight = [3]string{"#2450A8", "#0E6FA8", "#0D8A80"}
-	wordmarkCrest      = lipgloss.AdaptiveColor{Light: "#001B4D", Dark: "#FFFFFF"}
+	wordmarkCrest      = theme.Pair{Light: "#001B4D", Dark: "#FFFFFF"}
 )
 
 func hexChannel(hex string, index int) int {
@@ -114,10 +141,10 @@ func renderWordmark(phase int) string {
 	band := shimmerBand(len(runes), phase)
 	var out strings.Builder
 	glint := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{
+		Foreground(theme.Color(theme.Pair{
 			Light: wordmarkStopsLight[1],
 			Dark:  wordmarkStopsDark[1],
-		})
+		}))
 	out.WriteString(glint.Render("✦ "))
 	for index, letter := range runes {
 		t := 0.0
@@ -136,17 +163,17 @@ func renderWordmark(phase int) string {
 		}
 		out.WriteString(lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: light, Dark: dark}).
+			Foreground(theme.Color(theme.Pair{Light: light, Dark: dark})).
 			Render(string(letter)))
 	}
 	return out.String()
 }
 
 func shimmerTextWith(
-	glow []lipgloss.AdaptiveColor,
+	glow []theme.Pair,
 	text string,
 	phase int,
-	background lipgloss.TerminalColor,
+	background color.Color,
 ) string {
 	runes := []rune(text)
 	band := shimmerBand(len(runes), phase)
@@ -159,7 +186,7 @@ func shimmerTextWith(
 		shade := max(0, len(glow)-1-distance)
 		style := lipgloss.NewStyle().
 			Bold(true).
-			Foreground(glow[shade])
+			Foreground(theme.Color(glow[shade]))
 		if background != nil {
 			style = style.Background(background)
 		}
@@ -168,33 +195,36 @@ func shimmerTextWith(
 	return out.String()
 }
 
-// rowTheme colors a selected list row. selectTheme is the normal selection;
-// dangerTheme marks a row awaiting delete confirmation.
+// rowTheme colors a selected list row. selectTheme() is the normal selection;
+// dangerTheme() marks a row awaiting delete confirmation.
 type rowTheme struct {
-	background lipgloss.TerminalColor
-	text       lipgloss.TerminalColor
-	focusMark  lipgloss.TerminalColor
-	restMark   lipgloss.TerminalColor
+	background color.Color
+	text       color.Color
+	focusMark  color.Color
+	restMark   color.Color
 }
 
-var (
-	selectTheme = rowTheme{
-		background: colorSelect,
-		text:       colorSelectedText,
-		focusMark:  colorWaiting,
-		restMark:   colorBorder,
+func selectTheme() rowTheme {
+	return rowTheme{
+		background: colorSelect(),
+		text:       colorSelectedText(),
+		focusMark:  colorWaiting(),
+		restMark:   colorBorder(),
 	}
-	dangerTheme = rowTheme{
-		background: colorDangerBg,
-		text:       colorSelectedText,
-		focusMark:  colorFailed,
-		restMark:   colorFailed,
+}
+
+func dangerTheme() rowTheme {
+	return rowTheme{
+		background: colorDangerBg(),
+		text:       colorSelectedText(),
+		focusMark:  colorFailed(),
+		restMark:   colorFailed(),
 	}
-)
+}
 
 func rowThemeFor(danger bool) rowTheme {
 	if danger {
-		return dangerTheme
+		return dangerTheme()
 	}
-	return selectTheme
+	return selectTheme()
 }

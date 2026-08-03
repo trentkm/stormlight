@@ -5,12 +5,14 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"regexp"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trentkm/stormlight/internal/theme"
 )
 
 func (m Model) renderHeader() string {
@@ -23,11 +25,11 @@ func (m Model) renderHeader() string {
 	// statusVisual paints down the agent list, so the header doubles as the
 	// legend for everything below it.
 	counts := []string{
-		renderHeaderCount("●", colorWorking, false,
+		renderHeaderCount("●", colorWorking(), false,
 			fmt.Sprintf("%d working", working)),
 	}
 	if waiting > 0 {
-		counts = append(counts, renderHeaderCount("○", colorWaiting, false,
+		counts = append(counts, renderHeaderCount("○", colorWaiting(), false,
 			fmt.Sprintf("%d waiting", waiting)))
 	}
 	if urgent > 0 {
@@ -36,9 +38,9 @@ func (m Model) renderHeader() string {
 			attentionLabel = "1 needs input"
 		}
 		counts = append(counts,
-			renderHeaderCount("!", colorWaiting, true, attentionLabel))
+			renderHeaderCount("!", colorWaiting(), true, attentionLabel))
 	}
-	right := strings.Join(counts, mutedStyle.Render("  ·  "))
+	right := strings.Join(counts, mutedStyle().Render("  ·  "))
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right)-1)
 	return left + strings.Repeat(" ", gap) + right + " "
 }
@@ -46,9 +48,9 @@ func (m Model) renderHeader() string {
 // renderHeaderCount pairs a count with the glyph the agent rows use for that
 // state. The glyph carries the color and the words stay muted, except for the
 // input tier, which is the one thing in the header worth raising a voice over.
-func renderHeaderCount(symbol string, color lipgloss.TerminalColor, loud bool, label string) string {
+func renderHeaderCount(symbol string, color color.Color, loud bool, label string) string {
 	symbolStyle := lipgloss.NewStyle().Foreground(color)
-	labelStyle := mutedStyle
+	labelStyle := mutedStyle()
 	if loud {
 		symbolStyle = symbolStyle.Bold(true)
 		labelStyle = lipgloss.NewStyle().Foreground(color).Bold(true)
@@ -305,7 +307,7 @@ func paintHierarchyConnector(
 	// The connector lives in the column just inside the rule, so the arc
 	// reaches toward the agent it names without crowding the divider,
 	// spanning exactly its two endpoint rows with rounded caps.
-	style := lipgloss.NewStyle().Foreground(colorWaiting)
+	style := lipgloss.NewStyle().Foreground(colorWaiting())
 	first := min(workspaceRow, agentRow)
 	last := max(workspaceRow, agentRow)
 	for row := first; row <= last; row++ {
@@ -387,11 +389,14 @@ func renderModal(content string, width, height int) string {
 	innerWidth := width - 2
 	innerHeight := height - 2
 	content = fitBlock(content, innerWidth, innerHeight)
+	// Width and Height are the modal's outside edges: v2 sizes a box the way
+	// CSS border-box does, counting the frame within the number rather than
+	// adding it on top. The content is still fitted to the inside.
 	return lipgloss.NewStyle().
-		Width(innerWidth).
-		Height(innerHeight).
+		Width(width).
+		Height(height).
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorWaiting).
+		BorderForeground(colorWaiting()).
 		Render(content)
 }
 
@@ -572,8 +577,8 @@ func (m Model) resizeColumns(key string) (tea.Model, tea.Cmd) {
 	m.columns.AgentAdjust = afterA - baseA
 	saveColumnPrefs(m.columns)
 	interactionWidth, contentHeight := m.interactionDimensions()
-	m.interaction.Width = interactionWidth
-	m.interaction.Height = contentHeight
+	m.interaction.SetWidth(interactionWidth)
+	m.interaction.SetHeight(contentHeight)
 	m.status = fmt.Sprintf("Columns %d · %d · %d", afterW, afterA, afterI)
 	return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
 }
@@ -640,12 +645,12 @@ func (s paneSeam) border() lipgloss.Border {
 // hangs from — the catalog's divider is made of the same faded gradient as
 // the frame it descends out of, which subordinates it to the accent seam by
 // material as well as by weight.
-func seamColor(seam paneSeam, band headerBand, width int) lipgloss.TerminalColor {
+func seamColor(seam paneSeam, band headerBand, width int) color.Color {
 	if seam == seamPlane || band.total <= 1 {
-		return colorAccent
+		return colorAccent()
 	}
 	column := clamp(band.start+width-1, 0, band.total-1)
-	return bandColor(float64(column)/float64(band.total-1), false)
+	return theme.Color(bandColor(float64(column)/float64(band.total-1), false))
 }
 
 // paneEdges describes both sides of a pane's frame. A plane seam is drawn in
@@ -697,8 +702,12 @@ func (m Model) renderPane(
 		// pane holds the cursor, so the accent on the plane seam reads as a
 		// permanent fixture rather than a focus signal. Focus stays with the
 		// header underline and the single hot cursor row.
+		//
+		// The style keeps the pane's full width because v2 counts the seam
+		// inside it; innerWidth is what is left for content once the seam
+		// has taken its column.
 		innerWidth = max(1, width-1)
-		style = style.Width(innerWidth).
+		style = style.Width(max(1, width)).
 			BorderStyle(edges.right.border()).
 			BorderRight(true).
 			BorderForeground(seamColor(edges.right, frame.band, width))
@@ -821,9 +830,9 @@ func renderPaneHeader(
 	// text above it. lazygit sets its titles into the rule the same way.
 	// Each label is followed by a blank the band skips, so the line resumes
 	// clear of the descenders.
-	labelStyle := mutedStyle.Copy().Bold(true)
+	labelStyle := mutedStyle().Copy().Bold(true)
 	if active {
-		labelStyle = titleStyle.Copy()
+		labelStyle = titleStyle().Copy()
 	}
 	// The padding sits outside truncate, which collapses whitespace runs and
 	// would otherwise eat it.
@@ -835,9 +844,9 @@ func renderPaneHeader(
 		return left + fill(leftWidth, width-leftWidth)
 	}
 
-	rightStyle := mutedStyle.Copy()
+	rightStyle := mutedStyle().Copy()
 	if strings.ContainsAny(contextLabel, "‹›") {
-		rightStyle = accentStyle.Copy()
+		rightStyle = accentStyle().Copy()
 	}
 	right := rightStyle.Render(" " + truncate(contextLabel, remaining) + " ")
 	rightWidth := lipgloss.Width(right)
@@ -903,8 +912,8 @@ func (m Model) expandedRows() bool {
 }
 
 func (m Model) visibleRows() int {
-	if m.activePane == paneInteraction && m.interaction.Height > 0 {
-		return m.interaction.Height
+	if m.activePane == paneInteraction && m.interaction.Height() > 0 {
+		return m.interaction.Height()
 	}
 	return max(1, (m.height-3)/2)
 }

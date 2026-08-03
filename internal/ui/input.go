@@ -1,34 +1,14 @@
 package ui
 
 import (
-	"regexp"
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
-
-// Fast wheel bursts can split SGR mouse reports (ESC [ < b ; x ; y M/m)
-// across input reads. Bubble Tea v1 parses the complete reports as mouse
-// events but delivers the fragments as literal key runes, which then type
-// mouse garbage into whatever input is focused. DropMouseFragments is a
-// tea.WithFilter hook that discards rune batches shaped like those
-// fragments; no human types "[<65;127;30M".
-var mouseFragmentPattern = regexp.MustCompile(`^\[?<[0-9;]{4,}[Mm]?$`)
-
-func DropMouseFragments(_ tea.Model, msg tea.Msg) tea.Msg {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok || key.Type != tea.KeyRunes {
-		return msg
-	}
-	if mouseFragmentPattern.MatchString(string(key.Runes)) {
-		return nil
-	}
-	return msg
-}
 
 type lineInput struct {
 	value       []rune
@@ -55,20 +35,25 @@ func newTaskInput(placeholder string) textarea.Model {
 	input.SetWidth(40)
 	input.SetHeight(4)
 
-	focused := textarea.Style{
-		Base:        lipgloss.NewStyle().Foreground(colorText),
-		CursorLine:  lipgloss.NewStyle().Foreground(colorText),
-		EndOfBuffer: lipgloss.NewStyle().Foreground(colorText),
-		Placeholder: lipgloss.NewStyle().Foreground(colorMuted),
-		Prompt:      lipgloss.NewStyle().Foreground(colorAccent),
-		Text:        lipgloss.NewStyle().Foreground(colorText),
+	// v2 gathers the focused and blurred variants into one Styles value and
+	// gives the cursor its own, so the pair is set together rather than
+	// through separate fields.
+	state := textarea.StyleState{
+		Base:        lipgloss.NewStyle().Foreground(colorText()),
+		CursorLine:  lipgloss.NewStyle().Foreground(colorText()),
+		EndOfBuffer: lipgloss.NewStyle().Foreground(colorText()),
+		Placeholder: lipgloss.NewStyle().Foreground(colorMuted()),
+		Prompt:      lipgloss.NewStyle().Foreground(colorAccent()),
+		Text:        lipgloss.NewStyle().Foreground(colorText()),
 	}
-	blurred := focused
-	blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
-	input.FocusedStyle = focused
-	input.BlurredStyle = blurred
-	input.Cursor.Style = lipgloss.NewStyle().Reverse(true)
-	input.Cursor.TextStyle = lipgloss.NewStyle().Foreground(colorText)
+	input.SetStyles(textarea.Styles{
+		Focused: state,
+		Blurred: state,
+		// The cursor is now described rather than styled: v2 drives the
+		// terminal's real cursor, so it takes a color and a shape instead
+		// of a reversed lipgloss style.
+		Cursor: textarea.CursorStyle{Color: colorText()},
+	})
 	return input
 }
 
@@ -93,7 +78,7 @@ func (i *lineInput) SetWidth(width int) {
 	i.width = max(1, width)
 }
 
-func (i lineInput) Update(msg tea.KeyMsg) lineInput {
+func (i lineInput) Update(msg tea.KeyPressMsg) lineInput {
 	if !i.focused {
 		return i
 	}
@@ -136,11 +121,11 @@ func (i lineInput) Update(msg tea.KeyMsg) lineInput {
 		i.value = append(i.value[:start], i.value[i.cursor:]...)
 		i.cursor = start
 	default:
-		runes := msg.Runes
-		if msg.Type == tea.KeySpace {
-			runes = []rune{' '}
-		}
-		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+		// Text is non-empty exactly when the key produced printable
+		// characters, which folds v1's separate rune and space cases into
+		// one: space arrives as Text " " like any other character.
+		if msg.Text != "" {
+			runes := []rune(msg.Text)
 			i.value = append(i.value[:i.cursor], append(runes, i.value[i.cursor:]...)...)
 			i.cursor += len(runes)
 		}
@@ -150,7 +135,7 @@ func (i lineInput) Update(msg tea.KeyMsg) lineInput {
 
 func (i lineInput) View() string {
 	if len(i.value) == 0 {
-		placeholder := mutedStyle.Render(ansi.Truncate(i.placeholder, i.width, "…"))
+		placeholder := mutedStyle().Render(ansi.Truncate(i.placeholder, i.width, "…"))
 		if !i.focused {
 			return placeholder
 		}

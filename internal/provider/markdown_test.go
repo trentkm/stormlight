@@ -1,12 +1,12 @@
 package provider
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
@@ -16,6 +16,11 @@ import (
 //
 // Every run is emitted as <SGR>text<reset>, which is also what lets the
 // Spanreed pane reopen a run that wrapping cut in half.
+//
+// OSC sequences are stepped over rather than read as text. Glamour wraps
+// links in OSC 8 hyperlinks, which carry the URL as a parameter as well as
+// showing it — so treating the escape as content finds the URL inside the
+// preceding run's hyperlink and reports that run's styling instead.
 func runSGR(t *testing.T, rendered, want string) string {
 	t.Helper()
 	active := ""
@@ -29,7 +34,15 @@ func runSGR(t *testing.T, rendered, want string) string {
 			rest = rest[end+1:]
 			continue
 		}
-		text, next := rest, strings.Index(rest[1:], "\x1b[")
+		if strings.HasPrefix(rest, "\x1b]") {
+			end := strings.IndexByte(rest, '\a')
+			if end < 0 {
+				break
+			}
+			rest = rest[end+1:]
+			continue
+		}
+		text, next := rest, nextEscape(rest[1:])
 		if next >= 0 {
 			text = rest[:next+1]
 		}
@@ -45,10 +58,27 @@ func runSGR(t *testing.T, rendered, want string) string {
 	return ""
 }
 
+// nextEscape reports where the next escape sequence of any kind begins.
+func nextEscape(s string) int { return strings.IndexByte(s, '\x1b') }
+
 // paletteSGR is the foreground sequence a palette color reaches the terminal
 // as, resolved the same way the renderer resolves it.
-func paletteSGR(color lipgloss.TerminalColor) string {
-	return termenv.TrueColor.Color(theme.Hex(color)).Sequence(false)
+//
+// The channels are read straight out of the hex rather than through a color
+// library. termenv, which this used to ask, round-trips through its own
+// color space and comes back off by one on some channels — #62AEEF returned
+// 97 where the byte plainly says 98 — so it was measuring its own conversion
+// rather than what the renderer emits.
+func paletteSGR(pair theme.Pair) string {
+	hex := theme.Hex(pair)
+	channel := func(index int) int {
+		value, err := strconv.ParseInt(hex[1+index*2:3+index*2], 16, 32)
+		if err != nil {
+			return 0
+		}
+		return int(value)
+	}
+	return fmt.Sprintf("38;2;%d;%d;%d", channel(0), channel(1), channel(2))
 }
 
 func TestRenderMarkdownReadsBackMarkdown(t *testing.T) {
