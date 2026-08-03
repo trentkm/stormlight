@@ -444,7 +444,13 @@ func TestDispatchWithoutANameLaunchesUnnamed(t *testing.T) {
 	updated, _ = model.beginDispatch(false)
 	model = updated.(Model)
 
-	// Enter on the provider skips straight past the optional name.
+	// Enter stops on the optional name; leaving it blank is what makes the
+	// launch unnamed.
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if model.formFocus != dispatchName {
+		t.Fatalf("Enter focus = %v, want the name field", model.formFocus)
+	}
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
 	if model.formFocus != dispatchTask {
