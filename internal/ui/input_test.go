@@ -1591,6 +1591,69 @@ func TestInteractionHidesPreviousAgentTranscript(t *testing.T) {
 	}
 }
 
+func TestInteractionHeadingNamesTheWorktree(t *testing.T) {
+	checkout := workspace.Context{
+		ID:            "git:/repo/.git",
+		Kind:          workspace.KindGit,
+		Name:          "repo",
+		Root:          "/repo",
+		ExecutionRoot: "/repo",
+	}
+	worktree := checkout
+	worktree.ExecutionRoot = "/repo/.claude/worktrees/fix-auth"
+
+	model := NewModel(stubBackend{})
+	model.catalogWorkspaces = []workspace.Context{checkout}
+	model.agents = []agent.Agent{
+		{ID: "main", Name: "main", Cwd: "/repo", Workspace: checkout},
+		{
+			ID:        "linked",
+			Name:      "linked",
+			Cwd:       "/repo/.claude/worktrees/fix-auth",
+			Workspace: worktree,
+		},
+	}
+
+	model.rebuildGroups(checkout.ID, "linked")
+	model.interactionID = "linked"
+	rendered := ansi.Strip(model.renderInteraction(80, 20))
+	if !strings.Contains(rendered, "worktree fix-auth") {
+		t.Fatalf("heading hides the worktree:\n%s", rendered)
+	}
+
+	model.rebuildGroups(checkout.ID, "main")
+	model.interactionID = "main"
+	rendered = ansi.Strip(model.renderInteraction(80, 20))
+	if strings.Contains(rendered, "worktree") {
+		t.Fatalf("main checkout claims a worktree:\n%s", rendered)
+	}
+}
+
+// A narrow pane drops the path before the badge: the path restates the
+// worktree, the badge is the only token that names it.
+func TestInteractionMetaKeepsWorktreeOverPath(t *testing.T) {
+	wide := ansi.Strip(interactionMeta(
+		"claude  working", "fix-auth", "~/repo/.claude/worktrees/fix-auth", 80,
+	))
+	if !strings.Contains(wide, "worktree fix-auth") ||
+		!strings.Contains(wide, "~/repo") {
+		t.Fatalf("wide meta line lost a token: %q", wide)
+	}
+
+	narrow := ansi.Strip(interactionMeta(
+		"claude  working", "fix-auth", "~/repo/.claude/worktrees/fix-auth", 34,
+	))
+	if !strings.Contains(narrow, "worktree fix-auth") {
+		t.Fatalf("narrow meta line dropped the worktree: %q", narrow)
+	}
+	if strings.Contains(narrow, "~/repo") {
+		t.Fatalf("narrow meta line kept the path: %q", narrow)
+	}
+	if width := ansi.StringWidth(narrow); width > 34 {
+		t.Fatalf("meta line overflows the pane: %d columns in %q", width, narrow)
+	}
+}
+
 func TestInteractionRefreshPreservesScrollPosition(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(stubBackend{})

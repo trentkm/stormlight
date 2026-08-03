@@ -228,7 +228,10 @@ output remains unfiltered.
 
 Stormlight resolves working directories automatically. Linked Git worktrees share
 one workspace group, while each worktree remains a distinct execution root.
-Independent clones and non-Git directories remain separate.
+Independent clones and non-Git directories remain separate. Because a grouped
+workspace can hold several checkouts, the Spanreed heading names the worktree
+an agent is working in — `worktree fix-auth` beside its provider and state —
+and stays silent for agents in the main checkout.
 
 Press `n` in the Workspaces pane to open the Add Workspace modal. Yazi and
 manual path entry are the only actions; current workspaces appear below as

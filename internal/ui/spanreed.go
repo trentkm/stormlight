@@ -35,9 +35,12 @@ func (m Model) renderInteraction(width, height int) string {
 	if badge := modeBadge(managedAgent.Mode); badge != "" {
 		metaParts = append(metaParts, badge)
 	}
-	metaParts = append(metaParts, shortPath(managedAgent.Cwd))
-	metaText := strings.TrimSpace(strings.Join(metaParts, "  "))
-	meta := mutedStyle.Render(truncate(metaText, width))
+	meta := interactionMeta(
+		strings.Join(metaParts, "  "),
+		worktreeLabel(managedAgent),
+		shortPath(managedAgent.Cwd),
+		width,
+	)
 	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
 		// Prompts are answered in the agent's own terminal; the dashboard's
 		// job is pointing at the pane, loudly.
@@ -126,6 +129,34 @@ func (m Model) renderInteraction(width, height int) string {
 		transcript,
 		composer,
 	)
+}
+
+// interactionMeta renders the heading's subtitle. In the main checkout it is
+// one muted line — status tokens then path — truncated as a whole. In a
+// linked worktree the tree's name is set in accent between the two: a path
+// alone never says which of a workspace's checkouts an agent is editing, so
+// the badge is the last token to yield width, and the path — which merely
+// restates it — is the first.
+func interactionMeta(status, worktree, path string, width int) string {
+	if worktree == "" {
+		return mutedStyle.Render(
+			truncate(strings.TrimSpace(status+"  "+path), width),
+		)
+	}
+	rendered := mutedStyle.Render(truncate(status, width))
+	badge := truncate(
+		"worktree "+worktree,
+		max(0, width-lipgloss.Width(rendered)-2),
+	)
+	if badge == "" {
+		return rendered
+	}
+	rendered += "  " + accentStyle.Render(badge)
+	remaining := width - lipgloss.Width(rendered) - 2
+	if path != "" && remaining > 0 {
+		rendered += "  " + mutedStyle.Render(truncate(path, remaining))
+	}
+	return rendered
 }
 
 func cleanInteraction(content string, width int, providerID agent.Provider) string {
