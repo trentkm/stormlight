@@ -148,10 +148,9 @@ me" and from "just idle".
 
 The current implementation uses tmux options as the source of truth because
 managed processes cannot outlive the tmux server. The workspace catalog is an
-atomic JSON file independent of tmux. Ephemeral pending actions live under
-`$XDG_RUNTIME_DIR/stormlight/actions` when available, otherwise under the
-Stormlight state directory. A future daemon may add an append-only event journal
-for agents that survive tmux restarts or run remotely.
+atomic JSON file independent of tmux, as are the dashboard's column
+preferences. A future daemon may add an append-only event journal for agents
+that survive tmux restarts or run remotely.
 
 ## Workspace boundary
 

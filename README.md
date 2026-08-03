@@ -184,11 +184,13 @@ Code and Codex read image files referenced by path. On macOS this uses
 (`brew install pngpaste`), falling back to AppleScript; on Linux it uses
 `wl-paste` or `xclip`.
 
-Claude permission requests replace the transcript with an inline action. Use
-`j` / `k` and `Enter`, or press `y` to allow once, `a` to accept Claude's
-persisted permission suggestion, `n` to deny, or `t` to review the request in
-the native terminal. If the dashboard closes while a request is pending,
-Stormlight stops handling it and Claude presents its native prompt.
+Approval and authentication prompts are answered in the agent's own terminal:
+Stormlight raises attention and points at the pane rather than reimplementing
+the provider's prompt. While one is pending, the reply box stands down — `i` /
+`s` redirects you to `Enter`, and a prompt arriving mid-compose closes the
+composer and parks your draft for when you return. A plain question is
+different: the agent is idle at its own composer, so a Spanreed reply is the
+answer.
 
 Pressing `n` in Agents or Spanreed inherits the current workspace context.
 The centered form contains a vertical `Coding agent` picker and a wrapping task
@@ -270,8 +272,9 @@ Stormlight injects agent-scoped lifecycle integration for managed providers:
 
 - Codex uses its external `agent-turn-complete` notification to become idle and
   publish the latest response summary.
-- Claude uses `UserPromptSubmit`, `PermissionRequest`, permission notification,
-  and `Stop` hooks to report state and bridge approval choices into Spanreed.
+- Claude uses `UserPromptSubmit`, `Notification`, and `Stop` hooks to report
+  state; the permission notification raises attention on the agent whose
+  terminal is holding the prompt.
 - Replies sent from the dashboard mark any provider working immediately.
 
 The runtime also exposes an `event` command so other provider hooks can report

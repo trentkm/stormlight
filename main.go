@@ -771,28 +771,6 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 	}
 }
 
-func updatePermissionAgent(
-	service *app.Service,
-	id string,
-	activity agent.Activity,
-	attention agent.Attention,
-	summary string,
-) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := service.Update(ctx, id, session.Update{
-		Activity:  activity,
-		Attention: attention,
-		Summary:   summary,
-	}); err != nil {
-		diagnostic.Logger().Warn(
-			"permission state update failed",
-			"agent_id", id,
-			"error", err,
-		)
-	}
-}
-
 func newRunCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
 	var id string
 	var window string
