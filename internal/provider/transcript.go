@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/trentkm/stormlight/internal/theme"
 )
 
 // Claude Code appends every completed message of a session to a JSONL
@@ -13,6 +16,11 @@ import (
 // conversation from that file gives Spanreed the entire session history —
 // the terminal screen alone cannot: Claude runs in the alternate screen,
 // so tmux never accumulates scrollback for it.
+//
+// The file carries no styling, so the renderer supplies it: a transcript
+// that reads as one gray slab is a worse trade than the scrollback it buys.
+// Structure is colored where the JSONL states it (prompt, reply, tool call,
+// result) and prose is colored where Claude's own markdown says so.
 
 const (
 	// transcriptResultLines caps how many lines of a tool result are
@@ -21,7 +29,30 @@ const (
 	// transcriptScanBuffer must fit the largest JSONL line; tool results
 	// carry whole files.
 	transcriptScanBuffer = 16 * 1024 * 1024
+	// liveDividerText separates the rendered history from the live pane
+	// capture appended while a turn is in flight.
+	liveDividerText = "──── live ────"
 )
+
+var (
+	promptMarkStyle = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	promptTextStyle = lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
+	replyMarkStyle  = lipgloss.NewStyle().Foreground(theme.Done).Bold(true)
+	toolMarkStyle   = lipgloss.NewStyle().Foreground(theme.Working).Bold(true)
+	toolNameStyle   = lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
+	toolArgStyle    = lipgloss.NewStyle().Foreground(theme.Muted)
+	resultStyle     = lipgloss.NewStyle().Foreground(theme.Muted)
+	headingStyle    = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	codeStyle       = lipgloss.NewStyle().Foreground(theme.Code)
+	boldStyle       = lipgloss.NewStyle().Bold(true)
+	dividerStyle    = lipgloss.NewStyle().Foreground(theme.Border)
+)
+
+// LiveDivider is the rule drawn between the rendered transcript and the
+// live pane capture.
+func LiveDivider() string {
+	return dividerStyle.Render(liveDividerText)
+}
 
 type transcriptLine struct {
 	Type        string          `json:"type"`
@@ -92,7 +123,9 @@ func renderTranscriptUser(out *strings.Builder, content json.RawMessage) int {
 		if prompt == "" {
 			return 0
 		}
-		out.WriteString("\n❯ " + indentContinuations(prompt, "  ") + "\n")
+		out.WriteString("\n")
+		writeEntry(out, promptMarkStyle.Render("❯ "), prompt,
+			func(line string) string { return promptTextStyle.Render(line) })
 		return 1
 	}
 	var blocks []transcriptBlock
@@ -125,11 +158,15 @@ func renderTranscriptAssistant(out *strings.Builder, content json.RawMessage) in
 			if text == "" {
 				continue
 			}
-			out.WriteString("\n⏺ " + indentContinuations(text, "  ") + "\n")
+			out.WriteString("\n")
+			writeEntry(out, replyMarkStyle.Render("⏺ "), text, prosepainter())
 			entries++
 		case "tool_use":
-			out.WriteString("\n⏺ " + block.Name +
-				"(" + transcriptToolArgument(block.Input) + ")\n")
+			out.WriteString("\n" +
+				toolMarkStyle.Render("⏺ ") +
+				toolNameStyle.Render(block.Name) +
+				toolArgStyle.Render("("+transcriptToolArgument(block.Input)+")") +
+				"\n")
 			entries++
 		}
 	}
@@ -183,16 +220,85 @@ func trimTranscriptResult(result string) string {
 		if index == 0 {
 			prefix = "  ⎿ "
 		}
-		out.WriteString(prefix + transcriptEllipsis(line, 200) + "\n")
+		out.WriteString(resultStyle.Render(prefix+transcriptEllipsis(line, 200)) + "\n")
 	}
 	if hidden := len(lines) - len(shown); hidden > 0 {
-		out.WriteString(fmt.Sprintf("    … +%d lines\n", hidden))
+		out.WriteString(resultStyle.Render(
+			fmt.Sprintf("    … +%d lines", hidden)) + "\n")
 	}
 	return out.String()
 }
 
-func indentContinuations(text, indent string) string {
-	return strings.ReplaceAll(text, "\n", "\n"+indent)
+// writeEntry writes one conversation entry: marker then first line, with
+// continuations indented under it. paint styles each source line on its own
+// so every rendered row carries — and closes — its own styling, which is
+// what the transcript pane needs to wrap and highlight rows independently.
+func writeEntry(
+	out *strings.Builder,
+	marker, text string,
+	paint func(string) string,
+) {
+	for index, line := range strings.Split(text, "\n") {
+		prefix := "  "
+		if index == 0 {
+			prefix = marker
+		}
+		out.WriteString(prefix + paint(line) + "\n")
+	}
+}
+
+// prosepainter returns a painter for one assistant message. Claude writes
+// markdown, so the renderer reads it back: fenced blocks and inline literals
+// take the code tint, headings the accent, ** spans go bold. Delimiters are
+// dropped — they were instructions to a renderer, and this is the renderer.
+// The closure holds the fence state, which spans lines.
+func prosepainter() func(string) string {
+	fenced := false
+	return func(line string) string {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			return codeStyle.Render(line)
+		}
+		if fenced {
+			return codeStyle.Render(line)
+		}
+		return styleProse(line)
+	}
+}
+
+func styleProse(line string) string {
+	trimmed := strings.TrimLeft(line, " ")
+	if heading := strings.TrimLeft(trimmed, "#"); heading != trimmed {
+		indent := line[:len(line)-len(trimmed)]
+		return indent + headingStyle.Render(strings.TrimSpace(heading))
+	}
+	return styleInline(line)
+}
+
+// styleInline paints `literals` and **emphasis** inside a single line.
+// Unclosed delimiters are left as written: a lone backtick is punctuation.
+func styleInline(line string) string {
+	var out strings.Builder
+	for index := 0; index < len(line); {
+		rest := line[index:]
+		switch {
+		case strings.HasPrefix(rest, "**"):
+			if end := strings.Index(rest[2:], "**"); end > 0 {
+				out.WriteString(boldStyle.Render(rest[2 : 2+end]))
+				index += end + 4
+				continue
+			}
+		case rest[0] == '`':
+			if end := strings.IndexByte(rest[1:], '`'); end > 0 {
+				out.WriteString(codeStyle.Render(rest[1 : 1+end]))
+				index += end + 2
+				continue
+			}
+		}
+		out.WriteByte(line[index])
+		index++
+	}
+	return out.String()
 }
 
 func transcriptEllipsis(value string, limit int) string {

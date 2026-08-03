@@ -285,7 +285,7 @@ func (s *Service) transcriptCapture(ctx context.Context, id string, lines int) (
 			managedAgent.Attention.Urgent()
 		if busy && managedAgent.ProcessLive {
 			if live, err := s.runtime.Capture(ctx, id, lines); err == nil {
-				rendered += "\n──── live ────\n" + live
+				rendered += "\n" + provider.LiveDivider() + "\n" + live
 			}
 		}
 		return rendered, true

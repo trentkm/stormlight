@@ -9,20 +9,23 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/trentkm/stormlight/internal/theme"
 )
 
+// The palette lives in internal/theme so the transcript renderer can paint
+// with the same colors; these are the names the dashboard reads by.
 var (
-	colorAccent       = lipgloss.Color("#62AEEF")
-	colorText         = lipgloss.AdaptiveColor{Light: "#24323A", Dark: "#D7DEE5"}
-	colorMuted        = lipgloss.AdaptiveColor{Light: "#70808A", Dark: "#74818B"}
-	colorWorking      = lipgloss.AdaptiveColor{Light: "#26799D", Dark: "#61AFEF"}
-	colorWaiting      = lipgloss.AdaptiveColor{Light: "#A86600", Dark: "#E5C07B"}
-	colorDone         = lipgloss.AdaptiveColor{Light: "#257A4A", Dark: "#72C087"}
-	colorFailed       = lipgloss.AdaptiveColor{Light: "#B33838", Dark: "#E06C75"}
-	colorBorder       = lipgloss.AdaptiveColor{Light: "#AAB3B9", Dark: "#59636B"}
-	colorSelect       = lipgloss.AdaptiveColor{Light: "#E1E4E6", Dark: "#3D4245"}
-	colorSelectedText = lipgloss.AdaptiveColor{Light: "#172027", Dark: "#F3F5F6"}
-	colorDangerBg     = lipgloss.AdaptiveColor{Light: "#F2D5D1", Dark: "#552B29"}
+	colorAccent       = theme.Accent
+	colorText         = theme.Text
+	colorMuted        = theme.Muted
+	colorWorking      = theme.Working
+	colorWaiting      = theme.Waiting
+	colorDone         = theme.Done
+	colorFailed       = theme.Failed
+	colorBorder       = theme.Border
+	colorSelect       = theme.Select
+	colorSelectedText = theme.SelectedText
+	colorDangerBg     = theme.DangerBg
 
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	// attentionBandStyle is the unmissable full-width bar for an agent
