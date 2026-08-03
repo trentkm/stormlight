@@ -20,7 +20,8 @@ import (
 // The file carries no styling, so the renderer supplies it: a transcript
 // that reads as one gray slab is a worse trade than the scrollback it buys.
 // Structure is colored where the JSONL states it (prompt, reply, tool call,
-// result) and prose is colored where Claude's own markdown says so.
+// result) and prose is colored where Claude's own markdown says so — see
+// markdown.go for the stylesheet that reads it back.
 
 const (
 	// transcriptResultLines caps how many lines of a tool result are
@@ -42,9 +43,6 @@ var (
 	toolNameStyle   = lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
 	toolArgStyle    = lipgloss.NewStyle().Foreground(theme.Muted)
 	resultStyle     = lipgloss.NewStyle().Foreground(theme.Muted)
-	headingStyle    = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
-	codeStyle       = lipgloss.NewStyle().Foreground(theme.Code)
-	boldStyle       = lipgloss.NewStyle().Bold(true)
 	dividerStyle    = lipgloss.NewStyle().Foreground(theme.Border)
 )
 
@@ -124,8 +122,8 @@ func renderTranscriptUser(out *strings.Builder, content json.RawMessage) int {
 			return 0
 		}
 		out.WriteString("\n")
-		writeEntry(out, promptMarkStyle.Render("❯ "), prompt,
-			func(line string) string { return promptTextStyle.Render(line) })
+		writeEntry(out, promptMarkStyle.Render("❯ "),
+			paintLines(prompt, promptTextStyle))
 		return 1
 	}
 	var blocks []transcriptBlock
@@ -159,7 +157,7 @@ func renderTranscriptAssistant(out *strings.Builder, content json.RawMessage) in
 				continue
 			}
 			out.WriteString("\n")
-			writeEntry(out, replyMarkStyle.Render("⏺ "), text, prosepainter())
+			writeEntry(out, replyMarkStyle.Render("⏺ "), renderMarkdown(text))
 			entries++
 		case "tool_use":
 			out.WriteString("\n" +
@@ -230,75 +228,18 @@ func trimTranscriptResult(result string) string {
 }
 
 // writeEntry writes one conversation entry: marker then first line, with
-// continuations indented under it. paint styles each source line on its own
-// so every rendered row carries — and closes — its own styling, which is
-// what the transcript pane needs to wrap and highlight rows independently.
-func writeEntry(
-	out *strings.Builder,
-	marker, text string,
-	paint func(string) string,
-) {
-	for index, line := range strings.Split(text, "\n") {
+// continuations indented under it. text arrives already styled, one rendered
+// row per line, because each row carries — and closes — its own styling:
+// the transcript pane wraps and highlights rows independently, and a run of
+// color left open at a row's end would bleed into the pane beside it.
+func writeEntry(out *strings.Builder, marker, text string) {
+	for index, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		prefix := "  "
 		if index == 0 {
 			prefix = marker
 		}
-		out.WriteString(prefix + paint(line) + "\n")
+		out.WriteString(prefix + line + "\n")
 	}
-}
-
-// prosepainter returns a painter for one assistant message. Claude writes
-// markdown, so the renderer reads it back: fenced blocks and inline literals
-// take the code tint, headings the accent, ** spans go bold. Delimiters are
-// dropped — they were instructions to a renderer, and this is the renderer.
-// The closure holds the fence state, which spans lines.
-func prosepainter() func(string) string {
-	fenced := false
-	return func(line string) string {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			fenced = !fenced
-			return codeStyle.Render(line)
-		}
-		if fenced {
-			return codeStyle.Render(line)
-		}
-		return styleProse(line)
-	}
-}
-
-func styleProse(line string) string {
-	trimmed := strings.TrimLeft(line, " ")
-	if heading := strings.TrimLeft(trimmed, "#"); heading != trimmed {
-		indent := line[:len(line)-len(trimmed)]
-		return indent + headingStyle.Render(strings.TrimSpace(heading))
-	}
-	return styleInline(line)
-}
-
-// styleInline paints `literals` and **emphasis** inside a single line.
-// Unclosed delimiters are left as written: a lone backtick is punctuation.
-func styleInline(line string) string {
-	var out strings.Builder
-	for index := 0; index < len(line); {
-		rest := line[index:]
-		switch {
-		case strings.HasPrefix(rest, "**"):
-			if end := strings.Index(rest[2:], "**"); end > 0 {
-				out.WriteString(boldStyle.Render(rest[2 : 2+end]))
-				index += end + 4
-				continue
-			}
-		case rest[0] == '`':
-			if end := strings.IndexByte(rest[1:], '`'); end > 0 {
-				out.WriteString(codeStyle.Render(rest[1 : 1+end]))
-				index += end + 2
-				continue
-			}
-		}
-		out.WriteByte(line[index])
-		index++
-	}
-	return out.String()
 }
 
 func transcriptEllipsis(value string, limit int) string {
