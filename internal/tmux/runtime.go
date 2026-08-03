@@ -182,7 +182,10 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("create agent id: %w", err)
 	}
-	name := strings.TrimSpace(req.Name)
+	// A user-chosen name becomes the tmux window name verbatim, so it goes
+	// through the same whitespace collapse as Rename — a newline or tab in
+	// a window name confuses every tmux format string that prints it.
+	name := metadataValue(req.Name)
 	if name == "" {
 		name = windowName(req.Provider, req.Task)
 	}

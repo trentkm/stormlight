@@ -376,6 +376,131 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 	assertViewFitsPane(t, model, 119, 29)
 }
 
+func TestDispatchOptionalNameReachesTheRequest(t *testing.T) {
+	directory := t.TempDir()
+	backend := &recordingBackend{
+		providers: []provider.Info{{ID: agent.ProviderClaude, Label: "Claude"}},
+	}
+	model := NewModel(backend)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+	model = updated.(Model)
+	model.initialCwd = directory
+	updated, _ = model.beginDispatch(false)
+	model = updated.(Model)
+
+	view := ansi.Strip(model.View())
+	if !strings.Contains(view, "Name") || !strings.Contains(view, "optional") {
+		t.Fatalf("new-agent form has no optional name field:\n%s", view)
+	}
+
+	// Tab from the provider list lands on the name before the task, so the
+	// field is reachable without leaving the keyboard home row.
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model = updated.(Model)
+	if model.formFocus != dispatchName {
+		t.Fatalf("tab focus = %v, want the name field", model.formFocus)
+	}
+	for _, key := range []string{"j", "u", "d", "g", "e"} {
+		updated, _ = model.Update(runeKey(key))
+		model = updated.(Model)
+	}
+	if got := model.nameInput.Value(); got != "judge" {
+		t.Fatalf("name field value = %q, want %q", got, "judge")
+	}
+
+	// Enter moves on to the task rather than launching a nameless agent.
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if model.formFocus != dispatchTask {
+		t.Fatalf("focus after naming = %v, want the task field", model.formFocus)
+	}
+	model.taskInput.SetValue("score the rewrite")
+
+	updated, command := model.submitDispatch()
+	model = updated.(Model)
+	if command != nil {
+		command()
+	}
+	if backend.request.Name != "judge" {
+		t.Fatalf("dispatch name = %q, want %q", backend.request.Name, "judge")
+	}
+	if backend.request.Task != "score the rewrite" {
+		t.Fatalf("dispatch task = %q", backend.request.Task)
+	}
+	if model.nameInput.Value() != "" {
+		t.Fatalf("name survived the launch: %q", model.nameInput.Value())
+	}
+}
+
+func TestDispatchWithoutANameLaunchesUnnamed(t *testing.T) {
+	directory := t.TempDir()
+	backend := &recordingBackend{
+		providers: []provider.Info{{ID: agent.ProviderClaude, Label: "Claude"}},
+	}
+	model := NewModel(backend)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+	model = updated.(Model)
+	model.initialCwd = directory
+	updated, _ = model.beginDispatch(false)
+	model = updated.(Model)
+
+	// Enter on the provider skips straight past the optional name.
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if model.formFocus != dispatchTask {
+		t.Fatalf("Enter focus = %v, want the task field", model.formFocus)
+	}
+	model.taskInput.SetValue("investigate the flake")
+
+	updated, command := model.submitDispatch()
+	if command != nil {
+		command()
+	}
+	if backend.request.Name != "" {
+		t.Fatalf("unnamed dispatch carried name %q", backend.request.Name)
+	}
+}
+
+// A short pane drops the optional name row, so focus must not stop there.
+func TestDispatchFocusSkipsHiddenNameField(t *testing.T) {
+	backend := &recordingBackend{
+		providers: []provider.Info{{ID: agent.ProviderClaude, Label: "Claude"}},
+	}
+	model := NewModel(backend)
+	model.mode = modeDispatch
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 40, Height: 16})
+	model = updated.(Model)
+
+	if model.dispatchNameVisible() {
+		t.Fatal("compact form claims room for the name field")
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model = updated.(Model)
+	if model.formFocus == dispatchName {
+		t.Fatal("focus landed on a name field that is not drawn")
+	}
+}
+
+// Shrinking the terminal while the name field is focused must move focus
+// out of the field the next render will drop.
+func TestDispatchShrinkReleasesHiddenNameField(t *testing.T) {
+	backend := &recordingBackend{
+		providers: []provider.Info{{ID: agent.ProviderClaude, Label: "Claude"}},
+	}
+	model := NewModel(backend)
+	model.mode = modeDispatch
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+	model = updated.(Model)
+	model.formFocus = dispatchName
+	model.focusForm()
+
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 40, Height: 16})
+	model = updated.(Model)
+	if model.formFocus != dispatchTask {
+		t.Fatalf("focus after shrink = %v, want the task field", model.formFocus)
+	}
+}
+
 func TestModalRendersCompleteBorder(t *testing.T) {
 	rendered := ansi.Strip(renderModal("content", 32, 8))
 	lines := strings.Split(rendered, "\n")
