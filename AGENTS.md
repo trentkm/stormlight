@@ -53,11 +53,33 @@ That keeps the PR a linear diff against the tip rather than a merge knot, and
 surfaces conflicts while the change is still yours to reshape.
 
 `/.claude/` is gitignored, so worktrees parked there stay invisible to the
-repo. Remove one once its work has landed:
+repo — which is exactly why they accumulate unnoticed. Tearing one down is
+part of finishing the task, not a chore for later. The moment its PR merges:
 
 ```sh
 git worktree remove .claude/worktrees/<branch> && git branch -d <branch>
 ```
+
+Both halves matter. `git worktree remove` alone leaves the branch behind;
+`git branch -d` alone leaves a checkout pinned to a ref nothing points at.
+Use `-d`, never `-D` — the safe form refuses to delete anything not yet
+merged, so it doubles as the check that the work really did land. If it
+refuses, the branch has commits that never made it to `main`; find out why
+before forcing anything.
+
+A leftover worktree is not inert. It is a full checkout that Stormlight lists
+as a distinct execution root, so stale ones crowd the dashboard alongside live
+work, and the next agent cannot tell a finished task from an active one. Before
+removing any worktree you did not create, check it the way you would before
+deleting anyone's work:
+
+```sh
+git -C .claude/worktrees/<branch> status --porcelain   # uncommitted work?
+git -C .claude/worktrees/<branch> log --oneline origin/main..HEAD   # unpushed?
+```
+
+Empty output from both means it is safe. Anything else belongs to a task still
+in flight — leave it alone.
 
 The reason is concurrency: more than one agent works this repo at a time. Two
 agents sharing a checkout produce uncommitted changes neither can attribute,
