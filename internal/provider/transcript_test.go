@@ -5,7 +5,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
+
+// withColor forces a color profile for the default renderer: tests run
+// without a terminal, where lipgloss renders everything plain.
+func withColor(t *testing.T) {
+	t.Helper()
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+}
 
 func TestRenderClaudeTranscriptRendersConversation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
@@ -25,10 +38,11 @@ func TestRenderClaudeTranscriptRendersConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rendered, ok := RenderClaudeTranscript(path)
+	styled, ok := RenderClaudeTranscript(path)
 	if !ok {
 		t.Fatal("transcript was not rendered")
 	}
+	rendered := ansi.Strip(styled)
 	for _, want := range []string{
 		"❯ fix the parser\n  please",
 		"⏺ Looking at the parser now.",
@@ -44,6 +58,54 @@ func TestRenderClaudeTranscriptRendersConversation(t *testing.T) {
 	}
 	if strings.Contains(rendered, "meta noise") || strings.Contains(rendered, "hmm") {
 		t.Fatalf("meta or thinking content leaked:\n%s", rendered)
+	}
+}
+
+func TestRenderClaudeTranscriptPaintsConversation(t *testing.T) {
+	withColor(t)
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"fix the parser"}}`,
+		`{"type":"assistant","message":{"content":[` +
+			`{"type":"text","text":"## Plan\nCall ` + "`parse()`" +
+			` and make it **fast**.\n` + "```go\\nx := 1\\n```" + `"},` +
+			`{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result",` +
+			`"content":"ok"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rendered, ok := RenderClaudeTranscript(path)
+	if !ok {
+		t.Fatal("transcript was not rendered")
+	}
+	byText := map[string]string{}
+	for _, line := range strings.Split(rendered, "\n") {
+		byText[strings.TrimSpace(ansi.Strip(line))] = line
+	}
+	for _, want := range []struct{ text, styled string }{
+		{"❯ fix the parser", promptMarkStyle.Render("❯ ")},
+		{"⏺ Plan", headingStyle.Render("Plan")},
+		{"Call parse() and make it fast.", codeStyle.Render("parse()")},
+		{"Call parse() and make it fast.", boldStyle.Render("fast")},
+		{"x := 1", codeStyle.Render("x := 1")},
+		{"⏺ Bash(go test ./...)", toolNameStyle.Render("Bash")},
+		{"⎿ ok", resultStyle.Render("  ⎿ ok")},
+	} {
+		line, ok := byText[want.text]
+		if !ok {
+			t.Fatalf("missing line %q in:\n%q", want.text, rendered)
+		}
+		if !strings.Contains(line, want.styled) {
+			t.Fatalf("line %q is unpainted: %q, want %q",
+				want.text, line, want.styled)
+		}
+	}
+	// Markdown delimiters were instructions to a renderer, not content.
+	if strings.Contains(ansi.Strip(rendered), "**") {
+		t.Fatalf("emphasis delimiters survived:\n%s", ansi.Strip(rendered))
 	}
 }
 
