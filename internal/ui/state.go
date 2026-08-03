@@ -227,20 +227,30 @@ func effectiveWorkspace(managedAgent agent.Agent) workspace.Context {
 	return value
 }
 
-// worktreeLabel names the linked Git worktree an agent runs in, and is empty
-// when the agent works the main checkout or isn't in Git at all. Linked
-// worktrees share a --git-common-dir with their checkout, so the resolver
-// files them under one workspace: Root is the checkout every worktree hangs
-// off, ExecutionRoot the tree this agent actually edits.
-func worktreeLabel(managedAgent agent.Agent) string {
+// checkoutBadge is the token naming the Git checkout an agent runs in, and
+// whether that checkout is the workspace's own rather than a worktree hanging
+// off it. An empty text means there is nothing to name.
+type checkoutBadge struct {
+	text    string
+	primary bool
+}
+
+// agentCheckout names the Git checkout an agent runs in. Linked worktrees
+// share a --git-common-dir with their checkout, so the resolver files them
+// under one workspace: Root is the checkout every worktree hangs off,
+// ExecutionRoot the tree this agent actually edits. A tree of its own is
+// named by that tree; landing on Root instead is the primary checkout, and it
+// is named too — every agent in a Git workspace gets a badge, so an absent
+// one means the agent is outside Git rather than merely unremarkable.
+func agentCheckout(managedAgent agent.Agent) checkoutBadge {
 	value := effectiveWorkspace(managedAgent)
 	if value.Kind != workspace.KindGit || value.ExecutionRoot == "" {
-		return ""
+		return checkoutBadge{}
 	}
 	if directoryKey(value.ExecutionRoot) == directoryKey(value.Root) {
-		return ""
+		return checkoutBadge{text: "main checkout", primary: true}
 	}
-	return filepath.Base(value.ExecutionRoot)
+	return checkoutBadge{text: "worktree " + filepath.Base(value.ExecutionRoot)}
 }
 
 func (m *Model) moveSelection(delta int) {
