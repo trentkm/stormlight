@@ -263,13 +263,19 @@ Attention has two tiers, and it always outranks the working glow:
 | waiting | finished with a result you haven't seen | soft amber `○` marker and count |
 | question / approval / auth | agent is blocked on an explicit decision | loud amber `!` — the whole row |
 
+Selecting a row never changes what it reports: the cursor row keeps its glow
+and its amber, painted onto the selection background rather than replaced by
+it, so moving through the list can't make a working agent read as idle.
+
 Every finished turn is classified from its final message (providers emit
 the same event for "done" and "asked you something", so the content is the
 discriminator): a closing question goes loud, anything else is an unseen
-result. Amber is an inbox — it clears when you engage: replying or opening
-the terminal clears any tier, viewing the result (a keypress while it's
-selected with its transcript on screen) clears unseen, and `M` marks the
+result. Amber is an inbox — it clears when you engage with the result:
+replying, interrupting, or opening the terminal clears any tier; paging
+through the transcript while it is on screen clears unseen; and `M` marks the
 selected agent — or every agent in the selected workspace — seen manually.
+Moving between panes and rows is not engagement — navigation is how you leave
+a result, so it leaves the amber where it is.
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/stormlight/resolvers`. The protocol is public and does not require

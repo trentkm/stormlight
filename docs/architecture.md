@@ -144,10 +144,13 @@ and "asked a question", so content is the only instant discriminator): a
 closing question is urgent, anything else is an unseen result. The
 provider's delayed idle notification is deliberately ignored — it would
 re-raise attention the human already cleared. Attention clears on
-engagement: a new prompt, opening the terminal, viewing the result while
-present, or an explicit mark-seen; the runtime refuses to let a soft
-signal downgrade an urgent state. Dead panes carry no attention — their
-exit status is the story.
+engagement: a new prompt, opening the terminal, replying, interrupting,
+paging through the result while it is on screen, or an explicit mark-seen.
+Navigating between panes and rows is deliberately not engagement — those
+are the keys a human presses on the way past a result, and counting them
+cleared the amber before it was ever read. The runtime refuses to let a
+soft signal downgrade an urgent state. Dead panes carry no attention —
+their exit status is the story.
 
 This prevents a resumable completed conversation from being conflated with a
 currently running process, and keeps "needs me now" distinct from "idle on
