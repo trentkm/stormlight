@@ -404,3 +404,82 @@ func TestComposerRuleAndVisibleRows(t *testing.T) {
 		t.Fatalf("visible rows = %d", rows)
 	}
 }
+
+// dispatchFixture opens the new-agent form on a terminal roomy enough to
+// draw the optional name row.
+func dispatchFixture(t *testing.T) Model {
+	t.Helper()
+	model := flowModelFixture(t, &flowBackend{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = updated.(Model)
+	next, _ := model.beginDispatch(true)
+	model = next.(Model)
+	if !model.dispatchNameVisible() {
+		t.Fatal("fixture terminal is too short to draw the name row")
+	}
+	return model
+}
+
+func selectCustomDirectory(t *testing.T, model *Model) {
+	t.Helper()
+	for index := range model.directories {
+		if model.directories[index].kind == directoryCustom {
+			model.selectDirectoryIndex(index)
+			return
+		}
+	}
+	t.Fatal("no custom-path row in the directory choices")
+}
+
+func TestDispatchEnterReachesTheNameField(t *testing.T) {
+	model := dispatchFixture(t)
+	for _, want := range []dispatchFocus{dispatchName, dispatchTask} {
+		next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+		model = next.(Model)
+		if model.formFocus != want {
+			t.Fatalf("enter landed on focus %d, want %d", model.formFocus, want)
+		}
+	}
+}
+
+func TestDispatchTabEscapesThePathPicker(t *testing.T) {
+	model := dispatchFixture(t)
+	selectCustomDirectory(t, &model)
+	next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(Model)
+	if model.formFocus != dispatchCustomPath {
+		t.Fatalf("enter did not open the path picker: focus %d", model.formFocus)
+	}
+	after, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyTab})
+	model = after.(Model)
+	if model.formFocus != dispatchName {
+		t.Fatalf("tab out of the picker landed on %d, want name", model.formFocus)
+	}
+}
+
+func TestDispatchNameAcceptsTypedRunes(t *testing.T) {
+	model := dispatchFixture(t)
+	next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(Model)
+	for _, key := range []string{"m", "j", "e", "g"} {
+		updated, _ := model.updateDispatch(runeKey(key))
+		model = updated.(Model)
+	}
+	if model.nameInput.Value() != "mjeg" {
+		t.Fatalf("name field value = %q", model.nameInput.Value())
+	}
+}
+
+func TestDispatchHintsNameTheNextField(t *testing.T) {
+	model := dispatchFixture(t)
+	model.mode = modeDispatch
+	if hints := model.commandHints(); !strings.Contains(hints, "Enter name") {
+		t.Fatalf("directory hints hide the name field: %q", hints)
+	}
+	selectCustomDirectory(t, &model)
+	next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(Model)
+	if hints := model.commandHints(); !strings.Contains(hints, "Tab name") {
+		t.Fatalf("picker hints hide the way out: %q", hints)
+	}
+}
