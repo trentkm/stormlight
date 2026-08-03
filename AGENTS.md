@@ -141,11 +141,32 @@ CI is the only thing that publishes. A release happens when — and only
 when — a `v*` tag lands on `origin`:
 
 ```sh
-git fetch origin && git tag v0.3.0 origin/main && git push origin v0.3.0
+git fetch origin && git tag <version> origin/main && git push origin <version>
 ```
+
+Merging a PR never releases anything; `ci.yml` runs the tests and stops. That
+tag push is the sole path to publishing, and there is no `workflow_dispatch`
+on the release workflow, so nothing can trigger it from the Actions UI either.
 
 Tag `origin/main` explicitly. Tagging `HEAD` from a worktree ships whatever
 that branch happens to be, which is not what anyone reviewed.
+
+The corollary is the quiet failure mode: because the tag names `origin/main`,
+work that has not merged yet is simply absent from the release. The tag is
+valid, CI goes green, and the release ships without it — nothing looks wrong.
+Confirm your PR is merged and `origin/main` contains it before tagging.
+
+Cutting a release is a deliberate decision, not a step in finishing a task.
+An agent that has landed a PR is done; it does not then tag. Releases are the
+maintainer's call, and the rhythm is one release per batch of merged work
+rather than one per merge — a version is a re-download for everyone tracking
+the tap, so a release with nothing user-visible in it costs them bandwidth to
+receive nothing. The test is whether you can name, in a sentence, what changed
+for someone using it. Docs, tests, refactors, and CI changes ride along with
+the next release that clears that bar.
+
+Pick the number by reading what is already published — `git tag --sort=-creatordate | head -1` —
+and what has landed since it, rather than assuming the next one.
 
 **Never run `goreleaser release` locally.** It is the same pipeline CI runs,
 so a local invocation does not preview the release — it *performs* one,
@@ -169,9 +190,7 @@ the bytes under a checksum Homebrew has cached and breaks installs with a
 mismatch. A bad release is superseded by the next version, never rewritten.
 
 Versions are semver with a pre-1.0 reading: user-visible features bump the
-minor, fixes bump the patch. Cutting one is cheap, but each is a thing users
-see and re-download, so releases follow completed work rather than individual
-merges.
+minor, fixes bump the patch.
 
 The minor number has no ceiling and is not a countdown. `0.x` means exactly
 what semver says it means — no stability promise, anything may change at any
