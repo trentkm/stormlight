@@ -32,14 +32,17 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.dispatchPrefix = ""
 
+	// The picker owns almost every key while it has focus, but not Tab:
+	// Tab is the form's field cycle, and a picker that swallows it strands
+	// the fields below with no way forward. ↑/↓ and Ctrl-n/p move the
+	// highlight instead.
 	if m.formFocus == dispatchCustomPath &&
 		key != "esc" && key != "ctrl+c" && key != "ctrl+[" &&
-		key != "ctrl+s" && key != "shift+tab" {
+		key != "ctrl+s" && key != "tab" && key != "shift+tab" {
 		if confirmed := m.handlePathNavKey(msg); confirmed {
 			m.cwdInput.SetValue(m.pathNav.chosen())
 			m.pickerStart = m.pathNav.chosen()
-			m.formFocus = dispatchTask
-			m.focusForm()
+			m.moveDispatchFocus(1)
 		}
 		return m, nil
 	}
@@ -118,20 +121,17 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "enter":
+		// Enter advances one step through the form's own field order, so it
+		// can never skip a field Tab would stop on — the optional name row
+		// used to fall in exactly that gap.
 		switch m.formFocus {
-		case dispatchProvider:
-			if m.chooseDispatchDirectory {
-				m.formFocus = dispatchDirectory
-			} else {
-				m.formFocus = dispatchTask
-			}
-			m.focusForm()
+		case dispatchProvider, dispatchName:
+			m.moveDispatchFocus(1)
 			return m, nil
 		case dispatchDirectory:
 			selected, ok := m.selectedDirectory()
 			if !ok {
-				m.formFocus = dispatchTask
-				m.focusForm()
+				m.moveDispatchFocus(1)
 				return m, nil
 			}
 			switch selected.kind {
@@ -140,14 +140,10 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case directoryCustom:
 				m.formFocus = dispatchCustomPath
 				m.startPathNav()
+				m.focusForm()
 			default:
-				m.formFocus = dispatchTask
+				m.moveDispatchFocus(1)
 			}
-			m.focusForm()
-			return m, nil
-		case dispatchName:
-			m.formFocus = dispatchTask
-			m.focusForm()
 			return m, nil
 		case dispatchTask:
 			return m.submitDispatch()
@@ -703,7 +699,7 @@ func (m *Model) startPathNav() {
 // chose a directory (available via pathNav.chosen()).
 func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
 	switch msg.String() {
-	case "tab", "down", "ctrl+n":
+	case "down", "ctrl+n":
 		m.pathNav.moveHighlight(1)
 		return false
 	case "up", "ctrl+p":
@@ -912,8 +908,12 @@ func (m Model) dispatchFocusOrder() []dispatchFocus {
 	focuses := []dispatchFocus{dispatchProvider}
 	if m.chooseDispatchDirectory {
 		focuses = append(focuses, dispatchDirectory)
-		if selected, ok := m.selectedDirectory(); ok &&
-			selected.kind == directoryCustom {
+		// The field holding focus is always part of the order, even if the
+		// directory row that opened it has since gone away — otherwise a
+		// move from it has no anchor and silently restarts at the top.
+		if selected, ok := m.selectedDirectory(); (ok &&
+			selected.kind == directoryCustom) ||
+			m.formFocus == dispatchCustomPath {
 			focuses = append(focuses, dispatchCustomPath)
 		}
 	}
@@ -921,6 +921,32 @@ func (m Model) dispatchFocusOrder() []dispatchFocus {
 		focuses = append(focuses, dispatchName)
 	}
 	return append(focuses, dispatchTask)
+}
+
+// nextDispatchField names the field Enter and Tab move to from here. The
+// hints quote it, so what the footer promises and where focus lands come
+// from the same order.
+func (m Model) nextDispatchField() string {
+	focuses := m.dispatchFocusOrder()
+	current := 0
+	for index, focus := range focuses {
+		if focus == m.formFocus {
+			current = index
+			break
+		}
+	}
+	switch focuses[(current+1)%len(focuses)] {
+	case dispatchProvider:
+		return "agent"
+	case dispatchDirectory:
+		return "location"
+	case dispatchCustomPath:
+		return "path"
+	case dispatchName:
+		return "name"
+	default:
+		return "task"
+	}
 }
 
 func (m *Model) moveDispatchFocus(delta int) {

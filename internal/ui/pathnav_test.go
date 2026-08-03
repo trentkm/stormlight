@@ -105,7 +105,7 @@ func TestPathNavRerootsUpAndByTypedPath(t *testing.T) {
 	}
 }
 
-func TestDispatchPathNavPicksIntoTask(t *testing.T) {
+func TestDispatchPathNavPicksIntoTheNextField(t *testing.T) {
 	root := pathNavFixture(t)
 	model := NewModel(stubBackend{})
 	model.width = 100
@@ -119,8 +119,9 @@ func TestDispatchPathNavPicksIntoTask(t *testing.T) {
 	model = updated.(Model)
 	updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
-	if model.formFocus != dispatchTask {
-		t.Fatalf("enter did not confirm; focus = %v", model.formFocus)
+	if model.formFocus != dispatchName {
+		t.Fatalf("enter did not confirm into the name field; focus = %v",
+			model.formFocus)
 	}
 	if got := strings.TrimSpace(model.cwdInput.Value()); got != filepath.Join(root, "services/payments") {
 		t.Fatalf("confirmed path = %q", got)
