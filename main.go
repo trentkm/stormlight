@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
@@ -269,11 +269,17 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 	if err != nil {
 		options.DefaultMode = agent.DefaultMode
 	}
+	// The alt screen and mouse reporting are declared by the dashboard's
+	// View rather than requested here; see ui.Model.View.
+	//
+	// There is no input filter any more. v1 split fast wheel bursts across
+	// reads and delivered the leftovers as literal key runes, so a hook had
+	// to recognise and discard them; v2's parser holds an incomplete escape
+	// sequence until the rest arrives, which was confirmed by feeding it one
+	// SGR report cut at three different points and getting a single clean
+	// wheel event and no stray keys each time.
 	program := tea.NewProgram(
 		ui.NewModelWithOptions(service, currentSurface, options),
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-		tea.WithFilter(ui.DropMouseFragments),
 	)
 	_, err = program.Run()
 	return err

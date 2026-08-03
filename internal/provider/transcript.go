@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
@@ -35,21 +35,46 @@ const (
 	liveDividerText = "──── live ────"
 )
 
-var (
-	promptMarkStyle = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
-	promptTextStyle = lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
-	replyMarkStyle  = lipgloss.NewStyle().Foreground(theme.Done).Bold(true)
-	toolMarkStyle   = lipgloss.NewStyle().Foreground(theme.Working).Bold(true)
-	toolNameStyle   = lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
-	toolArgStyle    = lipgloss.NewStyle().Foreground(theme.Muted)
-	resultStyle     = lipgloss.NewStyle().Foreground(theme.Muted)
-	dividerStyle    = lipgloss.NewStyle().Foreground(theme.Border)
-)
+// The transcript's styles are built per call rather than held in package
+// variables: a palette entry cannot resolve until the terminal has answered
+// which background it draws on, and a variable would capture whatever the
+// palette guessed at package initialization.
+func promptMarkStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Accent)).Bold(true)
+}
+
+func promptTextStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Text)).Bold(true)
+}
+
+func replyMarkStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Done)).Bold(true)
+}
+
+func toolMarkStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Working)).Bold(true)
+}
+
+func toolNameStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Text)).Bold(true)
+}
+
+func toolArgStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Muted))
+}
+
+func resultStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Muted))
+}
+
+func dividerStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Border))
+}
 
 // LiveDivider is the rule drawn between the rendered transcript and the
 // live pane capture.
 func LiveDivider() string {
-	return dividerStyle.Render(liveDividerText)
+	return dividerStyle().Render(liveDividerText)
 }
 
 type transcriptLine struct {
@@ -122,8 +147,8 @@ func renderTranscriptUser(out *strings.Builder, content json.RawMessage) int {
 			return 0
 		}
 		out.WriteString("\n")
-		writeEntry(out, promptMarkStyle.Render("❯ "),
-			paintLines(prompt, promptTextStyle))
+		writeEntry(out, promptMarkStyle().Render("❯ "),
+			paintLines(prompt, promptTextStyle()))
 		return 1
 	}
 	var blocks []transcriptBlock
@@ -157,13 +182,13 @@ func renderTranscriptAssistant(out *strings.Builder, content json.RawMessage) in
 				continue
 			}
 			out.WriteString("\n")
-			writeEntry(out, replyMarkStyle.Render("⏺ "), renderMarkdown(text))
+			writeEntry(out, replyMarkStyle().Render("⏺ "), renderMarkdown(text))
 			entries++
 		case "tool_use":
 			out.WriteString("\n" +
-				toolMarkStyle.Render("⏺ ") +
-				toolNameStyle.Render(block.Name) +
-				toolArgStyle.Render("("+transcriptToolArgument(block.Input)+")") +
+				toolMarkStyle().Render("⏺ ") +
+				toolNameStyle().Render(block.Name) +
+				toolArgStyle().Render("("+transcriptToolArgument(block.Input)+")") +
 				"\n")
 			entries++
 		}
@@ -218,10 +243,10 @@ func trimTranscriptResult(result string) string {
 		if index == 0 {
 			prefix = "  ⎿ "
 		}
-		out.WriteString(resultStyle.Render(prefix+transcriptEllipsis(line, 200)) + "\n")
+		out.WriteString(resultStyle().Render(prefix+transcriptEllipsis(line, 200)) + "\n")
 	}
 	if hidden := len(lines) - len(shown); hidden > 0 {
-		out.WriteString(resultStyle.Render(
+		out.WriteString(resultStyle().Render(
 			fmt.Sprintf("    … +%d lines", hidden)) + "\n")
 	}
 	return out.String()

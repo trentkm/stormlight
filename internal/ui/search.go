@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -110,7 +110,7 @@ func (m *Model) beginSearch() {
 	m.search.query = ""
 	m.search.matches = nil
 	m.search.index = 0
-	m.search.anchor = m.interaction.YOffset
+	m.search.anchor = m.interaction.YOffset()
 	m.status = "Search"
 }
 
@@ -154,7 +154,7 @@ func (m *Model) centerSearchMatch() {
 		return
 	}
 	line := m.search.matches[m.search.index]
-	m.interaction.SetYOffset(max(0, line-m.interaction.Height/2))
+	m.interaction.SetYOffset(max(0, line-m.interaction.Height()/2))
 }
 
 // seekSearchFromAnchor parks the match cursor on the first match at or below
@@ -188,7 +188,7 @@ func (m Model) searchPosition() string {
 
 // updateSearch drives the prompt: matching narrows live, Enter keeps the
 // query for n/N, Esc restores the pre-search view.
-func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
