@@ -40,26 +40,37 @@ release:
 changelog:
   use: github
 
-brews:
+# Casks, not formulae. `brews` is soft-deprecated as of goreleaser v2.10 and
+# removed outright in v2.16; the formula it generated was a workaround from
+# when Linuxbrew had no cask support. It does now — Homebrew's cask code is
+# cross-platform, with macOS layered on top as overrides under
+# extend/os/mac/cask — so the generated cask carries on_linux URLs and Linux
+# keeps its `brew install` path.
+homebrew_casks:
   - repository:
       owner: trentkm
       name: homebrew-stormlight
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/trentkm/stormlight
     description: Workspace-native control surface for coding agents
-    license: MIT
     # tmux >= 3.7 is required for popup overlays (older display-popup
     # crashes the server on DECRQM, tmux/tmux#4942); Homebrew ships 3.7+.
     # yazi is the directory picker for workspaces and dispatch — core to
     # the intended experience, so it installs alongside. Neovim stays
     # optional: most people already have an editor opinion.
     dependencies:
-      - name: tmux
-      - name: yazi
-    directory: Formula
-    install: |
-      bin.install "stormlight"
+      - formula: tmux
+      - formula: yazi
     caveats: |
       Optional: install neovim to edit agent tasks in a popup (brew install neovim).
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/stormlight --version")
+    # Homebrew quarantines cask downloads, and an unsigned binary then trips
+    # Gatekeeper on first run. Stripping the attribute keeps `stormlight`
+    # launchable; the guard matches Homebrew's own split, where quarantine is
+    # a macOS override and the generic implementation reports it unavailable.
+    # Without it this would shell out to a path Linux does not have.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/stormlight"]
+          end
