@@ -227,6 +227,22 @@ func effectiveWorkspace(managedAgent agent.Agent) workspace.Context {
 	return value
 }
 
+// worktreeLabel names the linked Git worktree an agent runs in, and is empty
+// when the agent works the main checkout or isn't in Git at all. Linked
+// worktrees share a --git-common-dir with their checkout, so the resolver
+// files them under one workspace: Root is the checkout every worktree hangs
+// off, ExecutionRoot the tree this agent actually edits.
+func worktreeLabel(managedAgent agent.Agent) string {
+	value := effectiveWorkspace(managedAgent)
+	if value.Kind != workspace.KindGit || value.ExecutionRoot == "" {
+		return ""
+	}
+	if directoryKey(value.ExecutionRoot) == directoryKey(value.Root) {
+		return ""
+	}
+	return filepath.Base(value.ExecutionRoot)
+}
+
 func (m *Model) moveSelection(delta int) {
 	m.moveSelectionIn(m.activePane, delta)
 }
