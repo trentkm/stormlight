@@ -176,15 +176,21 @@ func cleanInteraction(content string, width int, providerID agent.Provider) stri
 			wrapped = wrapTranscriptLine(line, width)
 		}
 		wrappedLines := strings.Split(wrapped, "\n")
-		for index, wrappedLine := range wrappedLines {
-			wrappedLine = trimANSIRight(wrappedLine)
+		// Wrapping cuts a styled run in half: the opening SGR sits on the
+		// first row and the reset on the last. Every row is reopened with
+		// the styling still in effect and closed again, because each row is
+		// laid beside another pane — an unterminated color would run into
+		// the neighbor, and a row that never reopened would lose its color.
+		carried := ""
+		for _, wrappedLine := range wrappedLines {
+			wrappedLine = trimANSIRight(carried + wrappedLine)
 			blank := strings.TrimSpace(ansi.Strip(wrappedLine)) == ""
+			carried = activeSGR(wrappedLine)
+			if carried != "" {
+				wrappedLine += ansi.ResetStyle
+			}
 			if blank && previousBlank {
 				continue
-			}
-			if !blank && index == len(wrappedLines)-1 &&
-				strings.Contains(line, "\x1b[") {
-				wrappedLine += ansi.ResetStyle
 			}
 			compacted = append(compacted, wrappedLine)
 			previousBlank = blank
@@ -281,6 +287,53 @@ func isSGRSequence(sequence string) bool {
 	return len(sequence) >= 3 &&
 		strings.HasPrefix(sequence, "\x1b[") &&
 		strings.HasSuffix(sequence, "m")
+}
+
+// activeSGR returns the styling a line leaves switched on: every SGR
+// sequence since the last reset, in order, ready to be replayed at the head
+// of the row that continues it.
+func activeSGR(line string) string {
+	var active []string
+	var state byte
+	for len(line) > 0 {
+		sequence, _, consumed, next := ansi.DecodeSequence(line, state, nil)
+		if consumed <= 0 {
+			break
+		}
+		if isSGRSequence(sequence) {
+			if opensWithReset(sequence) {
+				active = active[:0]
+			}
+			if !isResetSGR(sequence) {
+				active = append(active, sequence)
+			}
+		}
+		line = line[consumed:]
+		state = next
+	}
+	return strings.Join(active, "")
+}
+
+// sgrParameters returns an SGR sequence's parameters: "\x1b[1;31m" → 1, 31.
+// A bare "\x1b[m" is the implicit reset, so it yields one empty parameter.
+func sgrParameters(sequence string) []string {
+	return strings.Split(sequence[2:len(sequence)-1], ";")
+}
+
+// opensWithReset reports whether a sequence starts by clearing all styling,
+// which "\x1b[0;31m" does before setting red.
+func opensWithReset(sequence string) bool {
+	first := sgrParameters(sequence)[0]
+	return first == "" || strings.TrimLeft(first, "0") == ""
+}
+
+func isResetSGR(sequence string) bool {
+	for _, parameter := range sgrParameters(sequence) {
+		if parameter != "" && strings.TrimLeft(parameter, "0") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func focusConversation(lines []string, providerID agent.Provider) []string {

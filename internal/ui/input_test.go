@@ -126,8 +126,10 @@ func TestCleanInteractionPreservesColorAndFocusesConversation(t *testing.T) {
 	if !strings.Contains(got, "\x1b[") {
 		t.Fatalf("ANSI styling was removed: %q", got)
 	}
-	if !strings.Contains(got, "❯ hello\x1b[0m\x1b[m\n\n") {
-		t.Fatalf("prompt style was not reset before the blank line: %q", got)
+	for index, row := range strings.Split(got, "\n") {
+		if left := activeSGR(row); left != "" {
+			t.Fatalf("row %d leaves styling open (%q): %q", index, left, row)
+		}
 	}
 	if strings.Contains(plain, "Welcome back") ||
 		strings.Contains(plain, "Usage policy") ||
@@ -137,6 +139,23 @@ func TestCleanInteractionPreservesColorAndFocusesConversation(t *testing.T) {
 	if !strings.Contains(plain, "❯ hello") ||
 		!strings.Contains(plain, "Hello! How can I help?") {
 		t.Fatalf("conversation content was lost:\n%s", plain)
+	}
+}
+
+func TestCleanInteractionCarriesStyleAcrossWrappedRows(t *testing.T) {
+	content := "\x1b[36m" + strings.Repeat("word ", 12) + "\x1b[0m"
+
+	rows := strings.Split(cleanInteraction(content, 20, agent.Provider("custom")), "\n")
+	if len(rows) < 3 {
+		t.Fatalf("line did not wrap into enough rows: %q", rows)
+	}
+	for index, row := range rows {
+		if !strings.HasPrefix(row, "\x1b[36m") {
+			t.Fatalf("row %d lost the color it continues: %q", index, row)
+		}
+		if left := activeSGR(row); left != "" {
+			t.Fatalf("row %d leaves styling open (%q): %q", index, left, row)
+		}
 	}
 }
 
