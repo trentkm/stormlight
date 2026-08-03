@@ -135,6 +135,44 @@ binary from whatever main happened to be last week; run them together.
 
 Run tests with `go test ./...`.
 
+## Releasing
+
+CI is the only thing that publishes. A release happens when — and only
+when — a `v*` tag lands on `origin`:
+
+```sh
+git fetch origin && git tag v0.3.0 origin/main && git push origin v0.3.0
+```
+
+Tag `origin/main` explicitly. Tagging `HEAD` from a worktree ships whatever
+that branch happens to be, which is not what anyone reviewed.
+
+**Never run `goreleaser release` locally.** It is the same pipeline CI runs,
+so a local invocation does not preview the release — it *performs* one,
+creating the GitHub release, uploading the archives, and pushing the formula
+to the tap. The tag push then starts CI, which arrives at a release that is
+already complete and fails on the first asset collision. Every release from
+v0.1.0 through v0.2.2 failed this way while appearing to publish correctly,
+because the local run had already done the work CI was reporting on. To
+check the config without publishing, use `goreleaser release --snapshot
+--clean`, which builds into `dist/` and touches nothing remote.
+
+The workflow needs one secret beyond the automatic `GITHUB_TOKEN`:
+`HOMEBREW_TAP_GITHUB_TOKEN`, a fine-grained PAT with `contents: write` on
+`trentkm/homebrew-stormlight`. Without it goreleaser builds and publishes the
+release, then fails pushing the formula — a half-shipped version where the
+binaries exist but `brew upgrade` never sees them.
+
+A published version is immutable. The tap formula pins the tarball's
+`sha256`, so re-tagging a version that users may already have fetched swaps
+the bytes under a checksum Homebrew has cached and breaks installs with a
+mismatch. A bad release is superseded by the next version, never rewritten.
+
+Versions are semver with a pre-1.0 reading: user-visible features bump the
+minor, fixes bump the patch. Cutting one is cheap, but each is a thing users
+see and re-download, so releases follow completed work rather than individual
+merges.
+
 ## Headless TUI testing
 
 The dashboard and agent lifecycle can be exercised without a real terminal:
