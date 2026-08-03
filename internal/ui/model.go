@@ -543,14 +543,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Ready"
 			return m, nil
 		default:
-			// The keypress is the presence proof: if an unseen result is
-			// on screen right now (selected, transcript loaded) and the
-			// human acts, it has been seen.
+			// Reading the result is the presence proof: if an unseen result
+			// is on screen right now (selected, transcript loaded) and the
+			// human engages with it, it has been seen.
 			seenID := ""
 			if selected, ok := m.selectedAgent(); ok &&
 				selected.ProcessLive &&
 				selected.Attention == agent.AttentionWaiting &&
-				m.interactionID == selected.ID {
+				m.interactionID == selected.ID &&
+				marksResultSeen(msg.String(), m.activePane) {
 				seenID = selected.ID
 			}
 			updated, cmd := m.updateNormal(msg)
@@ -785,6 +786,37 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.interaction, cmd = m.interaction.Update(msg)
 	return m, cmd
+}
+
+// marksResultSeen reports whether a keypress engages with the unseen result
+// rather than merely happening near it. Acting on the agent counts from
+// anywhere; paging through the transcript counts only while the transcript
+// pane holds focus, because that is the one place those keys are reading
+// rather than moving the cursor.
+//
+// Bare navigation is deliberately absent. `h` back out of the transcript,
+// `l` into it, tab between panes, `j`/`k` down the agent list — every one of
+// those is how a human leaves a result, and treating them as proof made
+// amber clear on the way past. Nothing here is lost by waiting: `M` marks
+// seen outright, and the amber costs nothing while it waits.
+func marksResultSeen(key string, active pane) bool {
+	switch key {
+	case "enter", "i", "s", "x":
+		// Opening the terminal, replying, and interrupting all act on the
+		// result itself, wherever the cursor happens to be.
+		return true
+	}
+	if active != paneInteraction {
+		return false
+	}
+	switch key {
+	case "j", "k", "up", "down",
+		"ctrl+d", "ctrl+u", "ctrl+f", "ctrl+b", "pgup", "pgdown",
+		"g", "G",
+		"/", "n", "N":
+		return true
+	}
+	return false
 }
 
 func (m Model) anyAgentsActive() bool {

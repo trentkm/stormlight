@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/provider"
@@ -1604,6 +1605,61 @@ func TestFocusedAgentRowUsesTaskFirstTitleAndSelectionRail(t *testing.T) {
 	}
 }
 
+// Selecting a row must not change what it reports. The selection background
+// used to repaint the title flat, so putting the cursor on a working agent
+// made it read exactly like an idle one — which is what "the blue pulse
+// clears as soon as I navigate left" describes. See #63.
+func TestSelectedAgentRowKeepsWorkingAndUrgentState(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	base := agent.Agent{
+		Provider:    agent.ProviderCodex,
+		Name:        "cx-fix-parser",
+		Task:        "Fix parser behavior",
+		ProcessLive: true,
+	}
+	withState := func(activity agent.Activity, attention agent.Attention) agent.Agent {
+		value := base
+		value.Activity = activity
+		value.Attention = attention
+		return value
+	}
+	render := func(value agent.Agent, phase int) string {
+		return renderAgentRowWithDensity(value, true, true, 52, true, false, phase)
+	}
+	// The subtitle spells the state out in words either way; the claim here
+	// is about the title line, which is what carries the color.
+	titleLine := func(rendered string) string {
+		return strings.SplitN(rendered, "\n", 2)[0]
+	}
+
+	idle := render(withState(agent.ActivityIdle, agent.AttentionNone), 4)
+	working := render(withState(agent.ActivityWorking, agent.AttentionNone), 4)
+	urgent := render(withState(agent.ActivityIdle, agent.AttentionQuestion), 4)
+	if titleLine(working) == titleLine(idle) {
+		t.Fatal("selected working title renders identically to an idle one")
+	}
+	if titleLine(urgent) == titleLine(idle) {
+		t.Fatal("selected urgent title renders identically to an idle one")
+	}
+
+	// The sweep has to keep moving under the cursor, not freeze at a shade.
+	late := render(withState(agent.ActivityWorking, agent.AttentionNone), 7)
+	if titleLine(late) == titleLine(working) {
+		t.Fatal("selected working title does not shimmer between phases")
+	}
+
+	for _, rendered := range []string{idle, working, urgent, late} {
+		for index, line := range strings.Split(ansi.Strip(rendered), "\n") {
+			if width := lipgloss.Width(line); width != 52 {
+				t.Fatalf("line %d width = %d, want 52: %q", index+1, width, line)
+			}
+		}
+	}
+}
+
 func TestContextualNewAction(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext(t.TempDir())
 	model := NewModel(stubBackend{})
@@ -2070,7 +2126,7 @@ func (b *recordingBackend) Attach(
 	return app.AttachResult{}, nil
 }
 
-func TestSeenClearingMarksSelectedAgentOnPresence(t *testing.T) {
+func unreadAgentModel(active pane) Model {
 	ws := workspace.DirectoryContext("/workspace/project")
 	model := NewModel(stubBackend{})
 	model.width = 120
@@ -2086,13 +2142,56 @@ func TestSeenClearingMarksSelectedAgentOnPresence(t *testing.T) {
 		Workspace:   ws,
 	}}
 	model.rebuildGroups(ws.ID, "unread")
-	model.activePane = paneAgents
+	model.activePane = active
 	model.interactionID = "unread"
+	return model
+}
 
-	updated, _ := model.Update(runeKey("k"))
-	model = updated.(Model)
-	if model.agents[0].Attention != agent.AttentionNone {
-		t.Fatalf("attention = %q, want cleared on presence", model.agents[0].Attention)
+func TestSeenClearingMarksSelectedAgentOnEngagement(t *testing.T) {
+	cases := []struct {
+		label  string
+		key    tea.KeyMsg
+		active pane
+	}{
+		{"scroll the transcript", runeKey("k"), paneInteraction},
+		{"jump to its end", runeKey("G"), paneInteraction},
+		{"reply", runeKey("i"), paneAgents},
+		{"open its terminal", tea.KeyMsg{Type: tea.KeyEnter}, paneAgents},
+	}
+	for _, testCase := range cases {
+		model := unreadAgentModel(testCase.active)
+		updated, _ := model.Update(testCase.key)
+		model = updated.(Model)
+		if model.agents[0].Attention != agent.AttentionNone {
+			t.Fatalf("%s: attention = %q, want cleared on engagement",
+				testCase.label, model.agents[0].Attention)
+		}
+	}
+}
+
+// Navigating past an unseen result is not reading it: the amber has to
+// survive the keys a human presses on the way out of the transcript, or it
+// clears before they ever look. See #63.
+func TestSeenClearingSurvivesNavigation(t *testing.T) {
+	cases := []struct {
+		label  string
+		key    tea.KeyMsg
+		active pane
+	}{
+		{"left, out of the transcript", runeKey("h"), paneInteraction},
+		{"right, into the transcript", runeKey("l"), paneAgents},
+		{"cycling panes", tea.KeyMsg{Type: tea.KeyTab}, paneAgents},
+		{"up the agent list", runeKey("k"), paneAgents},
+		{"down the workspace list", runeKey("j"), paneWorkspaces},
+	}
+	for _, testCase := range cases {
+		model := unreadAgentModel(testCase.active)
+		updated, _ := model.Update(testCase.key)
+		model = updated.(Model)
+		if model.agents[0].Attention != agent.AttentionWaiting {
+			t.Fatalf("%s: attention = %q, want the unseen result kept",
+				testCase.label, model.agents[0].Attention)
+		}
 	}
 }
 
