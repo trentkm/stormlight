@@ -147,10 +147,15 @@ func (m Model) commandHints() string {
 			return "j/k location  Enter choose  m mode  e edit path  Esc cancel"
 		case dispatchCustomPath:
 			return "type to filter  Enter choose  ↑/↓ pick  Backspace up  Esc cancel"
+		case dispatchName:
+			return "name this agent  Enter task  Tab fields  Esc cancel"
 		default:
 			hints := "Enter launch"
 			if m.nvimPath != "" {
 				hints += "  Ctrl-o Neovim"
+			}
+			if m.dispatchNameVisible() {
+				hints += "  Shift-Tab name"
 			}
 			return hints + "  Esc cancel"
 		}

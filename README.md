@@ -193,11 +193,17 @@ different: the agent is idle at its own composer, so a Spanreed reply is the
 answer.
 
 Pressing `n` in Agents or Spanreed inherits the current workspace context.
-The centered form contains a vertical `Coding agent` picker and a wrapping task
-composer. Use `j` / `k` to choose Codex, Claude, or another configured coding
-agent, then press `Enter` to compose and `Enter` again to launch. Shell remains
-available through `stormlight dispatch --provider shell`, but is not presented as
-a conversational coding agent.
+The centered form contains a vertical `Coding agent` picker, an optional name,
+and a wrapping task composer. Use `j` / `k` to choose Codex, Claude, or another
+configured coding agent, then press `Enter` to compose and `Enter` again to
+launch. Shell remains available through `stormlight dispatch --provider shell`,
+but is not presented as a conversational coding agent.
+
+`Tab` reaches the name field, which `Enter` on the picker skips past. Leave it
+empty and the agent is named after its task; fill it in and that name is what
+the agent list and its tmux window carry (the same thing `R` sets afterward,
+and what `stormlight dispatch --name` has always taken). The field drops out
+of the form in panes too short to hold both it and the task composer.
 
 Press `e` from the coding-agent picker or `Ctrl-o` from the task composer to
 edit the task in Neovim. The saved text returns to the form. Neovim opens in a
