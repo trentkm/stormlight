@@ -30,6 +30,13 @@ archives:
 checksum:
   name_template: checksums.txt
 
+release:
+  # A release that dies partway through — a flaky upload, an expired tap
+  # token — leaves assets already attached to the tag. Without this, the
+  # re-run collides with its own output (422 already_exists) and can never
+  # succeed, so the only way forward would be burning a version number.
+  replace_existing_artifacts: true
+
 changelog:
   use: github
 
