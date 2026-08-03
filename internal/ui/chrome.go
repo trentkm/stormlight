@@ -134,21 +134,20 @@ func (m Model) commandHints() string {
 	case modeDispatch:
 		switch m.formFocus {
 		case dispatchProvider:
-			hints := "j/k choose  Enter task"
-			if m.chooseDispatchDirectory {
-				hints = "j/k choose  Enter location"
-			}
-			hints += "  m mode"
+			hints := "j/k choose  Enter " + m.nextDispatchField() + "  m mode"
 			if m.nvimPath != "" {
 				hints += "  e Neovim"
 			}
 			return hints + "  Esc cancel"
 		case dispatchDirectory:
-			return "j/k location  Enter choose  m mode  e edit path  Esc cancel"
+			return "j/k location  Enter " + m.nextDispatchField() +
+				"  m mode  e edit path  Esc cancel"
 		case dispatchCustomPath:
-			return "type to filter  Enter choose  ↑/↓ pick  Backspace up  Esc cancel"
+			return "Enter choose  ↑/↓ pick  Backspace up  Tab " +
+				m.nextDispatchField() + "  Esc cancel"
 		case dispatchName:
-			return "name this agent  Enter task  Tab fields  Esc cancel"
+			return "name this agent  Enter " + m.nextDispatchField() +
+				"  Tab fields  Esc cancel"
 		default:
 			hints := "Enter launch"
 			if m.nvimPath != "" {
