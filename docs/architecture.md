@@ -104,7 +104,13 @@ target pane; they are not interpolated into shell command strings.
 The Spanreed pane shows the normalized transcript and composer, with the
 native terminal as the fallback. Transcript rendering retains only SGR
 styling from tmux capture
-output; other terminal control sequences are discarded. Claude and Codex
+output; other terminal control sequences are discarded. A session rendered
+from a provider's own JSONL transcript arrives unstyled, so the renderer
+paints it: prompts, replies, tool calls, and trimmed results take the
+palette in `internal/theme`, and the markdown Claude writes (headings,
+literals, emphasis) is read back as styling. Wrapping replays the styling in
+effect at the head of every continuation row and closes it at the row's end,
+so no color runs into the neighboring pane. Claude and Codex
 interactions focus on content from the first populated prompt and remove only
 the trailing empty composer/status block. The tmux capture remains the
 provider-neutral fallback. Messages
