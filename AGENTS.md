@@ -173,6 +173,19 @@ minor, fixes bump the patch. Cutting one is cheap, but each is a thing users
 see and re-download, so releases follow completed work rather than individual
 merges.
 
+The minor number has no ceiling and is not a countdown. `0.x` means exactly
+what semver says it means — no stability promise, anything may change at any
+time — so v0.9.0 and v0.27.0 are ordinary places to be, and moving from 0.2
+to 0.3 costs nothing. Staying in `0.x` is what buys the freedom the
+Philosophy section above assumes: breaking refactors stay welcome precisely
+because no version has promised otherwise.
+
+1.0.0 is therefore a decision, not a milestone reached by incrementing. It
+declares that the interface — the dashboard's keys, the workspace catalog
+format, the state files — is stable enough that breaking it costs a major
+bump. Cut it when that promise is one worth keeping, not when the minor
+number looks large.
+
 ## Headless TUI testing
 
 The dashboard and agent lifecycle can be exercised without a real terminal:
