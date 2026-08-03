@@ -26,12 +26,31 @@ the right way the first time:
 
 ## Work in a worktree
 
-Every task starts in its own git worktree, branched off `main` — never in the
-primary checkout:
+Every task starts in its own git worktree, cut from the freshly fetched
+`origin/main` — never in the primary checkout, and never from local `main`:
 
 ```sh
-git worktree add -b <branch> .claude/worktrees/<branch> main
+git fetch origin
+git worktree add -b <branch> --no-track .claude/worktrees/<branch> origin/main
 ```
+
+Fetch every time. Branching off local `main` inherits whatever that checkout
+last saw, which is stale the moment anyone else's PR merges; `origin/main`
+after a fetch is the real tip. `--no-track` is not optional — a branch created
+from a remote-tracking ref otherwise adopts `origin/main` as its upstream, and
+a later `git push` either refuses or aims at the wrong branch. With it, the
+branch starts upstreamless and `git push -u origin <branch>` does the right
+thing.
+
+While the work is in flight, keep the branch stacked on current main. Fetch
+and rebase before you push:
+
+```sh
+git fetch origin && git rebase origin/main
+```
+
+That keeps the PR a linear diff against the tip rather than a merge knot, and
+surfaces conflicts while the change is still yours to reshape.
 
 `/.claude/` is gitignored, so worktrees parked there stay invisible to the
 repo. Remove one once its work has landed:
@@ -44,6 +63,10 @@ The reason is concurrency: more than one agent works this repo at a time. Two
 agents sharing a checkout produce uncommitted changes neither can attribute,
 and a commit from one sweeps up whatever the other had half-finished. A
 worktree makes each task's diff its own.
+
+Local `main` is never a place work happens. It is not checked out for edits,
+not committed to, not branched from. The primary checkout exists to build the
+everyday binary and to read from — nothing else.
 
 A worktree isolates the tree and nothing else. The rest is on you:
 
@@ -64,6 +87,8 @@ working this way dogfoods the feature.
 
 ## Dev loop
 
+Inside a worktree, building the branch you are working on:
+
 ```sh
 go build -o stormlight . && install -m 0755 stormlight ~/.local/bin/stormlight
 ```
@@ -71,6 +96,20 @@ go build -o stormlight . && install -m 0755 stormlight ~/.local/bin/stormlight
 Installing matters: managed tmux windows re-invoke `stormlight` from PATH for
 lifecycle tracking, so a stale installed binary means the dashboard and the
 agents disagree about the world.
+
+Refreshing the everyday binary to current `main` is the one job the primary
+checkout still does, and it advances `main` read-only to do it:
+
+```sh
+git fetch origin && git merge --ff-only origin/main
+go build -o stormlight . && install -m 0755 stormlight ~/.local/bin/stormlight
+```
+
+`--ff-only` is the whole safeguard. It fast-forwards when local `main` is
+merely behind and fails outright if the two have diverged — which, since
+nothing is ever committed there, means something is wrong and wants a look
+rather than a merge commit. Building without the fetch is how you install a
+binary from whatever main happened to be last week; run them together.
 
 Run tests with `go test ./...`.
 
