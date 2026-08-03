@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
+	"github.com/trentkm/stormlight/internal/theme"
 )
 
 // withColor forces a color profile for the default renderer: tests run
@@ -87,10 +88,6 @@ func TestRenderClaudeTranscriptPaintsConversation(t *testing.T) {
 	}
 	for _, want := range []struct{ text, styled string }{
 		{"❯ fix the parser", promptMarkStyle.Render("❯ ")},
-		{"⏺ Plan", headingStyle.Render("Plan")},
-		{"Call parse() and make it fast.", codeStyle.Render("parse()")},
-		{"Call parse() and make it fast.", boldStyle.Render("fast")},
-		{"x := 1", codeStyle.Render("x := 1")},
 		{"⏺ Bash(go test ./...)", toolNameStyle.Render("Bash")},
 		{"⎿ ok", resultStyle.Render("  ⎿ ok")},
 	} {
@@ -102,6 +99,20 @@ func TestRenderClaudeTranscriptPaintsConversation(t *testing.T) {
 			t.Fatalf("line %q is unpainted: %q, want %q",
 				want.text, line, want.styled)
 		}
+	}
+	// Prose reaches the markdown renderer on the way through, and the ⏺
+	// marker still lands on the first row of what it produces.
+	for _, want := range []struct{ text, sgr, why string }{
+		{"Plan", paletteSGR(theme.Accent) + ";1", "heading"},
+		{"parse()", paletteSGR(theme.Code), "inline literal"},
+		{":=", paletteSGR(theme.Code), "fenced code"},
+	} {
+		if got := runSGR(t, rendered, want.text); got != want.sgr {
+			t.Errorf("%s %q: SGR %q, want %q", want.why, want.text, got, want.sgr)
+		}
+	}
+	if !strings.Contains(ansi.Strip(rendered), "⏺ Plan") {
+		t.Errorf("marker did not land on the first rendered row:\n%s", ansi.Strip(rendered))
 	}
 	// Markdown delimiters were instructions to a renderer, not content.
 	if strings.Contains(ansi.Strip(rendered), "**") {
