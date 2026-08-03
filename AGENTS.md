@@ -24,6 +24,44 @@ the right way the first time:
 - Commit and push completed work as it lands; don't let it pile up.
 - Commits carry no AI attribution — no `Co-Authored-By` trailers.
 
+## Work in a worktree
+
+Every task starts in its own git worktree, branched off `main` — never in the
+primary checkout:
+
+```sh
+git worktree add -b <branch> .claude/worktrees/<branch> main
+```
+
+`/.claude/` is gitignored, so worktrees parked there stay invisible to the
+repo. Remove one once its work has landed:
+
+```sh
+git worktree remove .claude/worktrees/<branch> && git branch -d <branch>
+```
+
+The reason is concurrency: more than one agent works this repo at a time. Two
+agents sharing a checkout produce uncommitted changes neither can attribute,
+and a commit from one sweeps up whatever the other had half-finished. A
+worktree makes each task's diff its own.
+
+A worktree isolates the tree and nothing else. The rest is on you:
+
+- **The installed binary.** `~/.local/bin/stormlight` is a global singleton,
+  and managed tmux windows re-invoke `stormlight` from `PATH` — so an install
+  from one worktree silently changes what every other worktree's agents run.
+  Build into the worktree and prepend it to `PATH` for end-to-end runs;
+  install to `~/.local/bin` only when updating the everyday binary is the
+  point.
+- **The tmux server.** Parallel runs need separate sockets
+  (`STORMLIGHT_TMUX_SOCKET=stormlight-<branch>`), or they will list, resize,
+  and kill each other's agents.
+- **XDG state**, exactly as the headless testing section below requires.
+
+Linked worktrees share one `--git-common-dir`, so Stormlight groups them into
+a single workspace while keeping each checkout a distinct execution root —
+working this way dogfoods the feature.
+
 ## Dev loop
 
 ```sh
