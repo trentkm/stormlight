@@ -110,19 +110,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 
 	workspaceWidth, agentWidth, interactionWidth := m.paneWidths(width)
 
-	// The selected rows upstream of the focused pane stay undimmed, so the
-	// hierarchy reads as a lit path: workspace → agent → transcript.
-	keepWorkspace := undimmedRows{}
-	if m.activePane != paneWorkspaces && len(m.groups) > 0 {
-		keepWorkspace = m.selectedRowRange(
-			len(m.groups), m.workspaceCursor, contentHeight-1)
-	}
-	keepAgent := undimmedRows{}
-	if agents := m.agentsForSelectedWorkspace(); m.activePane == paneInteraction &&
-		len(agents) > 0 {
-		keepAgent = m.selectedRowRange(
-			len(agents), m.agentCursor, contentHeight-1)
-	}
+	dimWorkspaces, dimAgents, dimInteraction := m.paneDimmings(contentHeight)
 
 	workspaces := m.renderPane(
 		"Workspaces",
@@ -134,7 +122,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		contentHeight,
 		m.activePane == paneWorkspaces,
 		true,
-		keepWorkspace,
+		dimWorkspaces,
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
 		workspaces = paintHierarchyConnector(
@@ -152,7 +140,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		contentHeight,
 		m.activePane == paneAgents,
 		true,
-		keepAgent,
+		dimAgents,
 	)
 	interaction := m.renderPane(
 		"Spanreed",
@@ -165,9 +153,32 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		contentHeight,
 		m.activePane == paneInteraction,
 		false,
-		undimmedRows{},
+		dimInteraction,
 	)
 	return lipgloss.JoinHorizontal(lipgloss.Top, workspaces, agents, interaction)
+}
+
+// paneDimmings decides how far each pane recedes. The lit path is the
+// selection, not the focus: whichever pane holds the cursor, the two list
+// panes stay dim except for their selected row, and the Spanreed never dims
+// at all. A transcript is there to be read, and dimming it while the cursor
+// is in the agent list only makes the reader tab over to finish the
+// sentence. Focus is carried by the accent header rule and the single filled
+// cursor row, which need no help from the body's brightness.
+func (m Model) paneDimmings(contentHeight int) (
+	workspaces, agents, interaction paneDimming,
+) {
+	workspaces = paneDimming{dim: true}
+	if len(m.groups) > 0 {
+		workspaces.keep = m.selectedRowRange(
+			len(m.groups), m.workspaceCursor, contentHeight-1)
+	}
+	agents = paneDimming{dim: true}
+	if list := m.agentsForSelectedWorkspace(); len(list) > 0 {
+		agents.keep = m.selectedRowRange(
+			len(list), m.agentCursor, contentHeight-1)
+	}
+	return workspaces, agents, paneDimming{}
 }
 
 func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
@@ -426,7 +437,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			height,
 			true,
 			false,
-			undimmedRows{},
+			paneDimming{},
 		)
 	case paneInteraction:
 		return m.renderPane(
@@ -437,7 +448,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			height,
 			true,
 			false,
-			undimmedRows{},
+			paneDimming{},
 		)
 	default:
 		return m.renderPane(
@@ -448,7 +459,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			height,
 			true,
 			false,
-			undimmedRows{},
+			paneDimming{},
 		)
 	}
 }
@@ -500,6 +511,14 @@ func (m Model) resizeColumns(key string) (tea.Model, tea.Cmd) {
 // dimmed pane: the selected path rows lighting the way to the focus.
 type undimmedRows struct{ start, count int }
 
+// paneDimming says how a pane's body recedes. The zero value never dims —
+// panes whose whole content is meant to be read regardless of focus. A
+// dimming pane falls to the terminal's faint attribute everywhere but keep.
+type paneDimming struct {
+	dim  bool
+	keep undimmedRows
+}
+
 // selectedRowRange is the body-line range a list's selected entry occupies,
 // or a zero range when the selection is scrolled out of view.
 func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
@@ -524,7 +543,7 @@ func (m Model) renderPane(
 	height int,
 	active bool,
 	borderRight bool,
-	keep undimmedRows,
+	dimming paneDimming,
 ) string {
 	innerWidth := max(1, width)
 	style := lipgloss.NewStyle().Width(innerWidth).Height(height).MaxHeight(height)
@@ -538,8 +557,8 @@ func (m Model) renderPane(
 			BorderForeground(colorBorder)
 	}
 	header := renderPaneHeader(label, contextLabel, innerWidth, active)
-	if !active {
-		content = dimPane(content, keep)
+	if dimming.dim {
+		content = dimPane(content, dimming.keep)
 	}
 	body := lipgloss.NewStyle().
 		Width(innerWidth).
@@ -548,13 +567,13 @@ func (m Model) renderPane(
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
 }
 
-// dimPane lays the terminal's faint attribute over an inactive pane so the
-// focused pane is the only one at full strength. Colors survive — an amber
+// dimPane lays the terminal's faint attribute over a list pane so its
+// selected row is the only one at full strength. Colors survive — an amber
 // attention marker still reads as amber, just recessed. Every SGR sequence
 // inside the block re-arms the faint (a reset would otherwise cancel it)
 // and drops bold, which defeats faint on most terminals. Rows inside keep
 // stay untouched: the selected workspace and agent light the path to the
-// focused pane.
+// transcript.
 func dimPane(content string, keep undimmedRows) string {
 	lines := strings.Split(content, "\n")
 	for index, line := range lines {
