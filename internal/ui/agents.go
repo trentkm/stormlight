@@ -80,7 +80,6 @@ func renderAgentRowWithDensity(
 	// One indicator column: the focused row's bar comes from the theme, a
 	// remembered selection shows the chevron, everything else shows its
 	// status glyph. Displaced state speaks through the title styling.
-	topContent := " " + displayTitle + strings.Repeat(" ", gap) + age
 
 	state := string(managedAgent.Activity)
 	if managedAgent.NeedsAttention() {
@@ -101,14 +100,18 @@ func renderAgentRowWithDensity(
 	// selection remembered in an inactive pane keeps just a faint marker,
 	// so exactly one row on screen is hot.
 	if focused || danger {
-		theme := rowThemeFor(danger)
-		if !expanded {
-			return theme.selectableRow(topContent, width, focused)
-		}
-		if focused {
-			return theme.focusedRow(topContent, bottomContent, width)
-		}
-		return theme.contextRow(topContent, bottomContent, width)
+		return renderSelectedAgentRow(
+			managedAgent,
+			displayTitle,
+			gap,
+			age,
+			bottomContent,
+			width,
+			focused,
+			expanded,
+			shimmerPhase,
+			rowThemeFor(danger),
+		)
 	}
 
 	renderedTitle := titleStyle.Render(displayTitle)
@@ -138,6 +141,84 @@ func renderAgentRowWithDensity(
 		return top
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+}
+
+// renderSelectedAgentRow draws the cursor row over the selection background
+// without flattening the state the row is reporting: a working agent keeps
+// its cyan sweep and an urgent one keeps its amber, painted onto the row
+// background instead of replaced by it. Moving the cursor onto a row is not
+// news about the agent, so it must not change what the row says — the
+// workspace list has always rendered its selection this way, and an agent
+// that reads as idle the moment you select it is exactly the confusion this
+// avoids.
+func renderSelectedAgentRow(
+	managedAgent agent.Agent,
+	title string,
+	gap int,
+	age string,
+	bottom string,
+	width int,
+	focused bool,
+	expanded bool,
+	shimmerPhase int,
+	theme rowTheme,
+) string {
+	top := " " + title + strings.Repeat(" ", gap) + age
+	if width < 3 || lipgloss.Width(top) > max(0, width-2) {
+		if !expanded {
+			return theme.selectableRow(top, width, focused)
+		}
+		if focused {
+			return theme.focusedRow(top, bottom, width)
+		}
+		return theme.contextRow(top, bottom, width)
+	}
+
+	marker := "▏"
+	markerColor := theme.restMark
+	if focused {
+		marker = "▌"
+		markerColor = theme.focusMark
+	}
+	markerStyle := lipgloss.NewStyle().
+		Foreground(markerColor).
+		Background(theme.background).
+		Bold(focused)
+	baseStyle := lipgloss.NewStyle().
+		Foreground(theme.text).
+		Background(theme.background)
+	renderedTitle := baseStyle.Copy().Bold(true).Render(title)
+	switch {
+	case managedAgent.ProcessLive && managedAgent.Attention.Urgent():
+		// Same ranking as the quiet row: urgent attention outranks the
+		// working glow.
+		renderedTitle = baseStyle.Copy().
+			Foreground(colorWaiting).
+			Bold(true).
+			Render(title)
+	case managedAgent.Activity == agent.ActivityWorking,
+		managedAgent.Activity == agent.ActivityStarting:
+		renderedTitle = shimmerText(title, shimmerPhase, theme.background)
+	}
+
+	contentWidth := width - 1
+	tailWidth := max(0, contentWidth-1-lipgloss.Width(title))
+	topLine := markerStyle.Render(marker) +
+		baseStyle.Render(" ") +
+		renderedTitle +
+		baseStyle.Copy().
+			Width(tailWidth).
+			MaxWidth(tailWidth).
+			Render(strings.Repeat(" ", gap)+age)
+	if !expanded {
+		return topLine
+	}
+	bottomLine := markerStyle.Render(marker) +
+		baseStyle.Copy().
+			Width(contentWidth).
+			MaxWidth(contentWidth).
+			Render(ansi.Truncate(bottom, contentWidth, ""))
+	return lipgloss.JoinVertical(lipgloss.Left, topLine, bottomLine)
 }
 
 func listRowCapacity(height int, expanded bool) int {
