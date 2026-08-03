@@ -359,6 +359,54 @@ func TestDimPaneLayersFaintWithoutBreakingColors(t *testing.T) {
 	}
 }
 
+func TestSpanreedNeverDimsAndListsAlwaysDoOutsideTheSelection(t *testing.T) {
+	model := flowModelFixture(t, &flowBackend{})
+	workspaceContext := workspace.DirectoryContext("/tmp/flows")
+	model.agents = append(model.agents, agent.Agent{
+		ID:          "agent-2",
+		Name:        "agent-2",
+		Provider:    agent.ProviderClaude,
+		ProcessLive: true,
+		Workspace:   workspaceContext,
+	})
+	model.rebuildGroups(workspaceContext.ID, "agent-1")
+
+	// Whichever pane holds the cursor, the transcript reads at full strength
+	// and the lists recede to everything but their selected row.
+	for _, focus := range []pane{paneWorkspaces, paneAgents, paneInteraction} {
+		model.activePane = focus
+		workspaces, agents, interaction := model.paneDimmings(20)
+		if interaction.dim {
+			t.Fatalf("spanreed dimmed with pane %d focused", focus)
+		}
+		if !workspaces.dim || !agents.dim {
+			t.Fatalf("lists undimmed with pane %d focused: %+v %+v",
+				focus, workspaces, agents)
+		}
+		if agents.keep.count == 0 {
+			t.Fatalf("selected agent not kept lit with pane %d focused", focus)
+		}
+		if workspaces.keep.count == 0 {
+			t.Fatalf("selected workspace not kept lit with pane %d focused", focus)
+		}
+	}
+
+	// The keep range covers only the cursor row, so the second agent — the
+	// one nothing points at — still recedes while the agent list is focused.
+	model.activePane = paneAgents
+	_, agents, _ := model.paneDimmings(20)
+	rendered := dimPane(model.renderAgents(30, 19), agents.keep)
+	rows := strings.Split(rendered, "\n")
+	selected := rows[agents.keep.start]
+	other := rows[agents.keep.start+agents.keep.count]
+	if strings.Contains(selected, "\x1b[2m") {
+		t.Fatalf("selected agent row was dimmed: %q", selected)
+	}
+	if !strings.HasPrefix(other, "\x1b[2m") {
+		t.Fatalf("unselected agent row was not dimmed: %q", other)
+	}
+}
+
 func TestNarrowLayoutFocusesOnePane(t *testing.T) {
 	model := flowModelFixture(t, &flowBackend{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
