@@ -119,6 +119,56 @@ func TestWindowName(t *testing.T) {
 	}
 }
 
+// A user-supplied name becomes the tmux window name; only the derived slug
+// falls back to the task.
+func TestDispatchNamesTheWindow(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		want string
+	}{
+		{name: "", want: "cl-fix-the-oauth-callback"},
+		{name: "  oauth   review\n", want: "oauth review"},
+	} {
+		runner := &dispatchRunner{}
+		runtime := &Runtime{runner: runner, sessionName: "stormlight"}
+		if _, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+			Provider: agent.ProviderClaude,
+			Name:     testCase.name,
+			Task:     "Fix the OAuth callback",
+			Cwd:      t.TempDir(),
+			Launch:   session.Launch{Path: "/usr/bin/claude"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if runner.windowName != testCase.want {
+			t.Fatalf("window name for %q = %q, want %q",
+				testCase.name, runner.windowName, testCase.want)
+		}
+	}
+}
+
+// dispatchRunner answers just enough tmux for Dispatch and records the name
+// the new window was created with.
+type dispatchRunner struct {
+	windowName string
+}
+
+func (r *dispatchRunner) Run(_ context.Context, _ []byte, args ...string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	switch args[0] {
+	case "show-options":
+		return "1", nil
+	case "new-window", "new-session":
+		if index := slices.Index(args, "-n"); index >= 0 && index+1 < len(args) {
+			r.windowName = args[index+1]
+		}
+		return "@7" + fieldSeparator + "%7", nil
+	}
+	return "", nil
+}
+
 func TestLaunchRoundTrip(t *testing.T) {
 	want := session.Launch{
 		Path: "/path/with spaces/codex",

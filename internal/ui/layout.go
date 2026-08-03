@@ -54,9 +54,14 @@ func (m Model) renderHeader() string {
 	return left + strings.Repeat(" ", gap) + right + " "
 }
 
+// bodyDimensions is the area modals and the dashboard share: the terminal
+// minus the header, status, and hint chrome.
+func (m Model) bodyDimensions() (int, int) {
+	return max(1, m.width-1), max(1, m.height-4)
+}
+
 func (m Model) renderBody() string {
-	contentHeight := max(1, m.height-4)
-	width := max(1, m.width-1)
+	width, contentHeight := m.bodyDimensions()
 	dashboard := m.renderDashboardBody(width, contentHeight)
 	switch m.mode {
 	case modeDispatch:
