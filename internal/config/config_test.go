@@ -122,6 +122,83 @@ mode = "yolo"
 	}
 }
 
+func TestEffectiveTOMLFillsBuiltinDefaults(t *testing.T) {
+	rendered, err := Config{}.EffectiveTOML("stormlight-sock", "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`provider = 'codex'`,
+		`mode = '` + string(agent.DefaultMode) + `'`,
+		`session = 'stormlight-agents'`,
+		`socket = 'stormlight-sock'`,
+		`return_keys = ['C-6', 'C-^']`,
+		`rows = 'compact'`,
+		`level = 'info'`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestEffectiveTOMLKeepsFileValuesOverDefaults(t *testing.T) {
+	socket := ""
+	cfg := Config{
+		Defaults: Defaults{Provider: "claude", Mode: "ask", Session: "mine"},
+		Tmux:     Tmux{Socket: &socket, ReturnKeys: []string{"F12"}},
+		UI:       UI{Rows: "sideways"},
+		Log:      Log{Level: "debug"},
+	}
+
+	rendered, err := cfg.EffectiveTOML("stormlight-sock", "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`provider = 'claude'`,
+		`mode = 'ask'`,
+		`session = 'mine'`,
+		`socket = ''`,
+		`return_keys = ['F12']`,
+		`rows = 'sideways'`,
+		`level = 'debug'`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
+		}
+	}
+	// An explicit empty socket means "the default tmux server" and must not
+	// be overwritten by the built-in.
+	if strings.Contains(rendered, "stormlight-sock") {
+		t.Fatalf("explicit empty socket was replaced:\n%s", rendered)
+	}
+}
+
+func TestEffectiveTOMLRoundTripsThroughLoad(t *testing.T) {
+	rendered, err := Config{}.EffectiveTOML("stormlight-sock", "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, rendered)
+
+	cfg, warnings, err := Load()
+	if err != nil {
+		t.Fatalf("rendered config did not parse: %v\n%s", err, rendered)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("rendered config produced warnings %#v:\n%s", warnings, rendered)
+	}
+	if cfg.Defaults.Provider != "codex" || cfg.Defaults.Session != "stormlight-agents" {
+		t.Fatalf("defaults did not survive the round trip: %#v", cfg.Defaults)
+	}
+	if cfg.SocketOr("fallback") != "stormlight-sock" {
+		t.Fatalf("socket = %q", cfg.SocketOr("fallback"))
+	}
+}
+
 func TestWriteTemplateRefusesToOverwrite(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	path, err := WriteTemplate(false)
