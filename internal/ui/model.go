@@ -30,6 +30,7 @@ type Backend interface {
 	Send(context.Context, string, string) error
 	Interrupt(context.Context, string) error
 	ClearAttention(context.Context, string) error
+	SetMark(context.Context, string, agent.Mark) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
@@ -47,6 +48,7 @@ const (
 	modeDelete
 	modeAddWorkspace
 	modeRename
+	modeMark
 	modeInfo
 	modeHelp
 )
@@ -153,6 +155,8 @@ type Model struct {
 	renameInput             lineInput
 	renameAgentID           string
 	renameWorkspace         workspace.Context
+	markAgentID             string
+	markIndex               int
 	pathNav                 pathNav
 	pickerStart             string
 	chooseDispatchDirectory bool
@@ -537,6 +541,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAddWorkspace(msg)
 		case modeRename:
 			return m.updateRename(msg)
+		case modeMark:
+			return m.updateMark(msg)
 		case modeInfo, modeHelp:
 			// Any key dismisses an informational overlay.
 			m.mode = modeNormal
@@ -549,7 +555,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			seenID := ""
 			if selected, ok := m.selectedAgent(); ok &&
 				selected.ProcessLive &&
-				selected.Attention == agent.AttentionWaiting &&
+				(selected.Attention == agent.AttentionWaiting ||
+					selected.EffectiveMark() == agent.MarkAttention) &&
 				m.interactionID == selected.ID &&
 				marksResultSeen(msg.String(), m.activePane) {
 				seenID = selected.ID
@@ -764,6 +771,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
+	case "m":
+		return m.beginMark()
 	case "M":
 		return m.clearAttention()
 	case "K":
@@ -821,8 +830,7 @@ func marksResultSeen(key string, active pane) bool {
 
 func (m Model) anyAgentsActive() bool {
 	for _, managedAgent := range m.agents {
-		if managedAgent.Activity == agent.ActivityWorking ||
-			managedAgent.Activity == agent.ActivityStarting {
+		if agentCountsActive(managedAgent) {
 			return true
 		}
 	}

@@ -125,6 +125,7 @@ stormlight list --json
 stormlight attach <id>
 stormlight send <id> "Run the focused test before wrapping up"
 stormlight rename <id> "focused test fixer"
+stormlight mark <id> attention
 stormlight stop <id>
 stormlight delete <id>
 stormlight logs
@@ -160,6 +161,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `Ctrl-x`, then `X` | Delete a workspace **and all of its agents** |
 | `R` | Rename the selected workspace or agent |
 | `,` then `a` / `n` / `c` | Sort by attention, name, or newest (applies to both lists) |
+| `m` | Mark the selected agent in progress or needs-attention (your own reading, overriding Stormlight's) |
 | `M` | Mark the selected agent — or workspace — seen |
 | `K` | Workspace info popup (resolver, roots, metadata) |
 | `?` | Full keybinding reference |
@@ -276,6 +278,41 @@ through the transcript while it is on screen clears unseen; and `M` marks the
 selected agent — or every agent in the selected workspace — seen manually.
 Moving between panes and rows is not engagement — navigation is how you leave
 a result, so it leaves the amber where it is.
+
+### Marking an agent yourself
+
+Stormlight infers all of this from provider hooks and pane state, and it is
+sometimes wrong: an agent grinding through a long tool call reads as idle, and
+a result you want to revisit reads as nothing at all. Press `m` on an agent to
+say otherwise. The picker offers two marks and a way out:
+
+| Mark | Says | Look |
+|---|---|---|
+| `w` in progress | still going; nothing is pending on you | cyan `●` and the working glow, any attention stood down |
+| `a` needs attention | come back to this one | amber `◆` in the waiting tier |
+| `c` clear | hand the row back to Stormlight's reading | whatever Stormlight infers |
+
+A mark outranks everything Stormlight inferred — in the row, in the workspace
+counts, and in the header — and rows say `marked in progress` or
+`marked needs attention` outright, so a corrected row never passes for an
+inference. The `◆` is deliberately not the inferred tiers' `○` or `!`: at a
+glance you can tell your own amber from Stormlight's.
+
+The two marks retire differently, because different parties can answer them.
+In-progress claims the agent is still running, which the agent settles the
+moment it reports anything — its next hook event retires the mark. Needs-
+attention claims *you* have something to come back to, which no provider event
+can answer, so only you take it down: `M`, or engaging with the row the same
+way engagement clears amber. A mark also stops applying when the pane dies,
+because an exit status is the whole story of a finished agent.
+
+The same override is available outside the dashboard:
+
+```bash
+stormlight mark 0123abcd working
+stormlight mark 0123abcd attention
+stormlight mark 0123abcd none
+```
 
 Custom workspace types can override Git by installing executable resolvers in
 `~/.config/stormlight/resolvers`. The protocol is public and does not require

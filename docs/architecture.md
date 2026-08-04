@@ -83,6 +83,7 @@ the durable metadata:
 | `@stormlight_created_at` | Unix creation timestamp |
 | `@stormlight_activity` | Normalized activity state |
 | `@stormlight_attention` | Pending human-attention type |
+| `@stormlight_mark` | Human's manual override of the derived state |
 | `@stormlight_pane` | Original agent pane |
 | `@stormlight_workspace_id` | Stable workspace group identifier |
 | `@stormlight_workspace_kind` | Resolver-defined workspace type |
@@ -130,11 +131,12 @@ available return and help keys.
 ## State model
 
 The public agent record keeps process lifetime, activity, and attention
-separate:
+separate, with a fourth axis for the human's own reading:
 
 - Process: live or exited, with an optional exit code.
 - Activity: starting, working, idle, completed, failed, or stopped.
 - Attention: question, approval, authentication, waiting, or none.
+- Mark: working, attention, or none — set by a human, never derived.
 
 Attention is tiered. Question, approval, and authentication are urgent — the
 agent is blocked on an explicit human decision. Waiting is soft — the turn
@@ -155,6 +157,17 @@ their exit status is the story.
 This prevents a resumable completed conversation from being conflated with a
 currently running process, and keeps "needs me now" distinct from "idle on
 me" and from "just idle".
+
+A mark is the one signal nothing derives. Everything above is inference, and
+inference is sometimes wrong, so a human can say otherwise (`m` in the
+dashboard, `stormlight mark` outside it) and the mark outranks the derived
+reading everywhere it is displayed or counted. The two marks retire
+differently, because different parties can answer them: a working mark claims
+the agent is still running, which the agent settles as soon as it reports
+anything, so the next state-bearing update retires it; an attention mark
+claims the human has something to return to, which no provider event can
+answer, so only an explicit clear or the same engagement that clears amber
+takes it down. Like attention, a mark stops applying once the pane is dead.
 
 ## Persistence
 

@@ -81,11 +81,7 @@ func renderAgentRowWithDensity(
 	// remembered selection shows the chevron, everything else shows its
 	// status glyph. Displaced state speaks through the title styling.
 
-	state := string(managedAgent.Activity)
-	if managedAgent.NeedsAttention() {
-		state = "needs " + string(managedAgent.Attention)
-	}
-	details := []string{providerName, state}
+	details := []string{providerName, agentStateLabel(managedAgent)}
 	if badge := modeBadge(managedAgent.Mode); badge != "" {
 		details = append(details, badge)
 	}
@@ -116,16 +112,15 @@ func renderAgentRowWithDensity(
 
 	renderedTitle := titleStyle.Render(displayTitle)
 	detailStyle := mutedStyle
-	switch {
-	case managedAgent.ProcessLive && managedAgent.Attention.Urgent():
+	switch rowEmphasisFor(managedAgent) {
+	case emphasisUrgent:
 		// Urgent attention outranks the working glow: the row goes loud
 		// amber. The waiting tier keeps its calm row and speaks through
 		// the amber status symbol alone.
 		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
 		renderedTitle = attentionStyle.Render(displayTitle)
 		detailStyle = attentionStyle
-	case managedAgent.Activity == agent.ActivityWorking,
-		managedAgent.Activity == agent.ActivityStarting:
+	case emphasisWorking:
 		renderedTitle = shimmerText(displayTitle, shimmerPhase, nil)
 	}
 	indicator := statusStyle.Render(symbol)
@@ -188,16 +183,15 @@ func renderSelectedAgentRow(
 		Foreground(theme.text).
 		Background(theme.background)
 	renderedTitle := baseStyle.Copy().Bold(true).Render(title)
-	switch {
-	case managedAgent.ProcessLive && managedAgent.Attention.Urgent():
+	switch rowEmphasisFor(managedAgent) {
+	case emphasisUrgent:
 		// Same ranking as the quiet row: urgent attention outranks the
 		// working glow.
 		renderedTitle = baseStyle.Copy().
 			Foreground(colorWaiting).
 			Bold(true).
 			Render(title)
-	case managedAgent.Activity == agent.ActivityWorking,
-		managedAgent.Activity == agent.ActivityStarting:
+	case emphasisWorking:
 		renderedTitle = shimmerText(title, shimmerPhase, theme.background)
 	}
 
@@ -357,15 +351,25 @@ func attentionTierOf(urgent, waiting int) attentionTier {
 	}
 }
 
+// workspaceStats counts a workspace's agents into the same triage buckets the
+// rows use, marks included: a corrected row is corrected in the counters too,
+// or the summary would keep reporting the reading the human overruled.
 func workspaceStats(agents []agent.Agent) (active, urgent, waiting int) {
 	for _, managedAgent := range agents {
-		if managedAgent.Activity == agent.ActivityWorking ||
-			managedAgent.Activity == agent.ActivityStarting {
+		if agentCountsActive(managedAgent) {
 			active++
 		}
 		if !managedAgent.ProcessLive {
 			// A dead pane can't be waiting on anyone; its exit status is
 			// the story.
+			continue
+		}
+		switch managedAgent.EffectiveMark() {
+		case agent.MarkWorking:
+			// The human said it is still going; nothing is pending on them.
+			continue
+		case agent.MarkAttention:
+			waiting++
 			continue
 		}
 		switch {
@@ -376,6 +380,16 @@ func workspaceStats(agents []agent.Agent) (active, urgent, waiting int) {
 		}
 	}
 	return active, urgent, waiting
+}
+
+// agentCountsActive reports whether an agent belongs in the "active" tally —
+// running by Stormlight's reading, or by the human's.
+func agentCountsActive(managedAgent agent.Agent) bool {
+	if managedAgent.EffectiveMark() == agent.MarkWorking {
+		return true
+	}
+	return managedAgent.Activity == agent.ActivityWorking ||
+		managedAgent.Activity == agent.ActivityStarting
 }
 
 func agentLocation(managedAgent agent.Agent) string {
@@ -392,7 +406,57 @@ func agentLocation(managedAgent agent.Agent) string {
 	return ""
 }
 
+// rowEmphasis says how a row's title should read. A manual mark comes first:
+// it exists precisely because the derived state was wrong, so nothing derived
+// may outrank it.
+type rowEmphasis int
+
+const (
+	emphasisNone rowEmphasis = iota
+	emphasisUrgent
+	emphasisWorking
+)
+
+func rowEmphasisFor(managedAgent agent.Agent) rowEmphasis {
+	switch managedAgent.EffectiveMark() {
+	case agent.MarkWorking:
+		return emphasisWorking
+	case agent.MarkAttention:
+		// A mark is the human's own note, not a blocked provider prompt, so
+		// it joins the calm waiting tier and speaks through its glyph.
+		return emphasisNone
+	}
+	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
+		return emphasisUrgent
+	}
+	switch managedAgent.Activity {
+	case agent.ActivityWorking, agent.ActivityStarting:
+		return emphasisWorking
+	}
+	return emphasisNone
+}
+
+// agentStateLabel is the row's state token: a mark says so in words, so a
+// corrected row never looks like an inference.
+func agentStateLabel(managedAgent agent.Agent) string {
+	if mark := managedAgent.EffectiveMark(); mark != agent.MarkNone {
+		return "marked " + mark.Label()
+	}
+	if managedAgent.NeedsAttention() {
+		return "needs " + string(managedAgent.Attention)
+	}
+	return string(managedAgent.Activity)
+}
+
 func statusVisual(managedAgent agent.Agent) (string, lipgloss.Style) {
+	switch managedAgent.EffectiveMark() {
+	case agent.MarkWorking:
+		return "●", lipgloss.NewStyle().Foreground(colorWorking)
+	case agent.MarkAttention:
+		// A diamond rather than the inferred tiers' ○ and !: a glance should
+		// tell you whether the amber is Stormlight's reading or your own.
+		return "◆", lipgloss.NewStyle().Foreground(colorWaiting)
+	}
 	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
 		return "!", lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
 	}

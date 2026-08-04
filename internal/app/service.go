@@ -308,9 +308,19 @@ func (s *Service) Interrupt(ctx context.Context, id string) error {
 	return s.runtime.Interrupt(ctx, id)
 }
 
-// ClearAttention marks an agent's notification as seen.
+// ClearAttention marks an agent's notification as seen, taking down a
+// manual attention mark with it — both mean the same thing to the human.
 func (s *Service) ClearAttention(ctx context.Context, id string) error {
 	return s.runtime.Update(ctx, id, session.Update{ClearAttention: true})
+}
+
+// SetMark records the human's own reading of an agent's state, overriding
+// what Stormlight inferred. agent.MarkNone removes an existing mark.
+func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error {
+	return s.runtime.Update(ctx, id, session.Update{
+		Mark:      mark,
+		ClearMark: mark == agent.MarkNone,
+	})
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {

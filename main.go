@@ -129,6 +129,7 @@ func newRootCommand() *cobra.Command {
 		newRenameCommand(&socket, &sessionName, cfg),
 		newStopCommand(&socket, &sessionName, cfg),
 		newDeleteCommand(&socket, &sessionName, cfg),
+		newMarkCommand(&socket, &sessionName, cfg),
 		newEventCommand(&socket, &sessionName, cfg),
 		newProviderEventCommand(&socket, &sessionName, cfg),
 		newLogsCommand(&logFile),
@@ -682,6 +683,28 @@ func newDeleteCommand(socket, sessionName *string, cfg config.Config) *cobra.Com
 				return err
 			}
 			return service.Delete(cmd.Context(), args[0])
+		},
+	}
+}
+
+func newMarkCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "mark <id> <working|attention|none>",
+		Short: "Record your own reading of an agent's state",
+		Long: "Override what Stormlight infers about an agent: working says " +
+			"it is still going, attention flags it to come back to, and none " +
+			"hands the row back to Stormlight's own reading.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mark, err := agent.ParseMark(args[1])
+			if err != nil {
+				return err
+			}
+			service, err := newService(*socket, *sessionName, cfg)
+			if err != nil {
+				return err
+			}
+			return service.SetMark(cmd.Context(), args[0], mark)
 		},
 	}
 }

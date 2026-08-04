@@ -47,7 +47,7 @@ const (
 	dynamicStatusStyle   = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
 	dynamicStatusLeft    = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
 	basePaneFieldCount   = 10
-	metadataFieldCount   = 19
+	metadataFieldCount   = 20
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -70,6 +70,7 @@ var agentMetadataFields = [metadataFieldCount]string{
 	"workspace_metadata",
 	"mode",
 	"transcript_path",
+	"mark",
 }
 
 type Runtime struct {
@@ -205,6 +206,7 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 		"@stormlight_created_at": strconv.FormatInt(createdAt.Unix(), 10),
 		"@stormlight_activity":   string(agent.ActivityStarting),
 		"@stormlight_attention":  "",
+		"@stormlight_mark":       "",
 		"@stormlight_pane":       target.paneID,
 		"@stormlight_mode":       string(req.Mode),
 	}
@@ -632,6 +634,24 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 		}
 		values["@stormlight_attention"] = string(attention)
 	}
+	switch {
+	case update.ClearMark:
+		values["@stormlight_mark"] = ""
+	case update.Mark != "":
+		values["@stormlight_mark"] = string(update.Mark)
+	case update.ClearAttention && managedAgent.Mark == agent.MarkAttention:
+		// Clearing attention takes the attention mark down with it: both say
+		// "this row wants me", and seen is seen.
+		values["@stormlight_mark"] = ""
+	case (update.Activity != "" || update.Attention != "") &&
+		managedAgent.Mark == agent.MarkWorking:
+		// An in-progress mark corrects a stale reading of what the agent is
+		// doing, and the agent is the authority on that: its next
+		// self-report is a fresh reading, so the correction retires. An
+		// attention mark is about what the human must do, which no provider
+		// event can answer, so it survives every update but an explicit one.
+		values["@stormlight_mark"] = ""
+	}
 	if strings.TrimSpace(update.Summary) != "" {
 		values["@stormlight_summary"] = metadataValue(update.Summary)
 	}
@@ -869,6 +889,7 @@ func parseAgent(line string) (agent.Agent, bool) {
 		ExitCode:       exitCode,
 		Mode:           agent.PermissionMode(core[17]),
 		TranscriptPath: core[18],
+		Mark:           agent.Mark(core[19]),
 		Workspace: workspace.Context{
 			ID:            core[9],
 			Kind:          core[10],
@@ -899,6 +920,7 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		"@stormlight_pane":            managedAgent.PaneID,
 		"@stormlight_mode":            string(managedAgent.Mode),
 		"@stormlight_transcript_path": managedAgent.TranscriptPath,
+		"@stormlight_mark":            string(managedAgent.Mark),
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(managedAgent.Workspace)
 	if err != nil {

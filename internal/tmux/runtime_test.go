@@ -44,6 +44,7 @@ func TestParseAgent(t *testing.T) {
 		"eyJicmFuY2giOiJtYWluIn0",
 		"auto",
 		"/tmp/claude/session.jsonl",
+		"attention",
 	}
 	line := strings.Join(parts, fieldSeparator)
 
@@ -72,6 +73,9 @@ func TestParseAgent(t *testing.T) {
 	}
 	if managedAgent.TranscriptPath != "/tmp/claude/session.jsonl" {
 		t.Fatalf("transcript path = %q", managedAgent.TranscriptPath)
+	}
+	if managedAgent.Mark != agent.MarkAttention {
+		t.Fatalf("mark = %q", managedAgent.Mark)
 	}
 }
 
@@ -569,7 +573,10 @@ func releaseWindowSizeCalls() [][]string {
 }
 
 type captureRunner struct {
-	agentLine       string
+	agentLine string
+	// stormlightID is what show-options reports for @stormlight_id; empty
+	// means the window has lost its metadata and Update restores the record.
+	stormlightID    string
 	sourceSessionID string
 	binding         string
 	rootBinding     string
@@ -607,8 +614,11 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 	case "list-clients":
 		return r.clientLine, nil
 	case "show-options":
-		if args[len(args)-1] == prefixFeedbackOption {
+		switch args[len(args)-1] {
+		case prefixFeedbackOption:
 			return r.feedbackVersion, nil
+		case "@stormlight_id":
+			return r.stormlightID, nil
 		}
 		return "", nil
 	}
@@ -840,4 +850,109 @@ func TestUpdateTurnEndDowngradesResolvedApproval(t *testing.T) {
 		}
 	}
 	t.Fatal("attention was never written")
+}
+
+// markWrites collects the @stormlight_mark values an Update wrote.
+func markWrites(calls [][]string) []string {
+	var values []string
+	for _, call := range calls {
+		if len(call) >= 2 && call[0] == "set-option" &&
+			call[len(call)-2] == "@stormlight_mark" {
+			values = append(values, call[len(call)-1])
+		}
+	}
+	return values
+}
+
+// markedAgentRunner answers for a window that still has its metadata, so an
+// Update writes only what its policy decided rather than restoring the record.
+func markedAgentRunner(mark agent.Mark) *captureRunner {
+	parts := strings.Split(captureAgentLine(false), fieldSeparator)
+	parts[basePaneFieldCount+19] = string(mark)
+	return &captureRunner{
+		agentLine:    strings.Join(parts, fieldSeparator),
+		stormlightID: "capture-id",
+	}
+}
+
+func TestUpdateStoresAndClearsMarks(t *testing.T) {
+	runner := markedAgentRunner(agent.MarkNone)
+	runtime := &Runtime{runner: runner}
+
+	if err := runtime.Update(context.Background(), "capture-id", session.Update{
+		Mark: agent.MarkAttention,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := markWrites(runner.calls); len(got) != 1 || got[0] != "attention" {
+		t.Fatalf("mark writes = %v", got)
+	}
+
+	runner = markedAgentRunner(agent.MarkAttention)
+	runtime = &Runtime{runner: runner}
+	if err := runtime.Update(context.Background(), "capture-id", session.Update{
+		ClearMark: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := markWrites(runner.calls); len(got) != 1 || got[0] != "" {
+		t.Fatalf("clear writes = %v", got)
+	}
+}
+
+func TestUpdateRetiresWorkingMarkOnProviderSignal(t *testing.T) {
+	runner := markedAgentRunner(agent.MarkWorking)
+	runtime := &Runtime{runner: runner}
+
+	err := runtime.Update(context.Background(), "capture-id", session.Update{
+		Activity:  agent.ActivityIdle,
+		Attention: agent.AttentionWaiting,
+		TurnEnded: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := markWrites(runner.calls); len(got) != 1 || got[0] != "" {
+		t.Fatalf("mark writes = %v, want the in-progress mark retired", got)
+	}
+}
+
+func TestUpdateKeepsAttentionMarkThroughProviderSignals(t *testing.T) {
+	runner := markedAgentRunner(agent.MarkAttention)
+	runtime := &Runtime{runner: runner}
+
+	err := runtime.Update(context.Background(), "capture-id", session.Update{
+		Activity:  agent.ActivityWorking,
+		Attention: agent.AttentionNone,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := markWrites(runner.calls); len(got) != 0 {
+		t.Fatalf("mark writes = %v, want the human's mark untouched", got)
+	}
+}
+
+func TestClearAttentionTakesDownTheAttentionMarkOnly(t *testing.T) {
+	runner := markedAgentRunner(agent.MarkAttention)
+	runtime := &Runtime{runner: runner}
+	if err := runtime.Update(context.Background(), "capture-id", session.Update{
+		ClearAttention: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := markWrites(runner.calls); len(got) != 1 || got[0] != "" {
+		t.Fatalf("mark writes = %v, want the attention mark cleared", got)
+	}
+
+	runner = markedAgentRunner(agent.MarkWorking)
+	runtime = &Runtime{runner: runner}
+	if err := runtime.Update(context.Background(), "capture-id", session.Update{
+		ClearAttention: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := markWrites(runner.calls); len(got) != 0 {
+		t.Fatalf("mark writes = %v, want the in-progress mark kept", got)
+	}
 }
