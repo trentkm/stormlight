@@ -161,6 +161,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"x", "interrupt the selected agent"},
 			{"Ctrl-x then x/X", "delete agent / workspace (+agents)"},
 			{"R", "rename workspace or agent"},
+			{"m", "mark agent in progress / needs attention"},
 			{"M", "mark agent or workspace seen"},
 			{"K", "workspace info"},
 		}},

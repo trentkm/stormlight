@@ -72,6 +72,52 @@ func (a Attention) Rank() int {
 	}
 }
 
+// Mark is the human's own reading of an agent, set from the dashboard when
+// Stormlight's inference is wrong or when a row wants revisiting. Stormlight
+// derives activity and attention from provider hooks and pane state, and it
+// gets that wrong often enough that the human needs a way to say otherwise —
+// a mark is that word, and it outranks everything Stormlight inferred.
+//
+// The two marks retire differently, because different parties can answer
+// them. MarkWorking claims the agent is still going, which the agent itself
+// settles the moment it reports anything: its next self-report retires the
+// mark. MarkAttention claims the human has something to come back to, which
+// no provider event can answer, so only the human takes it down — with M or
+// by engaging with the row, exactly like the amber inbox it joins.
+type Mark string
+
+const (
+	MarkNone Mark = ""
+	// MarkWorking says the agent is still going, whatever the dashboard
+	// reads: the row glows working and any attention on it stands down.
+	MarkWorking Mark = "working"
+	// MarkAttention says the human wants this row back, whatever the
+	// dashboard reads: it joins the waiting tier of the amber inbox.
+	MarkAttention Mark = "attention"
+)
+
+func ParseMark(value string) (Mark, error) {
+	if value == "none" || value == "clear" {
+		return MarkNone, nil
+	}
+	switch Mark(value) {
+	case MarkNone, MarkWorking, MarkAttention:
+		return Mark(value), nil
+	}
+	return "", fmt.Errorf("invalid mark %q (working, attention, or none)", value)
+}
+
+// Label is how a mark reads in the dashboard and in status lines.
+func (m Mark) Label() string {
+	switch m {
+	case MarkWorking:
+		return "in progress"
+	case MarkAttention:
+		return "needs attention"
+	}
+	return ""
+}
+
 // PermissionMode controls how much a dispatched agent may do without asking.
 // The names are provider-neutral; each provider adapter maps them to its own
 // flags.
@@ -114,6 +160,7 @@ type Agent struct {
 	CreatedAt   time.Time      `json:"created_at"`
 	Activity    Activity       `json:"activity"`
 	Attention   Attention      `json:"attention,omitempty"`
+	Mark        Mark           `json:"mark,omitempty"`
 	TmuxSession string         `json:"tmux_session"`
 	WindowID    string         `json:"window_id"`
 	WindowIndex int            `json:"window_index"`
@@ -129,8 +176,38 @@ type Agent struct {
 	Workspace      workspace.Context `json:"workspace"`
 }
 
+// EffectiveMark is the mark the dashboard honors. A dead pane has an exit
+// status of its own to report and no live state left to correct, so a mark
+// stops applying the moment the process is gone.
+func (a Agent) EffectiveMark() Mark {
+	if !a.ProcessLive {
+		return MarkNone
+	}
+	return a.Mark
+}
+
 func (a Agent) NeedsAttention() bool {
+	switch a.EffectiveMark() {
+	case MarkAttention:
+		return true
+	case MarkWorking:
+		// The human said this agent is still going, so it is not waiting on
+		// anyone — that is the whole point of the mark.
+		return false
+	}
 	return a.Attention != AttentionNone
+}
+
+// TriageRank orders agents for attention sorting. A mark speaks with the tier
+// it names; everything else defers to the derived attention.
+func (a Agent) TriageRank() int {
+	switch a.EffectiveMark() {
+	case MarkAttention:
+		return AttentionWaiting.Rank()
+	case MarkWorking:
+		return AttentionNone.Rank()
+	}
+	return a.Attention.Rank()
 }
 
 func (a Agent) DisplaySummary() string {
@@ -155,6 +232,9 @@ func Sort(agents []Agent) {
 func priority(a Agent) int {
 	if a.NeedsAttention() {
 		return 0
+	}
+	if a.EffectiveMark() == MarkWorking {
+		return 1
 	}
 	switch a.Activity {
 	case ActivityWorking, ActivityStarting:

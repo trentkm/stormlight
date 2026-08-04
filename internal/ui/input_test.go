@@ -2066,6 +2066,10 @@ func (stubBackend) ClearAttention(context.Context, string) error {
 	return nil
 }
 
+func (stubBackend) SetMark(context.Context, string, agent.Mark) error {
+	return nil
+}
+
 func (stubBackend) RenameWorkspace(context.Context, workspace.Context, string) error {
 	return nil
 }
