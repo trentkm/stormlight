@@ -19,6 +19,16 @@ type flowBackend struct {
 	renamedID        string
 	renamedName      string
 	renamedWorkspace string
+	markedID         string
+	mark             agent.Mark
+	markCalls        int
+}
+
+func (b *flowBackend) SetMark(_ context.Context, id string, mark agent.Mark) error {
+	b.markedID = id
+	b.mark = mark
+	b.markCalls++
+	return nil
 }
 
 func (b *flowBackend) Delete(_ context.Context, id string) error {
@@ -529,5 +539,166 @@ func TestDispatchHintsNameTheNextField(t *testing.T) {
 	model = next.(Model)
 	if hints := model.commandHints(); !strings.Contains(hints, "Tab name") {
 		t.Fatalf("picker hints hide the way out: %q", hints)
+	}
+}
+
+func TestMarkFlowRecordsTheHumansReading(t *testing.T) {
+	backend := &flowBackend{}
+	model := flowModelFixture(t, backend)
+	model.activePane = paneAgents
+
+	updated, _ := model.updateNormal(runeKey("m"))
+	model = updated.(Model)
+	if model.mode != modeMark || model.markAgentID != "agent-1" {
+		t.Fatalf("m state: mode=%d agent=%q", model.mode, model.markAgentID)
+	}
+	rendered := ansi.Strip(model.renderMarkModal(80, 24))
+	for _, want := range []string{"Mark", "In progress", "Needs attention"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("mark modal lacks %q:\n%s", want, rendered)
+		}
+	}
+
+	next, _ := model.updateMark(tea.KeyMsg{Type: tea.KeyEscape})
+	model = next.(Model)
+	if model.mode != modeNormal || backend.markCalls != 0 {
+		t.Fatalf("esc did not cancel: mode=%d calls=%d", model.mode, backend.markCalls)
+	}
+
+	model.mode = modeMark
+	next, cmd := model.updateMark(runeKey("a"))
+	model = next.(Model)
+	if cmd == nil {
+		t.Fatal("a did not submit a mark")
+	}
+	// The row reports the human's reading before the backend write lands.
+	if model.agents[0].Mark != agent.MarkAttention ||
+		model.groups[0].agents[0].Mark != agent.MarkAttention {
+		t.Fatalf("mark not applied locally: %#v", model.agents[0].Mark)
+	}
+	cmd()
+	if backend.markedID != "agent-1" || backend.mark != agent.MarkAttention {
+		t.Fatalf("marked %q as %q", backend.markedID, backend.mark)
+	}
+
+	// Reopening lands on the mark already set, and clearing hands the row
+	// back to Stormlight's own reading.
+	updated, _ = model.updateNormal(runeKey("m"))
+	model = updated.(Model)
+	if markChoices[model.markIndex].mark != agent.MarkAttention {
+		t.Fatalf("picker opened on %q", markChoices[model.markIndex].mark)
+	}
+	next, cmd = model.updateMark(runeKey("c"))
+	model = next.(Model)
+	cmd()
+	if backend.mark != agent.MarkNone || model.agents[0].Mark != agent.MarkNone {
+		t.Fatalf("clear left mark %q (backend %q)", model.agents[0].Mark, backend.mark)
+	}
+}
+
+func TestMarkedRowsReportTheMarkAndClearWhenSeen(t *testing.T) {
+	working := agent.Agent{
+		ID:          "one",
+		Name:        "one",
+		ProcessLive: true,
+		Activity:    agent.ActivityIdle,
+		Attention:   agent.AttentionQuestion,
+		Mark:        agent.MarkWorking,
+	}
+	attention := agent.Agent{
+		ID:          "two",
+		Name:        "two",
+		ProcessLive: true,
+		Activity:    agent.ActivityIdle,
+		Mark:        agent.MarkAttention,
+	}
+
+	row := ansi.Strip(renderAgentRow(working, false, false, 60))
+	if !strings.Contains(row, "marked in progress") {
+		t.Fatalf("in-progress row = %q", row)
+	}
+	row = ansi.Strip(renderAgentRow(attention, false, false, 60))
+	if !strings.Contains(row, "marked needs attention") ||
+		!strings.Contains(row, "◆") {
+		t.Fatalf("attention row = %q", row)
+	}
+
+	active, urgent, waiting := workspaceStats([]agent.Agent{working, attention})
+	if active != 1 || urgent != 0 || waiting != 1 {
+		t.Fatalf("stats: active=%d urgent=%d waiting=%d", active, urgent, waiting)
+	}
+
+	ws := workspace.DirectoryContext("/workspace/marks")
+	model := NewModel(stubBackend{})
+	model.width = 120
+	model.catalogWorkspaces = []workspace.Context{ws}
+	attention.Workspace = ws
+	model.agents = []agent.Agent{attention}
+	model.rebuildGroups(ws.ID, "")
+	model.activePane = paneWorkspaces
+
+	updated, cmd := model.updateNormal(runeKey("M"))
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("M did not clear the manual mark")
+	}
+	if model.agents[0].Mark != agent.MarkNone {
+		t.Fatalf("mark after M = %q", model.agents[0].Mark)
+	}
+}
+
+func TestSpanreedHeadingHonorsMarksOverDerivedState(t *testing.T) {
+	ws := workspace.DirectoryContext("/workspace/marks")
+	model := NewModel(stubBackend{})
+	model.width = 120
+	model.catalogWorkspaces = []workspace.Context{ws}
+	base := agent.Agent{
+		ID:          "one",
+		Name:        "one",
+		Provider:    agent.ProviderClaude,
+		ProcessLive: true,
+		Activity:    agent.ActivityIdle,
+		Attention:   agent.AttentionWaiting,
+		Workspace:   ws,
+	}
+
+	for _, testCase := range []struct {
+		name   string
+		mark   agent.Mark
+		want   string
+		absent string
+	}{
+		{
+			name:   "unmarked keeps the derived reading",
+			want:   "Unseen result",
+			absent: "marked",
+		},
+		{
+			name:   "in progress stands the unseen result down",
+			mark:   agent.MarkWorking,
+			want:   "marked in progress",
+			absent: "Unseen result",
+		},
+		{
+			name:   "needs attention says whose flag it is",
+			mark:   agent.MarkAttention,
+			want:   "Marked needs attention",
+			absent: "Unseen result",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			marked := base
+			marked.Mark = testCase.mark
+			model.agents = []agent.Agent{marked}
+			model.rebuildGroups(ws.ID, marked.ID)
+			model.interactionID = marked.ID
+			rendered := ansi.Strip(model.renderInteraction(80, 20))
+			if !strings.Contains(rendered, testCase.want) {
+				t.Fatalf("heading hides %q:\n%s", testCase.want, rendered)
+			}
+			if strings.Contains(rendered, testCase.absent) {
+				t.Fatalf("heading still claims %q:\n%s", testCase.absent, rendered)
+			}
+		})
 	}
 }

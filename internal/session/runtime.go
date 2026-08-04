@@ -53,6 +53,11 @@ type Update struct {
 	// ClearAttention removes any attention state without touching the
 	// rest of the record; an empty Attention alone means "leave as is".
 	ClearAttention bool
+	// Mark records the human's own reading of the agent; empty means
+	// "leave as is", so removing one takes ClearMark.
+	Mark agent.Mark
+	// ClearMark removes any mark without touching the rest of the record.
+	ClearMark bool
 }
 
 type AttachResult struct {
