@@ -20,8 +20,7 @@ func (m Model) renderInteraction(width, height int) string {
 		return mutedStyle.Render(truncate("No agent selected", width))
 	}
 	title := titleStyle.Render(truncate(agentDisplayTitle(managedAgent), width))
-	if managedAgent.Activity == agent.ActivityWorking ||
-		managedAgent.Activity == agent.ActivityStarting {
+	if rowEmphasisFor(managedAgent) == emphasisWorking {
 		title = shimmerText(
 			truncate(agentDisplayTitle(managedAgent), width),
 			m.shimmerPhaseOrRest(),
@@ -30,7 +29,7 @@ func (m Model) renderInteraction(width, height int) string {
 	}
 	metaParts := []string{
 		string(managedAgent.Provider),
-		string(managedAgent.Activity),
+		agentStateLabel(managedAgent),
 	}
 	if badge := modeBadge(managedAgent.Mode); badge != "" {
 		metaParts = append(metaParts, badge)
@@ -41,7 +40,14 @@ func (m Model) renderInteraction(width, height int) string {
 		shortPath(managedAgent.Cwd),
 		width,
 	)
-	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
+	switch {
+	case managedAgent.EffectiveMark() == agent.MarkAttention:
+		meta = lipgloss.NewStyle().Foreground(colorWaiting).
+			Render(truncate("Marked needs attention", width))
+	case managedAgent.EffectiveMark() == agent.MarkWorking:
+		// The human said it is still going, and the meta line already reads
+		// "marked in progress"; nothing derived may talk over that.
+	case managedAgent.ProcessLive && managedAgent.Attention.Urgent():
 		// Prompts are answered in the agent's own terminal; the dashboard's
 		// job is pointing at the pane, loudly.
 		hint := " — i to reply"
@@ -53,8 +59,8 @@ func (m Model) renderInteraction(width, height int) string {
 				"Needs "+string(managedAgent.Attention)+hint,
 				width,
 			))
-	} else if managedAgent.ProcessLive &&
-		managedAgent.Attention == agent.AttentionWaiting {
+	case managedAgent.ProcessLive &&
+		managedAgent.Attention == agent.AttentionWaiting:
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).
 			Render(truncate("Unseen result", width))
 	}
@@ -67,6 +73,11 @@ func (m Model) renderInteraction(width, height int) string {
 		// The heading line is easy to slide past; the band above the
 		// composer row is not. It replaces the input affordances entirely
 		// when the agent's own terminal holds the prompt.
+		//
+		// A mark never suppresses this band. Marks are triage — how loudly a
+		// row asks to be looked at — while the band says where text has to go
+		// to reach the agent, which is a fact about the running prompt that
+		// no reading of the state changes.
 		guidance := " ⚠ Agent asked a question — i to reply, Enter for its terminal"
 		if managedAgent.Attention.TerminalOwned() {
 			guidance = " ⚠ Needs " + string(managedAgent.Attention) +

@@ -11,29 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/trentkm/stormlight/internal/agent"
 )
 
 func (m Model) renderHeader() string {
 	width := max(1, m.width-1)
-	working := 0
-	urgent := 0
-	waiting := 0
-	for _, managedAgent := range m.agents {
-		if managedAgent.Activity == agent.ActivityWorking ||
-			managedAgent.Activity == agent.ActivityStarting {
-			working++
-		}
-		if !managedAgent.ProcessLive {
-			continue
-		}
-		switch {
-		case managedAgent.Attention.Urgent():
-			urgent++
-		case managedAgent.Attention == agent.AttentionWaiting:
-			waiting++
-		}
-	}
+	working, urgent, waiting := workspaceStats(m.agents)
 	// No chrome: the wordmark's own gradient is the identity, floating on
 	// the terminal background with the counters at the far edge.
 	left := renderWordmark(m.shimmerPhaseOrRest())
@@ -82,6 +64,13 @@ func (m Model) renderBody() string {
 		return overlayCentered(
 			dashboard,
 			m.renderRenameModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeMark:
+		return overlayCentered(
+			dashboard,
+			m.renderMarkModal(width, contentHeight),
 			width,
 			contentHeight,
 		)

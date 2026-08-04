@@ -138,7 +138,7 @@ func sortAgentList(agents []agent.Agent, mode sortMode) {
 		})
 	case sortByAttention:
 		slices.SortStableFunc(agents, func(a, b agent.Agent) int {
-			if d := a.Attention.Rank() - b.Attention.Rank(); d != 0 {
+			if d := a.TriageRank() - b.TriageRank(); d != 0 {
 				return d
 			}
 			return newestFirst(a, b)
@@ -310,21 +310,28 @@ func (m *Model) moveSelectionToEnd() {
 }
 
 // markAttentionSeen clears attention locally so the amber drops on the very
-// next frame; the backend write follows asynchronously.
+// next frame; the backend write follows asynchronously. A manual attention
+// mark goes with it — seen is seen, whoever raised the flag.
 func (m *Model) markAttentionSeen(ids ...string) {
 	member := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		member[id] = true
 	}
+	clear := func(managedAgent *agent.Agent) {
+		managedAgent.Attention = agent.AttentionNone
+		if managedAgent.Mark == agent.MarkAttention {
+			managedAgent.Mark = agent.MarkNone
+		}
+	}
 	for index := range m.agents {
 		if member[m.agents[index].ID] {
-			m.agents[index].Attention = agent.AttentionNone
+			clear(&m.agents[index])
 		}
 	}
 	for g := range m.groups {
 		for index := range m.groups[g].agents {
 			if member[m.groups[g].agents[index].ID] {
-				m.groups[g].agents[index].Attention = agent.AttentionNone
+				clear(&m.groups[g].agents[index])
 			}
 		}
 	}
@@ -352,16 +359,19 @@ func clearAttentionCmd(backend Backend, ids ...string) tea.Cmd {
 // clearAttention handles the M hotkey: mark the selected agent — or every
 // agent in the selected workspace — as seen, regardless of tier.
 func (m Model) clearAttention() (tea.Model, tea.Cmd) {
+	flagged := func(managedAgent agent.Agent) bool {
+		return managedAgent.ProcessLive &&
+			(managedAgent.Attention != agent.AttentionNone ||
+				managedAgent.EffectiveMark() == agent.MarkAttention)
+	}
 	ids := []string{}
 	if m.activePane == paneWorkspaces {
 		for _, managedAgent := range m.agentsForSelectedWorkspace() {
-			if managedAgent.ProcessLive &&
-				managedAgent.Attention != agent.AttentionNone {
+			if flagged(managedAgent) {
 				ids = append(ids, managedAgent.ID)
 			}
 		}
-	} else if selected, ok := m.selectedAgent(); ok &&
-		selected.ProcessLive && selected.Attention != agent.AttentionNone {
+	} else if selected, ok := m.selectedAgent(); ok && flagged(selected) {
 		ids = append(ids, selected.ID)
 	}
 	if len(ids) == 0 {

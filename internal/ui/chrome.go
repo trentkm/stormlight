@@ -162,6 +162,8 @@ func (m Model) commandHints() string {
 		return "j/k select  Enter add  e edit path  Esc cancel"
 	case modeRename:
 		return "Enter apply  Esc cancel"
+	case modeMark:
+		return "w in progress  a needs attention  c clear  Esc cancel"
 	}
 	rowMode := "z expand rows"
 	if m.rowsExpanded {
@@ -179,7 +181,8 @@ func (m Model) commandHints() string {
 	switch m.activePane {
 	case paneAgents:
 		return strings.TrimSpace(
-			"h/l panes  j/k select  n new  M seen  , sort  " + rowMode + "  Enter open",
+			"h/l panes  j/k select  n new  m mark  M seen  , sort  " +
+				rowMode + "  Enter open",
 		)
 	case paneInteraction:
 		if m.search.query != "" {
