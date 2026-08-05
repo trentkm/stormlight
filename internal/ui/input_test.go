@@ -761,9 +761,10 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	assertViewFitsPane(t, model, 119, 29)
 }
 
-// The dashboard's two seams divide different kinds of thing, so they are not
-// drawn alike: a hairline splits the catalog's own columns, while a heavy rule
-// followed by a column of air splits the whole catalog from the Spanreed.
+// One rule crosses the dashboard body, and it is the one that matters: the
+// heavy seam between the catalog and the Spanreed, capped under the header
+// band and trailed by a column of air. The catalog's own columns are divided
+// by nothing at all.
 func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 120
@@ -783,25 +784,26 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	if header < 0 {
 		t.Fatalf("pane header row not found:\n%s", body)
 	}
-	// The header row carries the seams' caps, not the seams: half-strokes
-	// that begin at the band and descend out of it.
-	hairline := strings.Index(lines[header], "╷")
+	// The header row carries the seam's cap, not the seam: a half-stroke
+	// that begins at the band and descends out of it.
 	plane := strings.Index(lines[header], "╻")
-	if hairline < 0 || plane < 0 || plane < hairline {
-		t.Fatalf("seams are not capped under the band: %q", lines[header])
+	if plane < 0 {
+		t.Fatalf("plane seam is not capped under the band: %q", lines[header])
 	}
-	if strings.ContainsAny(lines[header], "│┃") {
+	if strings.ContainsAny(lines[header], "│┃╷") {
 		t.Fatalf("uncapped seam collides with the header band: %q", lines[header])
 	}
 
 	firstRow := lines[header+1]
-	if strings.Index(firstRow, "│") != hairline ||
-		strings.Index(firstRow, "┃") != plane {
-		t.Fatalf("seams do not hang from their caps:\n%q\n%q",
+	if strings.Index(firstRow, "┃") != plane {
+		t.Fatalf("seam does not hang from its cap:\n%q\n%q",
 			lines[header], firstRow)
 	}
 
 	for _, line := range lines[header+1:] {
+		if strings.Contains(line, "│") {
+			t.Fatalf("a rule still divides the catalog's columns: %q", line)
+		}
 		runes := []rune(line)
 		column := -1
 		for index, glyph := range runes {
@@ -1556,8 +1558,11 @@ func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {
 		t.Fatalf("focus bar missing:\n%s", ansi.Strip(early))
 	}
 	quiet := ansi.Strip(model.renderWorkspaceRow(group, false, false, 30, false))
-	if !strings.HasPrefix(quiet, "●") {
-		t.Fatalf("active glyph missing on quiet row:\n%s", quiet)
+	if !strings.Contains(quiet, "●1") {
+		t.Fatalf("active count chip missing on quiet row:\n%s", quiet)
+	}
+	if strings.HasPrefix(strings.TrimSpace(quiet), "●") {
+		t.Fatalf("state glyph is still doubled in the left column:\n%s", quiet)
 	}
 	// Colors are unavailable under the test color profile, so the sweep
 	// itself is asserted via the band math.
@@ -1597,7 +1602,7 @@ func TestHierarchyConnectorRowsFollowDensity(t *testing.T) {
 	model.agentCursor = 2
 
 	workspaceRow, agentRow, ok := model.hierarchyConnectorRows(20)
-	if !ok || workspaceRow != 2 || agentRow != 3 {
+	if !ok || workspaceRow != 3 || agentRow != 4 {
 		t.Fatalf(
 			"compact connector rows = %d -> %d, ok=%v",
 			workspaceRow,
@@ -1608,7 +1613,7 @@ func TestHierarchyConnectorRowsFollowDensity(t *testing.T) {
 
 	model.rowsExpanded = true
 	workspaceRow, agentRow, ok = model.hierarchyConnectorRows(20)
-	if !ok || workspaceRow != 4 || agentRow != 7 {
+	if !ok || workspaceRow != 5 || agentRow != 8 {
 		t.Fatalf(
 			"expanded connector rows = %d -> %d, ok=%v",
 			workspaceRow,
@@ -1656,17 +1661,17 @@ func TestSortChordChangesMode(t *testing.T) {
 
 func TestHierarchyConnectorBridgesDifferentRows(t *testing.T) {
 	pane := strings.Join([]string{
-		"header │",
-		"one    │",
-		"two    │",
-		"three  │",
+		"header  ",
+		"one     ",
+		"two     ",
+		"three   ",
 	}, "\n")
 	rendered := ansi.Strip(paintHierarchyConnector(pane, 8, 1, 3))
 	lines := strings.Split(rendered, "\n")
-	if !strings.HasSuffix(lines[0], " │") ||
-		!strings.HasSuffix(lines[1], "╮│") ||
-		!strings.HasSuffix(lines[2], "││") ||
-		!strings.HasSuffix(lines[3], "╰│") {
+	if !strings.HasSuffix(lines[0], "  ") ||
+		!strings.HasSuffix(lines[1], " ╮") ||
+		!strings.HasSuffix(lines[2], " │") ||
+		!strings.HasSuffix(lines[3], " ╰") {
 		t.Fatalf("hierarchy path is incomplete:\n%s", rendered)
 	}
 	for index, line := range lines {
