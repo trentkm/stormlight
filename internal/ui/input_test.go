@@ -783,13 +783,22 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	if header < 0 {
 		t.Fatalf("pane header row not found:\n%s", body)
 	}
-	hairline := strings.Index(lines[header], "│")
-	plane := strings.Index(lines[header], "┃")
+	// The header row carries the seams' caps, not the seams: half-strokes
+	// that begin at the band and descend out of it.
+	hairline := strings.Index(lines[header], "╷")
+	plane := strings.Index(lines[header], "╻")
 	if hairline < 0 || plane < 0 || plane < hairline {
-		t.Fatalf("seams are not a hairline then a heavy rule: %q", lines[header])
+		t.Fatalf("seams are not capped under the band: %q", lines[header])
 	}
-	if strings.Count(lines[header], "┃") != 1 {
-		t.Fatalf("more than one plane seam: %q", lines[header])
+	if strings.ContainsAny(lines[header], "│┃") {
+		t.Fatalf("uncapped seam collides with the header band: %q", lines[header])
+	}
+
+	firstRow := lines[header+1]
+	if strings.Index(firstRow, "│") != hairline ||
+		strings.Index(firstRow, "┃") != plane {
+		t.Fatalf("seams do not hang from their caps:\n%q\n%q",
+			lines[header], firstRow)
 	}
 
 	for _, line := range lines[header+1:] {
@@ -826,15 +835,15 @@ func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
 		t.Fatalf("agent header lacks right-aligned workspace context: %q", header)
 	}
 
-	rendered := ansi.Strip(renderPaneHeader("Agents", "a-very-long-workspace-name", 24, true))
+	rendered := ansi.Strip(renderPaneHeader("Agents", "a-very-long-workspace-name", 24, true, headerBand{total: 24}))
 	if width := lipgloss.Width(rendered); width != 24 {
 		t.Fatalf("contextual header width = %d, want 24: %q", width, rendered)
 	}
 }
 
 func TestPaneHeaderKeepsLabelAlignmentAcrossFocusStates(t *testing.T) {
-	active := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true))
-	inactive := ansi.Strip(renderPaneHeader("Workspaces", "", 24, false))
+	active := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true, headerBand{total: 24}))
+	inactive := ansi.Strip(renderPaneHeader("Workspaces", "", 24, false, headerBand{total: 24}))
 	if !strings.HasPrefix(active, "Workspaces") ||
 		!strings.HasPrefix(inactive, "Workspaces") {
 		t.Fatalf("labels shifted between focus states:\nactive:   %q\ninactive: %q",

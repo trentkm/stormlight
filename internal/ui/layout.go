@@ -19,21 +19,41 @@ func (m Model) renderHeader() string {
 	// No chrome: the wordmark's own gradient is the identity, floating on
 	// the terminal background with the counters at the far edge.
 	left := renderWordmark(m.shimmerPhaseOrRest())
-	right := mutedStyle.Render(fmt.Sprintf("%d active", working))
+	// The counters speak the rows' own language: same glyphs, same colors as
+	// statusVisual paints down the agent list, so the header doubles as the
+	// legend for everything below it.
+	counts := []string{
+		renderHeaderCount("●", colorWorking, false,
+			fmt.Sprintf("%d working", working)),
+	}
 	if waiting > 0 {
-		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).
-			Render(fmt.Sprintf("%d waiting", waiting))
+		counts = append(counts, renderHeaderCount("○", colorWaiting, false,
+			fmt.Sprintf("%d waiting", waiting)))
 	}
 	if urgent > 0 {
 		attentionLabel := fmt.Sprintf("%d need input", urgent)
 		if urgent == 1 {
 			attentionLabel = "1 needs input"
 		}
-		right += "  " + lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
-			Render(attentionLabel)
+		counts = append(counts,
+			renderHeaderCount("!", colorWaiting, true, attentionLabel))
 	}
+	right := strings.Join(counts, mutedStyle.Render("  ·  "))
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right)-1)
 	return left + strings.Repeat(" ", gap) + right + " "
+}
+
+// renderHeaderCount pairs a count with the glyph the agent rows use for that
+// state. The glyph carries the color and the words stay muted, except for the
+// input tier, which is the one thing in the header worth raising a voice over.
+func renderHeaderCount(symbol string, color lipgloss.TerminalColor, loud bool, label string) string {
+	symbolStyle := lipgloss.NewStyle().Foreground(color)
+	labelStyle := mutedStyle
+	if loud {
+		symbolStyle = symbolStyle.Bold(true)
+		labelStyle = lipgloss.NewStyle().Foreground(color).Bold(true)
+	}
+	return symbolStyle.Render(symbol) + " " + labelStyle.Render(label)
 }
 
 // bodyDimensions is the area modals and the dashboard share: the terminal
@@ -107,11 +127,14 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		// One extra column of slack keeps row text from touching the
 		// hierarchy connector drawn in the pane's padding column.
 		m.renderWorkspaces(max(1, workspaceWidth-3), contentHeight-1),
-		workspaceWidth,
-		contentHeight,
-		m.activePane == paneWorkspaces,
-		paneEdges{right: seamColumn},
-		dimWorkspaces,
+		paneFrame{
+			width:   workspaceWidth,
+			height:  contentHeight,
+			active:  m.activePane == paneWorkspaces,
+			edges:   paneEdges{right: seamColumn},
+			band:    headerBand{start: 0, total: width},
+			dimming: dimWorkspaces,
+		},
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
 		workspaces = paintHierarchyConnector(
@@ -125,11 +148,14 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		"Agents",
 		m.selectedWorkspaceLabel(),
 		m.renderAgents(max(1, agentWidth-2), contentHeight-1),
-		agentWidth,
-		contentHeight,
-		m.activePane == paneAgents,
-		paneEdges{right: seamPlane},
-		dimAgents,
+		paneFrame{
+			width:   agentWidth,
+			height:  contentHeight,
+			active:  m.activePane == paneAgents,
+			edges:   paneEdges{right: seamPlane},
+			band:    headerBand{start: workspaceWidth, total: width},
+			dimming: dimAgents,
+		},
 	)
 	interaction := m.renderPane(
 		"Spanreed",
@@ -138,13 +164,47 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			max(1, interactionWidth-3),
 			contentHeight-1,
 		),
-		interactionWidth,
-		contentHeight,
-		m.activePane == paneInteraction,
-		paneEdges{gutter: true},
-		dimInteraction,
+		paneFrame{
+			width:   interactionWidth,
+			height:  contentHeight,
+			active:  m.activePane == paneInteraction,
+			edges:   paneEdges{gutter: true},
+			band:    headerBand{start: workspaceWidth + agentWidth, total: width},
+			dimming: dimInteraction,
+		},
 	)
-	return lipgloss.JoinHorizontal(lipgloss.Top, workspaces, agents, interaction)
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		capSeam(workspaces, workspaceWidth, seamColumn),
+		capSeam(agents, agentWidth, seamPlane),
+		interaction,
+	)
+}
+
+// capSeam trims a seam's topmost cell to a half-stroke, so the rule hangs
+// from the header band instead of colliding with it. The band is drawn as an
+// underline along the bottom of the header row, which is exactly where these
+// glyphs begin — the seam reads as descending out of the frame.
+func capSeam(paneContent string, width int, seam paneSeam) string {
+	if seam == seamNone || width < 1 {
+		return paneContent
+	}
+	glyph := "╷"
+	if seam == seamPlane {
+		glyph = "╻"
+	}
+	lines := strings.Split(paneContent, "\n")
+	if len(lines) == 0 {
+		return paneContent
+	}
+	lines[0] = replaceStyledCell(
+		lines[0],
+		width,
+		width-1,
+		glyph,
+		lipgloss.NewStyle().Foreground(seam.foreground()),
+	)
+	return strings.Join(lines, "\n")
 }
 
 // paneDimmings decides how far each pane recedes. The lit path is the
@@ -422,33 +482,36 @@ func (m Model) renderFocusedPane(width, height int) string {
 			"Agents",
 			contextLabel,
 			m.renderAgents(max(1, width-2), height-1),
-			width,
-			height,
-			true,
-			paneEdges{},
-			paneDimming{},
+			paneFrame{
+				width:  width,
+				height: height,
+				active: true,
+				band:   headerBand{total: width},
+			},
 		)
 	case paneInteraction:
 		return m.renderPane(
 			"Spanreed",
 			"‹",
 			m.renderInteraction(max(1, width-2), height-1),
-			width,
-			height,
-			true,
-			paneEdges{},
-			paneDimming{},
+			paneFrame{
+				width:  width,
+				height: height,
+				active: true,
+				band:   headerBand{total: width},
+			},
 		)
 	default:
 		return m.renderPane(
 			"Workspaces",
 			"Agents ›",
 			m.renderWorkspaces(max(1, width-2), height-1),
-			width,
-			height,
-			true,
-			paneEdges{},
-			paneDimming{},
+			paneFrame{
+				width:  width,
+				height: height,
+				active: true,
+				band:   headerBand{total: width},
+			},
 		)
 	}
 }
@@ -570,16 +633,32 @@ type paneEdges struct {
 	gutter bool
 }
 
+// headerBand places a pane's header rule inside the dashboard-wide band of
+// light: start is the column the pane begins at, total the full width the
+// gradient is stretched across.
+type headerBand struct {
+	start int
+	total int
+}
+
+// paneFrame is everything about a pane that isn't its text.
+type paneFrame struct {
+	width   int
+	height  int
+	active  bool
+	edges   paneEdges
+	band    headerBand
+	dimming paneDimming
+}
+
 func (m Model) renderPane(
 	label string,
 	contextLabel string,
 	content string,
-	width int,
-	height int,
-	active bool,
-	edges paneEdges,
-	dimming paneDimming,
+	frame paneFrame,
 ) string {
+	width, height := frame.width, frame.height
+	edges, dimming := frame.edges, frame.dimming
 	innerWidth := max(1, width)
 	style := lipgloss.NewStyle().Width(innerWidth).Height(height).MaxHeight(height)
 	if edges.right != seamNone {
@@ -597,11 +676,16 @@ func (m Model) renderPane(
 	// pane's own columns: the header rule and every body row start one cell
 	// in, leaving the heavy rule with air on its far side.
 	contentWidth := innerWidth
+	band := frame.band
 	if edges.gutter {
 		contentWidth = max(1, innerWidth-1)
 		style = style.PaddingLeft(1)
+		// The gutter is dead space in the band's run, but it is still a
+		// column of the dashboard: the header rule resumes past it rather
+		// than restarting the gradient.
+		band.start++
 	}
-	header := renderPaneHeader(label, contextLabel, contentWidth, active)
+	header := renderPaneHeader(label, contextLabel, contentWidth, frame.active, band)
 	if dimming.dim {
 		content = dimPane(content, dimming.keep)
 	}
@@ -675,27 +759,36 @@ func dimParams(params string) string {
 
 // renderPaneHeader underlines the entire header cell, padding included, so
 // the header reads as a full-width ruled box top rather than floating text.
-func renderPaneHeader(label, contextLabel string, width int, active bool) string {
+// The underline is the top edge of the dashboard's band of light: every blank
+// cell takes the band's color at its own column, and the active pane's run
+// rises to full strength — the "selected tab" indicator is that stretch of
+// brightness, not a separate rail or a swapped accent.
+func renderPaneHeader(
+	label, contextLabel string,
+	width int,
+	active bool,
+	band headerBand,
+) string {
 	underlined := func(style lipgloss.Style) lipgloss.Style {
 		return style.Underline(true)
 	}
-	fill := underlined(lipgloss.NewStyle().Foreground(colorBorder))
+	// A run of band, positioned by how far into this pane it starts.
+	fill := func(offset, count int) string {
+		return renderBandRun(
+			" ", band.start+offset, max(0, count), band.total, active, true)
+	}
 
 	left := underlined(mutedStyle.Copy().Bold(true)).
 		Render(truncate(" "+label, width))
 	if active {
-		// The active pane's header rule renders in accent — the pane's
-		// "selected tab" indicator. The rule alone carries the signal; no
-		// rail, no extra chrome.
-		fill = underlined(lipgloss.NewStyle().Foreground(colorAccent))
 		left = underlined(titleStyle.Copy()).
 			Render(truncate(" "+label, width))
 	}
+	leftWidth := lipgloss.Width(left)
 
-	remaining := width - lipgloss.Width(left) - 2
+	remaining := width - leftWidth - 2
 	if strings.TrimSpace(contextLabel) == "" || remaining < 4 {
-		pad := max(0, width-lipgloss.Width(left))
-		return left + fill.Render(strings.Repeat(" ", pad))
+		return left + fill(leftWidth, width-leftWidth)
 	}
 
 	rightStyle := underlined(mutedStyle.Copy())
@@ -703,10 +796,11 @@ func renderPaneHeader(label, contextLabel string, width int, active bool) string
 		rightStyle = underlined(accentStyle.Copy())
 	}
 	right := rightStyle.Render(truncate(contextLabel, remaining))
-	gap := max(2, width-lipgloss.Width(left)-lipgloss.Width(right))
-	tail := max(0, width-lipgloss.Width(left)-gap-lipgloss.Width(right))
-	return left + fill.Render(strings.Repeat(" ", gap)) + right +
-		fill.Render(strings.Repeat(" ", tail))
+	rightWidth := lipgloss.Width(right)
+	gap := max(2, width-leftWidth-rightWidth)
+	tail := max(0, width-leftWidth-gap-rightWidth)
+	return left + fill(leftWidth, gap) + right +
+		fill(leftWidth+gap+rightWidth, tail)
 }
 
 func (m Model) interactionDimensions() (int, int) {

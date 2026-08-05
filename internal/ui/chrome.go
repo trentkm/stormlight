@@ -58,24 +58,51 @@ func renderComposerRule(width int) string {
 	return out.String()
 }
 
-// renderFooterRule tints the divider with the wordmark's sapphire→ice
-// gradient, dimmed toward the border grey — the footer's quiet echo of the
-// header identity.
-func renderFooterRule(width int) string {
+// The dashboard is framed by one band of light: the wordmark's sapphire→ice
+// gradient, run across the full terminal width and held back toward the
+// border grey. The pane headers ride the top of it and the footer rule the
+// bottom, so the frame reads as a single drawn material rather than three
+// decorations that happen to share a screen. The segment the cursor is in
+// rises to full strength — focus is where the band brightens, not a color
+// swapped out for another.
+//
+// bandColor is that gradient sampled at t, the fraction of the way across
+// the dashboard.
+func bandColor(t float64, lit bool) lipgloss.AdaptiveColor {
+	fade := 0.55
+	if lit {
+		fade = 0
+	}
+	return lipgloss.AdaptiveColor{
+		Light: lerpHex(gradientStop(wordmarkStopsLight, t), colorBorder.Light, fade),
+		Dark:  lerpHex(gradientStop(wordmarkStopsDark, t), colorBorder.Dark, fade),
+	}
+}
+
+// renderBandRun draws count cells of the band. The run knows where it sits in
+// the dashboard (start of total columns) rather than restarting the gradient
+// per pane, which is what keeps the header rules and the footer rule reading
+// as one continuous sweep. The header draws its band as underlined blanks so
+// it can share a row with the labels; the footer, having a row to itself,
+// draws glyphs.
+func renderBandRun(glyph string, start, count, total int, lit, underlined bool) string {
 	var out strings.Builder
-	for index := 0; index < width; index++ {
+	for index := 0; index < count; index++ {
 		t := 0.0
-		if width > 1 {
-			t = float64(index) / float64(width-1)
+		if total > 1 {
+			t = float64(clamp(start+index, 0, total-1)) / float64(total-1)
 		}
-		out.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{
-				Light: lerpHex(gradientStop(wordmarkStopsLight, t), "#AAB3B9", 0.55),
-				Dark:  lerpHex(gradientStop(wordmarkStopsDark, t), "#59636B", 0.55),
-			}).
-			Render("─"))
+		style := lipgloss.NewStyle().Foreground(bandColor(t, lit))
+		if underlined {
+			style = style.Underline(true)
+		}
+		out.WriteString(style.Render(glyph))
 	}
 	return out.String()
+}
+
+func renderFooterRule(width int) string {
+	return renderBandRun("─", 0, width, width, false, false)
 }
 
 func (m Model) chordHints() string {
