@@ -338,7 +338,7 @@ func workspaceDetail(value workspace.Context, width int) string {
 		if pathToken != "" {
 			parts = append(parts, pathToken)
 		}
-		if tail := workspaceDetailTail(value); tail != "" {
+		if tail := value.Tail(); tail != "" {
 			parts = append(parts, tail)
 		}
 		return strings.Join(parts, " · ")
@@ -354,20 +354,6 @@ func workspaceDetail(value workspace.Context, width int) string {
 		detail = join(truncatePathTail(path, max(1, width-overhead)))
 	}
 	return ansi.Truncate(detail, width, "…")
-}
-
-// workspaceDetailTail is the subtitle's final token: a resolver-supplied
-// component, or the worktree directory when the agent runs outside the main
-// checkout. Empty when neither adds information beyond the workspace name.
-func workspaceDetailTail(value workspace.Context) string {
-	tail := value.ComponentName
-	if tail == "" && value.ExecutionRoot != "" && value.ExecutionRoot != value.Root {
-		tail = filepath.Base(value.ExecutionRoot)
-	}
-	if tail == value.Name {
-		return ""
-	}
-	return tail
 }
 
 // abbreviatePath shortens every segment but the last to its first rune,
