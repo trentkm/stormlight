@@ -110,7 +110,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		workspaceWidth,
 		contentHeight,
 		m.activePane == paneWorkspaces,
-		true,
+		paneEdges{right: seamColumn},
 		dimWorkspaces,
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
@@ -128,20 +128,20 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		agentWidth,
 		contentHeight,
 		m.activePane == paneAgents,
-		true,
+		paneEdges{right: seamPlane},
 		dimAgents,
 	)
 	interaction := m.renderPane(
 		"Spanreed",
 		"",
 		m.renderInteraction(
-			max(1, interactionWidth-2),
+			max(1, interactionWidth-3),
 			contentHeight-1,
 		),
 		interactionWidth,
 		contentHeight,
 		m.activePane == paneInteraction,
-		false,
+		paneEdges{gutter: true},
 		dimInteraction,
 	)
 	return lipgloss.JoinHorizontal(lipgloss.Top, workspaces, agents, interaction)
@@ -425,7 +425,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			width,
 			height,
 			true,
-			false,
+			paneEdges{},
 			paneDimming{},
 		)
 	case paneInteraction:
@@ -436,7 +436,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			width,
 			height,
 			true,
-			false,
+			paneEdges{},
 			paneDimming{},
 		)
 	default:
@@ -447,7 +447,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			width,
 			height,
 			true,
-			false,
+			paneEdges{},
 			paneDimming{},
 		)
 	}
@@ -524,6 +524,52 @@ func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
 	return undimmedRows{start: (cursor - start) * step, count: size}
 }
 
+// paneSeam is the rule down a pane's right edge. Not every boundary divides
+// the same kind of thing, and the rule says which is which.
+type paneSeam int
+
+const (
+	// seamNone ends a pane at the terminal's edge — nothing to divide.
+	seamNone paneSeam = iota
+	// seamColumn separates two views of one hierarchy: workspaces and the
+	// agents inside the selected one. A hairline, because crossing it is
+	// just moving down the tree.
+	seamColumn
+	// seamPlane separates the catalog from the Spanreed. Left of it is a
+	// file explorer — a tree you browse. Right of it is the control plane
+	// where an agent is read and driven. The rule goes heavy and the pane
+	// beyond it opens with a column of air (see paneEdges.gutter), so the
+	// two halves read as different surfaces rather than a third column.
+	seamPlane
+)
+
+// border returns the box-drawing rule a seam paints down the pane edge.
+func (s paneSeam) border() lipgloss.Border {
+	border := lipgloss.NormalBorder()
+	if s == seamPlane {
+		border.Right = "┃"
+	}
+	return border
+}
+
+// foreground colors the rule. A column seam is furniture and stays the
+// border grey; a plane seam takes the accent, so the one line that divides
+// browsing from driving is also the one line on screen that isn't furniture.
+func (s paneSeam) foreground() lipgloss.TerminalColor {
+	if s == seamPlane {
+		return colorAccent
+	}
+	return colorBorder
+}
+
+// paneEdges describes both sides of a pane's frame. A plane seam is drawn in
+// two halves by two panes: the pane on its left owns the heavy rule, the pane
+// on its right owns the column of air that follows it.
+type paneEdges struct {
+	right  paneSeam
+	gutter bool
+}
+
 func (m Model) renderPane(
 	label string,
 	contextLabel string,
@@ -531,27 +577,37 @@ func (m Model) renderPane(
 	width int,
 	height int,
 	active bool,
-	borderRight bool,
+	edges paneEdges,
 	dimming paneDimming,
 ) string {
 	innerWidth := max(1, width)
 	style := lipgloss.NewStyle().Width(innerWidth).Height(height).MaxHeight(height)
-	if borderRight {
-		// Dividers are structure, not state: focus is shown by the header
-		// underline and the single hot cursor row, never the frame.
+	if edges.right != seamNone {
+		// Dividers are structure, not state: a seam looks the same whichever
+		// pane holds the cursor, so the accent on the plane seam reads as a
+		// permanent fixture rather than a focus signal. Focus stays with the
+		// header underline and the single hot cursor row.
 		innerWidth = max(1, width-1)
 		style = style.Width(innerWidth).
-			BorderStyle(lipgloss.NormalBorder()).
+			BorderStyle(edges.right.border()).
 			BorderRight(true).
-			BorderForeground(colorBorder)
+			BorderForeground(edges.right.foreground())
 	}
-	header := renderPaneHeader(label, contextLabel, innerWidth, active)
+	// The gutter is the far half of a plane seam, so it comes out of this
+	// pane's own columns: the header rule and every body row start one cell
+	// in, leaving the heavy rule with air on its far side.
+	contentWidth := innerWidth
+	if edges.gutter {
+		contentWidth = max(1, innerWidth-1)
+		style = style.PaddingLeft(1)
+	}
+	header := renderPaneHeader(label, contextLabel, contentWidth, active)
 	if dimming.dim {
 		content = dimPane(content, dimming.keep)
 	}
 	body := lipgloss.NewStyle().
-		Width(innerWidth).
-		MaxWidth(innerWidth).
+		Width(contentWidth).
+		MaxWidth(contentWidth).
 		Render(content)
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
 }
@@ -660,7 +716,9 @@ func (m Model) interactionDimensions() (int, int) {
 		return max(1, width-2), contentHeight
 	}
 	_, _, interactionWidth := m.paneWidths(width)
-	return max(1, interactionWidth-2), contentHeight
+	// One column goes to the plane seam's gutter, two to the pane's own
+	// slack; renderDashboardBody splits it the same way.
+	return max(1, interactionWidth-3), contentHeight
 }
 
 // basePaneWidths splits a dashboard row between the three panes. The

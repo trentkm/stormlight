@@ -761,23 +761,53 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	assertViewFitsPane(t, model, 119, 29)
 }
 
-func TestWideDashboardRendersPhysicalPaneDividers(t *testing.T) {
+// The dashboard's two seams divide different kinds of thing, so they are not
+// drawn alike: a hairline splits the catalog's own columns, while a heavy rule
+// followed by a column of air splits the whole catalog from the Spanreed.
+func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 120
 	model.height = 30
 
 	body := ansi.Strip(model.renderBody())
-	for _, line := range strings.Split(body, "\n") {
+	lines := strings.Split(body, "\n")
+	header := -1
+	for index, line := range lines {
 		if strings.Contains(line, "Workspaces") &&
 			strings.Contains(line, "Agents") &&
 			strings.Contains(line, "Spanreed") {
-			if strings.Count(line, "│") < 2 {
-				t.Fatalf("pane headers have no physical dividers: %q", line)
-			}
-			return
+			header = index
+			break
 		}
 	}
-	t.Fatalf("pane header row not found:\n%s", body)
+	if header < 0 {
+		t.Fatalf("pane header row not found:\n%s", body)
+	}
+	hairline := strings.Index(lines[header], "│")
+	plane := strings.Index(lines[header], "┃")
+	if hairline < 0 || plane < 0 || plane < hairline {
+		t.Fatalf("seams are not a hairline then a heavy rule: %q", lines[header])
+	}
+	if strings.Count(lines[header], "┃") != 1 {
+		t.Fatalf("more than one plane seam: %q", lines[header])
+	}
+
+	for _, line := range lines[header+1:] {
+		runes := []rune(line)
+		column := -1
+		for index, glyph := range runes {
+			if glyph == '┃' {
+				column = index
+				break
+			}
+		}
+		if column < 0 {
+			t.Fatalf("body row has no plane seam: %q", line)
+		}
+		if column+1 < len(runes) && runes[column+1] != ' ' {
+			t.Fatalf("plane seam has no gutter behind it: %q", line)
+		}
+	}
 }
 
 func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
