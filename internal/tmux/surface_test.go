@@ -28,6 +28,7 @@ func TestSurfacePresentsCommandsInTmuxPopup(t *testing.T) {
 			Height:      "76%",
 			Title:       " Stormlight · Choose directory ",
 			BorderStyle: "fg=#e5c07b",
+			BorderLines: "rounded",
 		},
 	})
 	if err != nil {
@@ -45,6 +46,7 @@ func TestSurfacePresentsCommandsInTmuxPopup(t *testing.T) {
 		"-d", "/workspace/project",
 		"-T", " Stormlight · Choose directory ",
 		"-S", "fg=#e5c07b",
+		"-b", "rounded",
 		"/opt/homebrew/bin/yazi",
 		"--chooser-file", "/tmp/choice",
 		"--cwd-file", "/tmp/cwd",

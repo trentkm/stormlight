@@ -377,6 +377,9 @@ func modalDimensions(
 	return width, height
 }
 
+// Modals curve their corners. Square corners are what the dashboard's own
+// rules and seams are drawn with, so an overlay that shares them reads as
+// another region of the layout; the arc says this floats above it.
 func renderModal(content string, width, height int) string {
 	if width < 3 || height < 3 {
 		return fitBlock(content, width, height)
@@ -387,7 +390,7 @@ func renderModal(content string, width, height int) string {
 	return lipgloss.NewStyle().
 		Width(innerWidth).
 		Height(innerHeight).
-		BorderStyle(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorWaiting).
 		Render(content)
 }
