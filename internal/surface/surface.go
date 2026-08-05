@@ -25,10 +25,15 @@ type Command struct {
 }
 
 type Popup struct {
-	Width       string
-	Height      string
-	Title       string
+	Width  string
+	Height string
+	Title  string
+	// BorderStyle colors the frame; BorderLines picks which glyphs draw it
+	// (tmux's single, rounded, heavy, double, …). Both are passed through
+	// verbatim — the surface decides how to render a popup, not what one
+	// should look like.
 	BorderStyle string
+	BorderLines string
 }
 
 type Request struct {

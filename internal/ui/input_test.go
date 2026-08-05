@@ -635,16 +635,31 @@ func TestModalRendersCompleteBorder(t *testing.T) {
 	if len(lines) != 8 {
 		t.Fatalf("modal height = %d, want 8:\n%s", len(lines), rendered)
 	}
-	if !strings.HasPrefix(lines[0], "┌") ||
-		!strings.HasSuffix(lines[0], "┐") ||
-		!strings.HasPrefix(lines[len(lines)-1], "└") ||
-		!strings.HasSuffix(lines[len(lines)-1], "┘") {
-		t.Fatalf("modal border is incomplete:\n%s", rendered)
+	if !strings.HasPrefix(lines[0], "╭") ||
+		!strings.HasSuffix(lines[0], "╮") ||
+		!strings.HasPrefix(lines[len(lines)-1], "╰") ||
+		!strings.HasSuffix(lines[len(lines)-1], "╯") {
+		t.Fatalf("modal border is incomplete or not curved:\n%s", rendered)
 	}
 	for index, line := range lines {
 		if width := lipgloss.Width(line); width != 32 {
 			t.Fatalf("modal line %d width = %d, want 32", index+1, width)
 		}
+	}
+}
+
+// The composer sits inside the dispatch modal, so it curves with it. A square
+// box nested in a rounded one reads as a rendering slip.
+func TestTaskComposerCurvesWithItsModal(t *testing.T) {
+	box := strings.Split(
+		ansi.Strip(NewModel(stubBackend{}).renderTaskComposer(40, 3)),
+		"\n",
+	)
+	if !strings.HasPrefix(box[0], "╭") ||
+		!strings.HasSuffix(box[0], "╮") ||
+		!strings.HasPrefix(box[len(box)-1], "╰") ||
+		!strings.HasSuffix(box[len(box)-1], "╯") {
+		t.Fatalf("task composer is not curved:\n%s", strings.Join(box, "\n"))
 	}
 }
 
