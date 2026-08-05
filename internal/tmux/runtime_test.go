@@ -291,7 +291,7 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 			"run-shell", "-C", returnBindingFormat},
 	}
 	wantCalls = append(wantCalls, rootReturnCalls()...)
-	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
+	wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
 	)
@@ -343,7 +343,7 @@ func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
 					"run-shell", "-C", returnBindingFormat},
 			}
 			wantCalls = append(wantCalls, rootReturnCalls()...)
-			wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
+			wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 			wantCalls = append(wantCalls,
 				[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", "$7"},
 			)
@@ -409,7 +409,7 @@ func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 			"run-shell", "-C", returnBindingFormat},
 	}
 	wantCalls = append(wantCalls, rootReturnCalls()...)
-	wantCalls = append(wantCalls, prefixFeedbackCalls("stormlight-agents")...)
+	wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
 	)
@@ -444,15 +444,56 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 	}
 }
 
-func TestConfigurePrefixFeedbackSkipsCurrentVersion(t *testing.T) {
-	runner := &captureRunner{feedbackVersion: prefixFeedbackVersion}
+// tmux ends a #{?...} branch at the first unescaped comma, and a comma inside
+// a #[...] style tag counts: leave one raw and the branch stops mid-style,
+// taking the rest of the status bar with it. The failure is silent — tmux
+// renders a truncated bar rather than complaining — so the rule is enforced
+// here instead of being discovered on someone's screen.
+func TestStatusFormatsEscapeStyleCommas(t *testing.T) {
+	for name, format := range map[string]string{
+		"agentStatusLineage":     agentStatusLineage,
+		"statusWorkspaceSegment": statusWorkspaceSegment,
+		"statusTailSegment":      statusTailSegment,
+		"baseStatusLeft":         baseStatusLeft,
+		"dynamicStatusLeft":      dynamicStatusLeft,
+		"dynamicStatusStyle":     dynamicStatusStyle,
+		"statusFormat":           statusFormat,
+	} {
+		for _, tag := range styleTags(format) {
+			for index, char := range tag {
+				if char == ',' && (index == 0 || tag[index-1] != '#') {
+					t.Fatalf("%s: unescaped comma in style tag %q", name, tag)
+				}
+			}
+		}
+	}
+}
+
+// styleTags returns every #[...] span in a tmux format.
+func styleTags(format string) []string {
+	var tags []string
+	for index := 0; index+1 < len(format); index++ {
+		if format[index] != '#' || format[index+1] != '[' {
+			continue
+		}
+		end := strings.IndexByte(format[index:], ']')
+		if end < 0 {
+			continue
+		}
+		tags = append(tags, format[index:index+end+1])
+	}
+	return tags
+}
+
+func TestConfigureStatusBarSkipsCurrentVersion(t *testing.T) {
+	runner := &captureRunner{feedbackVersion: statusVersion}
 	runtime := &Runtime{runner: runner}
 
-	if err := runtime.configurePrefixFeedback(context.Background(), "custom-agents"); err != nil {
+	if err := runtime.configureStatusBar(context.Background(), "custom-agents"); err != nil {
 		t.Fatal(err)
 	}
 	assertCalls(t, runner.calls, [][]string{
-		{"show-options", "-qv", "-t", "custom-agents", "@stormlight_prefix_feedback"},
+		{"show-options", "-qv", "-t", "custom-agents", statusVersionOption},
 	})
 }
 
@@ -472,8 +513,13 @@ func TestUpdateRestoresMissingStormlightWindowMetadata(t *testing.T) {
 			written[call[4]] = call[5]
 		}
 	}
-	if len(written) != metadataFieldCount {
-		t.Fatalf("wrote %d metadata options: %#v", len(written), written)
+	// Every field the pane listing reads back has to be restored; the record
+	// is only whole if the window carries all of them. Options written for
+	// display alone — the status bar's lineage tail — may ride along.
+	for _, field := range agentMetadataFields {
+		if _, ok := written["@stormlight_"+field]; !ok {
+			t.Fatalf("metadata option %q was not restored: %#v", field, written)
+		}
 	}
 	if written["@stormlight_id"] != "capture-id" {
 		t.Fatalf("stormlight id = %q", written["@stormlight_id"])
@@ -615,7 +661,7 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 		return r.clientLine, nil
 	case "show-options":
 		switch args[len(args)-1] {
-		case prefixFeedbackOption:
+		case statusVersionOption:
 			return r.feedbackVersion, nil
 		case "@stormlight_id":
 			return r.stormlightID, nil
@@ -625,9 +671,9 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 	return "pane output", nil
 }
 
-func prefixFeedbackCalls(sessionName string) [][]string {
+func statusBarCalls(sessionName string) [][]string {
 	return [][]string{
-		{"show-options", "-qv", "-t", sessionName, "@stormlight_prefix_feedback"},
+		{"show-options", "-qv", "-t", sessionName, statusVersionOption},
 		{"set-option", "-t", sessionName, "@stormlight_status_style_base",
 			baseStatusStyle},
 		{"set-option", "-t", sessionName, "@stormlight_status_left_base",
@@ -636,14 +682,15 @@ func prefixFeedbackCalls(sessionName string) [][]string {
 			"bg=#e5c07b,fg=#1f2328,bold"},
 		{"set-option", "-t", sessionName, "@stormlight_status_left_prefix",
 			" PREFIX  [Q] return  [?] all keys "},
-		{"set-option", "-t", sessionName, "@stormlight_prefix_feedback",
-			prefixFeedbackVersion},
+		{"set-option", "-t", sessionName, statusVersionOption, statusVersion},
 		{"set-option", "-t", sessionName, "status-style", dynamicStatusStyle},
 		{"set-option", "-t", sessionName, "status-left", dynamicStatusLeft},
-		{"set-option", "-t", sessionName, "status-left-length", "40"},
+		{"set-option", "-t", sessionName, "status-left-length",
+			strconv.Itoa(baseStatusLeftLength)},
 		{"set-option", "-t", sessionName, "status-right", (&Runtime{}).statusRightHint()},
 		{"set-option", "-t", sessionName, "status-right-length",
 			strconv.Itoa(len((&Runtime{}).statusRightHint()))},
+		{"set-option", "-t", sessionName, "status-format[0]", statusFormat},
 	}
 }
 

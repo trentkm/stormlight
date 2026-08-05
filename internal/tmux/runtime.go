@@ -34,20 +34,60 @@ const (
 	statusStylePrefixOption = "@stormlight_status_style_prefix"
 	statusLeftBaseOption    = "@stormlight_status_left_base"
 	statusLeftPrefixOption  = "@stormlight_status_left_prefix"
-	prefixFeedbackOption    = "@stormlight_prefix_feedback"
-	prefixFeedbackVersion   = "2"
+	statusVersionOption     = "@stormlight_status_version"
+	statusVersion           = "3"
 	prefixStatusStyle       = "bg=#e5c07b,fg=#1f2328,bold"
 	prefixStatusLeft        = " PREFIX  [Q] return  [?] all keys "
 	// The agents session lives on the Stormlight-owned server, so its
 	// status bar carries the dashboard's identity: a deep sapphire band
 	// with the glint-and-wordmark status-left, echoing the header.
-	baseStatusStyle      = "bg=#1B2740,fg=#C8D6F2"
-	baseStatusLeft       = " #[fg=#7DCFFF,bold]✦ #[fg=#E8EEF9,bold]#{session_name}#[default] "
-	baseStatusLeftLength = 40
+	baseStatusStyle = "bg=#1B2740,fg=#C8D6F2"
+	// A window inside an agent is a place, and the bar names it the way the
+	// dashboard does: workspace › worktree › agent. Only the runtime's own
+	// windows carry @stormlight_id; anything else on the band (the dashboard's
+	// own host session, a stray shell) falls back to the session name.
+	//
+	// Commas inside #[...] have to be escaped as #, — an unescaped one ends
+	// the surrounding #{?...} branch and swallows the rest of the format.
+	agentStatusLineage = `#{?#{@stormlight_workspace_name},` +
+		statusWorkspaceSegment + statusTailSegment + `,}` +
+		`#[fg=#E8EEF9#,bold]#{window_name}`
+	// Each segment is capped so a verbose workspace name cannot crowd out the
+	// agent, and each is dropped outright once the client is too narrow to
+	// hold it: the worktree below 90 columns, the workspace below 60. The
+	// agent's own name never drops — it is the answer the bar exists to give.
+	statusWorkspaceSegment = `#{?#{e|>=:#{client_width},60},` +
+		`#[fg=#8FA6CC]#{=/16/…:@stormlight_workspace_name}#[fg=#55698F] › ,}`
+	statusTailSegment = `#{?#{e|>=:#{client_width},90},` +
+		`#{?#{@stormlight_workspace_tail},` +
+		`#[fg=#8FA6CC]#{=/16/…:@stormlight_workspace_tail}#[fg=#55698F] › ,},}`
+	// The glint drops back to #[default] immediately: tmux attributes latch
+	// until something clears them, so a bold that stayed on would make the
+	// whole band bold and flatten the lineage into one weight.
+	baseStatusLeft = ` #[fg=#7DCFFF#,bold]✦#[default] #{?#{@stormlight_id},` +
+		agentStatusLineage + `,#[fg=#E8EEF9#,bold]#{session_name}} `
+	// status-left is the whole bar now, so its own length cap stays out of the
+	// way; what keeps it off the return hint is the render-time truncation in
+	// dynamicStatusLeft, which subtracts the hint's width from the client's.
+	baseStatusLeftLength = 400
 	dynamicStatusStyle   = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
-	dynamicStatusLeft    = `#{?client_prefix,#{E:@stormlight_status_left_prefix},#{E:@stormlight_status_left_base}}`
-	basePaneFieldCount   = 10
-	metadataFieldCount   = 20
+	dynamicStatusLeft    = `#{?client_prefix,#{E:@stormlight_status_left_prefix},` +
+		`#{T;=/#{e|-:#{client_width},#{status-right-length}}:@stormlight_status_left_base}}`
+	// Stormlight's windows are its agents, and the dashboard is where you
+	// choose between them — listing them again on every agent's status bar
+	// only pushes the lineage of the one you are actually in off the band. So
+	// the bar is left and right sections with no window list between them.
+	// status-format is a session option, which is what makes this safe: the
+	// managed session may share a server with the user's own sessions, and
+	// they keep tmux's default bar.
+	statusFormat = `#[align=left range=left #{E:status-left-style}]#[push-default]` +
+		`#{T;=/#{status-left-length}:status-left}` +
+		`#[pop-default]#[norange default]` +
+		`#[align=right range=right #{E:status-right-style}]#[push-default]` +
+		`#{T;=/#{status-right-length}:status-right}` +
+		`#[pop-default]#[norange default]`
+	basePaneFieldCount = 10
+	metadataFieldCount = 20
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -401,8 +441,8 @@ func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, ta
 		return fmt.Errorf("install tmux return binding: %w", err)
 	}
 	r.configureRootReturn(ctx)
-	if err := r.configurePrefixFeedback(ctx, sessionName); err != nil {
-		diagnostic.Logger().Warn("tmux prefix feedback unavailable", "error", err)
+	if err := r.configureStatusBar(ctx, sessionName); err != nil {
+		diagnostic.Logger().Warn("tmux status bar unavailable", "error", err)
 	}
 	if _, err := r.runner.Run(ctx, nil,
 		"set-option", "-w", "-t", windowID, returnTargetOption, target,
@@ -453,14 +493,19 @@ func (r *Runtime) configureRootReturn(ctx context.Context) {
 	}
 }
 
-func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName string) error {
+// configureStatusBar dresses the managed session's status bar: the sapphire
+// band, the agent's lineage on the left, the return hint on the right, and the
+// amber prefix state that replaces the left while the prefix is held. The
+// whole thing is versioned by one option so a session configured by an older
+// binary is re-dressed rather than left half-current.
+func (r *Runtime) configureStatusBar(ctx context.Context, sessionName string) error {
 	version, err := r.runner.Run(ctx, nil,
-		"show-options", "-qv", "-t", sessionName, prefixFeedbackOption,
+		"show-options", "-qv", "-t", sessionName, statusVersionOption,
 	)
 	if err != nil {
-		return fmt.Errorf("read prefix feedback version: %w", err)
+		return fmt.Errorf("read status bar version: %w", err)
 	}
-	if version == prefixFeedbackVersion {
+	if version == statusVersion {
 		return nil
 	}
 
@@ -472,13 +517,14 @@ func (r *Runtime) configurePrefixFeedback(ctx context.Context, sessionName strin
 		{statusLeftBaseOption, baseStatusLeft},
 		{statusStylePrefixOption, prefixStatusStyle},
 		{statusLeftPrefixOption, prefixStatusLeft},
-		{prefixFeedbackOption, prefixFeedbackVersion},
+		{statusVersionOption, statusVersion},
 		{"status-style", dynamicStatusStyle},
 		{"status-left", dynamicStatusLeft},
 		{"status-left-length", strconv.Itoa(
 			max(baseStatusLeftLength, len(prefixStatusLeft)))},
 		{"status-right", r.statusRightHint()},
 		{"status-right-length", strconv.Itoa(len(r.statusRightHint()))},
+		{"status-format[0]", statusFormat},
 	}
 	for _, option := range options {
 		if _, err := r.runner.Run(ctx, nil,
@@ -942,13 +988,18 @@ func encodeWorkspaceOptions(value workspace.Context) (map[string]string, error) 
 		metadata = base64.RawURLEncoding.EncodeToString(encoded)
 	}
 	return map[string]string{
-		"@stormlight_workspace_id":       value.ID,
-		"@stormlight_workspace_kind":     value.Kind,
-		"@stormlight_workspace_name":     value.Name,
-		"@stormlight_workspace_root":     value.Root,
-		"@stormlight_execution_root":     value.ExecutionRoot,
-		"@stormlight_component_name":     value.ComponentName,
-		"@stormlight_component_root":     value.ComponentRoot,
+		"@stormlight_workspace_id":   value.ID,
+		"@stormlight_workspace_kind": value.Kind,
+		"@stormlight_workspace_name": value.Name,
+		"@stormlight_workspace_root": value.Root,
+		"@stormlight_execution_root": value.ExecutionRoot,
+		"@stormlight_component_name": value.ComponentName,
+		"@stormlight_component_root": value.ComponentRoot,
+		// The lineage tail is derived, not stored: the status bar needs it as
+		// one value because tmux formats cannot pick between a component and
+		// a worktree basename. It is written here, alongside the fields it is
+		// derived from, so the two can never drift.
+		"@stormlight_workspace_tail":     value.Tail(),
 		"@stormlight_workspace_metadata": metadata,
 	}, nil
 }
