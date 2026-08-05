@@ -1558,7 +1558,7 @@ func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {
 		t.Fatalf("focus bar missing:\n%s", ansi.Strip(early))
 	}
 	quiet := ansi.Strip(model.renderWorkspaceRow(group, false, false, 30, false))
-	if !strings.Contains(quiet, "●1") {
+	if !strings.Contains(quiet, "● 1") {
 		t.Fatalf("active count chip missing on quiet row:\n%s", quiet)
 	}
 	if strings.HasPrefix(strings.TrimSpace(quiet), "●") {
