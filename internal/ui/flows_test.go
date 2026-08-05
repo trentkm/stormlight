@@ -453,6 +453,38 @@ func TestComposerCtrlJInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestComposerBackspaceLeavesOnlyWhenEmpty(t *testing.T) {
+	model := flowModelFixture(t, &flowBackend{})
+	updated, _ := model.updateNormal(runeKey("i"))
+	model = updated.(Model)
+	model.sendInput.SetValue("hi")
+
+	next, _ := model.updateCompose(tea.KeyMsg{Type: tea.KeyBackspace})
+	model = next.(Model)
+	if model.mode != modeCompose {
+		t.Fatalf("backspace over text left compose mode: %d", model.mode)
+	}
+	if model.sendInput.Value() != "h" {
+		t.Fatalf("backspace did not delete a rune: %q", model.sendInput.Value())
+	}
+
+	next, _ = model.updateCompose(tea.KeyMsg{Type: tea.KeyBackspace})
+	model = next.(Model)
+	if model.mode != modeCompose || model.sendInput.Value() != "" {
+		t.Fatalf("emptying the box left compose mode early: mode=%d value=%q",
+			model.mode, model.sendInput.Value())
+	}
+
+	next, _ = model.updateCompose(tea.KeyMsg{Type: tea.KeyBackspace})
+	model = next.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("backspace on an empty box stayed in mode %d", model.mode)
+	}
+	if model.sendInput.Focused() {
+		t.Fatal("reply box kept focus after leaving")
+	}
+}
+
 func TestComposerRuleAndVisibleRows(t *testing.T) {
 	if width := len([]rune(ansi.Strip(renderComposerRule(24)))); width != 24 {
 		t.Fatalf("composer rule width = %d", width)
