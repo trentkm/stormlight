@@ -13,6 +13,22 @@ import (
 	"github.com/trentkm/stormlight/internal/surface"
 )
 
+// overlayPopup is the frame every Stormlight overlay wears. A tmux popup and
+// a lipgloss modal are drawn by different things but mean the same thing to
+// whoever is looking at them, so they share a curve and the dashboard's amber
+// (theme.Waiting's dark value — tmux styles take a literal color, not an
+// adaptive one). Only the title and how much room the hosted program wants
+// vary between overlays.
+func overlayPopup(title, width string) *surface.Popup {
+	return &surface.Popup{
+		Width:       width,
+		Height:      "76%",
+		Title:       title,
+		BorderStyle: "fg=#e5c07b",
+		BorderLines: "rounded",
+	}
+}
+
 func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if m.nvimPath == "" {
 		m.err = fmt.Errorf("Neovim is not installed or not on PATH")
@@ -81,12 +97,7 @@ func taskEditorCmd(
 
 	var popup *surface.Popup
 	if current.Capabilities().Popups {
-		popup = &surface.Popup{
-			Width:       "82%",
-			Height:      "76%",
-			Title:       " Stormlight · Edit task ",
-			BorderStyle: "fg=#e5c07b",
-		}
+		popup = overlayPopup(" Stormlight · Edit task ", "82%")
 	}
 	presentation, err := current.Present(surface.Request{
 		Command: surface.Command{
@@ -189,12 +200,7 @@ func yaziPickerCmd(
 
 	var popup *surface.Popup
 	if current.Capabilities().Popups {
-		popup = &surface.Popup{
-			Width:       "78%",
-			Height:      "76%",
-			Title:       " Stormlight · Choose directory ",
-			BorderStyle: "fg=#e5c07b",
-		}
+		popup = overlayPopup(" Stormlight · Choose directory ", "78%")
 	}
 	presentation, err := current.Present(surface.Request{
 		Command: surface.Command{
