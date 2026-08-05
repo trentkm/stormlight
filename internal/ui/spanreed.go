@@ -27,19 +27,7 @@ func (m Model) renderInteraction(width, height int) string {
 			nil,
 		)
 	}
-	metaParts := []string{
-		string(managedAgent.Provider),
-		agentStateLabel(managedAgent),
-	}
-	if badge := modeBadge(managedAgent.Mode); badge != "" {
-		metaParts = append(metaParts, badge)
-	}
-	meta := interactionMeta(
-		strings.Join(metaParts, "  "),
-		agentCheckout(managedAgent),
-		shortPath(managedAgent.Cwd),
-		width,
-	)
+	meta := interactionMeta(managedAgent, width)
 	switch {
 	case managedAgent.EffectiveMark() == agent.MarkAttention:
 		meta = lipgloss.NewStyle().Foreground(colorWaiting).
@@ -149,26 +137,85 @@ func (m Model) renderInteraction(width, height int) string {
 // primary one leaves the reader unable to tell an unbadged agent from a
 // dashboard that does not know. Either way the badge is the last token to
 // yield width, and the path — which merely restates it — is the first.
-func interactionMeta(status string, checkout checkoutBadge, path string, width int) string {
-	if checkout.text == "" {
-		return mutedStyle.Render(
-			truncate(strings.TrimSpace(status+"  "+path), width),
-		)
+// A metaToken is one fact in the Spanreed's masthead. Rendering and measuring
+// are separate concerns because the styled string carries escape sequences no
+// width calculation should see.
+type metaToken struct {
+	plain    string
+	rendered string
+}
+
+func (t metaToken) width() int { return lipgloss.Width(t.plain) }
+
+// metaSeparator groups the masthead's facts into readable tokens instead of
+// letting them run together on spacing alone.
+const metaSeparator = " · "
+
+// interactionMeta is the masthead under the agent's name: what it is, what it
+// is doing, what it may do unattended, which checkout it stands in, and where
+// that is on disk. The state leads with the glyph the agent rows and the
+// header counters use for it — the Spanreed is the fourth place that
+// vocabulary appears, and the only one that used to spell the state as a bare
+// grey word. Tokens drop from the tail when the pane narrows, so the loudest
+// facts outlive the path.
+func interactionMeta(managedAgent agent.Agent, width int) string {
+	symbol, symbolStyle := statusVisual(managedAgent)
+	tokens := []metaToken{{
+		plain: symbol + " " + agentStateLabel(managedAgent),
+		rendered: symbolStyle.Render(symbol) + " " +
+			mutedStyle.Render(agentStateLabel(managedAgent)),
+	}}
+	if provider := string(managedAgent.Provider); provider != "" {
+		tokens = append(tokens, metaToken{provider, mutedStyle.Render(provider)})
 	}
-	rendered := mutedStyle.Render(truncate(status, width))
-	badge := truncate(
-		checkout.text,
-		max(0, width-lipgloss.Width(rendered)-2),
-	)
-	if badge == "" {
-		return rendered
+	if badge := modeBadge(managedAgent.Mode); badge != "" {
+		// AUTO is the one token here that changes what happens without you.
+		// The dispatch modal has always said it in amber; saying it in grey
+		// on the screen that stays open was the inconsistency.
+		style := mutedStyle
+		if managedAgent.Mode == agent.ModeAuto {
+			style = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+		}
+		tokens = append(tokens, metaToken{badge, style.Render(badge)})
 	}
-	rendered += "  " + checkoutStyle(checkout).Render(badge)
-	remaining := width - lipgloss.Width(rendered) - 2
-	if path != "" && remaining > 0 {
-		rendered += "  " + mutedStyle.Render(truncate(path, remaining))
+	if checkout := agentCheckout(managedAgent); checkout.text != "" {
+		tokens = append(tokens, metaToken{
+			checkout.text,
+			checkoutStyle(checkout).Render(checkout.text),
+		})
 	}
-	return rendered
+	if path := shortPath(managedAgent.Cwd); path != "" {
+		tokens = append(tokens, metaToken{path, mutedStyle.Render(path)})
+	}
+	return joinMetaTokens(tokens, width)
+}
+
+func joinMetaTokens(tokens []metaToken, width int) string {
+	separator := lipgloss.Width(metaSeparator)
+	total := 0
+	kept := 0
+	for _, token := range tokens {
+		cost := token.width()
+		if kept > 0 {
+			cost += separator
+		}
+		if total+cost > width {
+			break
+		}
+		total += cost
+		kept++
+	}
+	if kept == 0 {
+		if len(tokens) == 0 {
+			return ""
+		}
+		return truncate(tokens[0].plain, width)
+	}
+	parts := make([]string, 0, kept)
+	for _, token := range tokens[:kept] {
+		parts = append(parts, token.rendered)
+	}
+	return strings.Join(parts, mutedStyle.Render(metaSeparator))
 }
 
 // checkoutStyle picks the badge's color. A linked worktree is the tree worth
