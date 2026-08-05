@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -75,9 +76,18 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // terminal→tmux→pane to hold, and it silently submits instead of inserting
 // a newline anywhere it doesn't. Ctrl+j works everywhere.
 func (m Model) insertComposerNewline() (tea.Model, tea.Cmd) {
-	m.sendInput.InsertString("\n")
+	insertTextareaNewline(&m.sendInput)
 	m.syncComposerSize()
 	return m, nil
+}
+
+// insertTextareaNewline breaks the line under the cursor. The newline is
+// handed to the textarea as the Enter it binds internally rather than
+// written in behind its back: only its own Update repositions the scroll
+// viewport, so an inserted rune leaves the view a row behind the cursor
+// until the next keystroke drags it along.
+func insertTextareaNewline(input *textarea.Model) {
+	*input, _ = input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 }
 
 // syncComposerSize keeps the persisted reply textarea sized to the Spanreed
@@ -94,20 +104,25 @@ func (m *Model) syncComposerSize() {
 	height := composerHeight(m.sendInput.Value(), inner)
 	m.sendInput.SetHeight(height)
 	if height > previous {
-		// The keystroke that grew the content was processed while the box
-		// was still one row short, which scrolled the textarea's viewport —
-		// and nothing scrolls it back once the box catches up (its
-		// repositioning only ever chases the cursor). Rebuilding the value
-		// resets the scroll; the cursor is put back where it was.
-		row := m.sendInput.Line()
-		info := m.sendInput.LineInfo()
-		column := info.StartColumn + info.ColumnOffset
-		m.sendInput.SetValue(m.sendInput.Value())
-		for m.sendInput.Line() > row {
-			m.sendInput.CursorUp()
-		}
-		m.sendInput.SetCursor(column)
+		resetTextareaScroll(&m.sendInput)
 	}
+}
+
+// resetTextareaScroll clears a scroll offset a grown box no longer needs.
+// The keystroke that grew the content was processed while the box was still
+// a row short, which scrolled the textarea's viewport — and nothing scrolls
+// it back once the box catches up, since its repositioning only ever chases
+// the cursor. Rebuilding the value resets the scroll; the cursor is put back
+// where it was.
+func resetTextareaScroll(input *textarea.Model) {
+	row := input.Line()
+	info := input.LineInfo()
+	column := info.StartColumn + info.ColumnOffset
+	input.SetValue(input.Value())
+	for input.Line() > row {
+		input.CursorUp()
+	}
+	input.SetCursor(column)
 }
 
 // insertComposerToken inserts text into the reply at the cursor, padded

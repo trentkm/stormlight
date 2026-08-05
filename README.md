@@ -198,8 +198,10 @@ Pressing `n` in Agents or Spanreed inherits the current workspace context.
 The centered form contains a vertical `Coding agent` picker, an optional name,
 and a wrapping task composer. Use `j` / `k` to choose Codex, Claude, or another
 configured coding agent, then press `Enter` to compose and `Enter` again to
-launch. Shell remains available through `stormlight dispatch --provider shell`,
-but is not presented as a conversational coding agent.
+launch. Since `Enter` launches, `Ctrl-j` is what breaks a line inside the task
+composer — the same key the Spanreed reply box uses. Shell remains available
+through `stormlight dispatch --provider shell`, but is not presented as a
+conversational coding agent.
 
 `Tab` reaches the name field, which `Enter` on the picker skips past. Leave it
 empty and the agent is named after its task; fill it in and that name is what

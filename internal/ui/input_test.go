@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -465,6 +466,126 @@ func TestDispatchWithoutANameLaunchesUnnamed(t *testing.T) {
 	}
 	if backend.request.Name != "" {
 		t.Fatalf("unnamed dispatch carried name %q", backend.request.Name)
+	}
+}
+
+// dispatchTaskFixture opens the new-agent form on a terminal of the given
+// size with the cursor in the task box.
+func dispatchTaskFixture(t *testing.T, width, height int) Model {
+	t.Helper()
+	backend := &recordingBackend{
+		providers: []provider.Info{
+			{ID: agent.ProviderCodex, Label: "Codex", Available: true},
+			{ID: agent.ProviderClaude, Label: "Claude", Available: true},
+		},
+	}
+	model := NewModel(backend)
+	model.yaziPath = "/opt/homebrew/bin/yazi"
+	sized, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	model = sized.(Model)
+	opened, _ := model.beginDispatch(true)
+	model = opened.(Model)
+	model.formFocus = dispatchTask
+	model.focusForm()
+	return model
+}
+
+// taskComposerRows returns the rows the task box draws, border stripped.
+func taskComposerRows(t *testing.T, model Model) []string {
+	t.Helper()
+	width, height := model.dispatchContentDimensions()
+	layout := model.dispatchLayout(width, height)
+	box := strings.Split(
+		ansi.Strip(model.renderTaskComposer(max(1, width-4), layout.taskHeight)),
+		"\n",
+	)
+	if len(box) != layout.taskHeight+2 {
+		t.Fatalf("box drew %d rows, want %d plus its border:\n%s",
+			len(box), layout.taskHeight, strings.Join(box, "\n"))
+	}
+	return box[1 : len(box)-1]
+}
+
+// typeTask types into the task box the way the event loop does, drawing
+// after every key — the textarea scrolls against what was last drawn.
+func typeTask(t *testing.T, model Model, keys ...tea.KeyMsg) Model {
+	t.Helper()
+	for _, key := range keys {
+		updated, _ := model.updateDispatch(key)
+		model = updated.(Model)
+		model.View()
+	}
+	return model
+}
+
+// Enter launches the agent, so the task box needs its own newline key.
+func TestDispatchTaskCtrlJInsertsNewline(t *testing.T) {
+	model := dispatchTaskFixture(t, 120, 40)
+	model = typeTask(t, model,
+		runeKey("first"),
+		tea.KeyMsg{Type: tea.KeyCtrlJ},
+		runeKey("second"),
+	)
+	if got := model.taskInput.Value(); got != "first\nsecond" {
+		t.Fatalf("task = %q, want both lines", got)
+	}
+	if rows := taskComposerRows(t, model); !strings.Contains(rows[0], "first") ||
+		!strings.Contains(rows[1], "second") {
+		t.Fatalf("the box does not show both lines:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
+// Typing past the bottom of the box must keep the cursor's line in view.
+// The textarea wraps and scrolls against its own width and height, so a
+// persisted size that disagrees with the drawn box parks the scroll above
+// what is being typed and nothing brings it back.
+func TestDispatchTaskComposerKeepsTypingInView(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {100, 30}, {160, 50}} {
+		model := dispatchTaskFixture(t, size[0], size[1])
+		for index := range 40 {
+			model = typeTask(t, model, runeKey(fmt.Sprintf("word%02d ", index)))
+		}
+		rows := taskComposerRows(t, model)
+		if !strings.Contains(strings.Join(rows, " "), "word39") {
+			t.Fatalf("%dx%d: the last word typed is out of view:\n%s",
+				size[0], size[1], strings.Join(rows, "\n"))
+		}
+		if strings.TrimSpace(rows[0]) == "" {
+			t.Fatalf("%dx%d: the box opens on a blank row:\n%s",
+				size[0], size[1], strings.Join(rows, "\n"))
+		}
+	}
+}
+
+// The form's rows are a fixed budget: the composer takes what is left, and
+// the hint line below it is the first thing a miscount pushes off the
+// bottom of the modal. The path picker is the case that miscounted — it
+// arrives as a block of rows rather than as one line.
+func TestDispatchFormFitsItsModal(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {100, 30}, {120, 34}, {160, 50}} {
+		for _, picker := range []bool{false, true} {
+			// A 24-row terminal cannot hold the picker and the form both;
+			// every other combination has to fit whole.
+			if picker && size[1] < 30 {
+				continue
+			}
+			model := dispatchTaskFixture(t, size[0], size[1])
+			if picker {
+				selectCustomDirectory(t, &model)
+				model.startPathNav()
+			}
+			model = typeTask(t, model, runeKey(strings.Repeat("task ", 40)))
+			modal := ansi.Strip(model.renderDispatchModal(model.bodyDimensions()))
+			if !strings.Contains(modal, "Esc cancel") {
+				t.Fatalf("%dx%d picker=%v: the hint line was clipped:\n%s",
+					size[0], size[1], picker, modal)
+			}
+			if !strings.Contains(modal, "task task") {
+				t.Fatalf("%dx%d picker=%v: the task box was clipped:\n%s",
+					size[0], size[1], picker, modal)
+			}
+			assertViewFitsPane(t, model, size[0]-1, size[1]-1)
+		}
 	}
 }
 
@@ -934,6 +1055,8 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 	}}
 	model.rebuildGroups(workspaceContext.ID, "feature-agent")
 	model.activePane = paneAgents
+	sized, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = sized.(Model)
 
 	updated, _ := model.updateNormal(runeKey("n"))
 	model = updated.(Model)
@@ -949,7 +1072,7 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 	if got := model.cwdInput.Value(); got != executionRoot {
 		t.Fatalf("working directory = %q", got)
 	}
-	rendered := ansi.Strip(model.renderDispatch(80))
+	rendered := ansi.Strip(model.renderDispatchModal(model.bodyDimensions()))
 	if !strings.Contains(rendered, "Coding agent") ||
 		!strings.Contains(rendered, "Task") ||
 		strings.Contains(rendered, "Working directory") ||
@@ -957,10 +1080,15 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 		t.Fatalf("unexpected contextual new-agent form:\n%s", rendered)
 	}
 
-	updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
+	for range len(model.dispatchFocusOrder()) {
+		if model.formFocus == dispatchTask {
+			break
+		}
+		updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+		model = updated.(Model)
+	}
 	if model.formFocus != dispatchTask {
-		t.Fatalf("Enter from coding agent focused %v, want input", model.formFocus)
+		t.Fatalf("Enter never reached the task field: %v", model.formFocus)
 	}
 	model.taskInput.SetValue("review this workspace")
 	updated, cmd := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
