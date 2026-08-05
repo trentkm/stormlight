@@ -156,6 +156,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"o", "new agent with directory picker"},
 			{"i / s", "write a reply in Spanreed"},
 			{"Ctrl-j", "newline in a reply or task"},
+			{"Backspace", "leave the reply box once it is empty"},
 			{"/ then n/N", "search the Spanreed transcript"},
 			{"drag", "select transcript lines; release copies"},
 			{"Ctrl-v", "paste clipboard image into the reply"},
