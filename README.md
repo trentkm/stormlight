@@ -35,12 +35,15 @@ preserving the checkout or worktree each agent is using.
 An outside-tmux launch transparently hosts the dashboard in a temporary
 session on the Stormlight server; a launch from inside your own tmux uses the
 current pane directly and reaches agents through a nested client. Selecting an
-agent switches to its window. Press the tmux prefix followed by `Q` to return
-to the dashboard. Stormlight installs this binding only when `Q` is unbound or
-already owned by Stormlight. While the prefix is active, the managed session
-highlights the tmux status bar and shows `Q` for return and `?` for the full
-tmux key list. Closing the dashboard removes only its temporary session;
-agents keep running on the Stormlight server.
+agent switches to its window, and that window's status bar names where you
+are — `workspace › worktree › agent` — rather than listing the session's other
+agents, which the dashboard is already for. A narrow terminal drops the outer
+segments first; the agent's own name always stays. Press the tmux prefix
+followed by `Q` to return to the dashboard. Stormlight installs this binding
+only when `Q` is unbound or already owned by Stormlight. While the prefix is
+active, the managed session highlights the tmux status bar and shows `Q` for
+return and `?` for the full tmux key list. Closing the dashboard removes only
+its temporary session; agents keep running on the Stormlight server.
 
 ## Requirements
 
