@@ -136,15 +136,12 @@ func (m Model) renderWorkspaceRow(
 		nameNeed,
 	)
 	suffix := chipsPlain(chips)
-	// The left column is the selection's alone now that the counts carry
-	// state. It used to show whichever state glyph outranked the others,
-	// which said the same thing as the cluster on the right and cost the
-	// name a column to say it twice.
-	indicator := " "
-	if selected && !focused {
-		indicator = "›"
-	}
-	gutter := indicator + " "
+	// Nothing marks this column. A selected-but-unfocused workspace is
+	// already named by the row that stays at full strength while its
+	// neighbours dim, and by the connector arc pointing out of it — an arrow
+	// saying it a third time is texture, not information. The two columns
+	// remain so quiet rows line up with the focused row's marker.
+	gutter := "  "
 	nameWidth := max(
 		1,
 		contentWidth-lipgloss.Width(gutter)-lipgloss.Width(suffix)-1,
@@ -180,7 +177,6 @@ func (m Model) renderWorkspaceRow(
 		)
 	}
 
-	indicatorStyle := lipgloss.NewStyle().Foreground(colorBorder)
 	renderedName := titleStyle.Render(name)
 	switch {
 	case tier == tierUrgent:
@@ -193,7 +189,7 @@ func (m Model) renderWorkspaceRow(
 	case active > 0:
 		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
-	top := indicatorStyle.Render(gutter) +
+	top := gutter +
 		renderedName +
 		strings.Repeat(" ", gap) +
 		chipsStyled(chips)

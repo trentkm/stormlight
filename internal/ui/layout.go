@@ -122,22 +122,25 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 
 	dimWorkspaces, dimAgents, dimInteraction := m.paneDimmings(contentHeight)
 
-	// Nothing rules between Workspaces and Agents. They are two views of one
-	// hierarchy — the columns of a file explorer — and explorers separate
-	// their columns with air, not lines. Dropping that hairline leaves the
-	// plane seam as the only rule in the body, which is the whole point of
-	// it, and gives the hierarchy connector room to read as a connection
-	// instead of a mark alongside a rule it was competing with.
+	// A hairline divides Workspaces from Agents, with air on both sides of
+	// it — the treatment yazi gives its miller columns, and the reason two
+	// adjacent scrolling lists read as columns rather than as a grid. The
+	// rule was never the problem; a rule pressed flush against both lists
+	// was. It stays subordinate to the plane seam by every means available:
+	// light where that one is heavy, and painted in the header band's own
+	// faded gradient where that one takes the accent.
 	workspaces := m.renderPane(
 		"Workspaces",
 		"",
-		// Two columns of slack past the margin: one blank, then the
-		// connector in the block's last column, reaching for the agents.
-		m.renderWorkspaces(max(1, workspaceWidth-3), listHeight),
+		// Past the margin: a blank column, the connector, another blank,
+		// then the rule. The arc reaches for the agents without crowding
+		// the divider, and the divider keeps air on both sides.
+		m.renderWorkspaces(max(1, workspaceWidth-5), listHeight),
 		paneFrame{
 			width:   workspaceWidth,
 			height:  contentHeight,
 			active:  m.activePane == paneWorkspaces,
+			edges:   paneEdges{right: seamColumn},
 			band:    headerBand{start: 0, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
@@ -153,7 +156,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	}
 	agents := m.renderPane(
 		"Agents",
-		m.selectedWorkspaceLabel(),
+		"",
 		m.renderAgents(max(1, agentWidth-2), listHeight),
 		paneFrame{
 			width:   agentWidth,
@@ -184,8 +187,10 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	)
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		workspaces,
-		capSeam(agents, agentWidth, seamPlane),
+		capSeam(workspaces, workspaceWidth, seamColumn,
+			headerBand{start: 0, total: width}),
+		capSeam(agents, agentWidth, seamPlane,
+			headerBand{start: workspaceWidth, total: width}),
 		interaction,
 	)
 }
@@ -194,7 +199,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 // from the header band instead of colliding with it. The band is drawn as an
 // underline along the bottom of the header row, which is exactly where these
 // glyphs begin — the seam reads as descending out of the frame.
-func capSeam(paneContent string, width int, seam paneSeam) string {
+func capSeam(paneContent string, width int, seam paneSeam, band headerBand) string {
 	if seam == seamNone || width < 1 {
 		return paneContent
 	}
@@ -211,7 +216,7 @@ func capSeam(paneContent string, width int, seam paneSeam) string {
 		width,
 		width-1,
 		glyph,
-		lipgloss.NewStyle().Foreground(seam.foreground()),
+		lipgloss.NewStyle().Foreground(seamColor(seam, band, width)),
 	)
 	return strings.Join(lines, "\n")
 }
@@ -297,9 +302,9 @@ func paintHierarchyConnector(
 		return paneContent
 	}
 
-	// The connector lives in the workspaces block's last column — the air
-	// where a rule used to be — so the gold arc reaches toward the agent it
-	// names, spanning exactly its two endpoint rows with rounded caps.
+	// The connector lives in the column just inside the rule, so the arc
+	// reaches toward the agent it names without crowding the divider,
+	// spanning exactly its two endpoint rows with rounded caps.
 	style := lipgloss.NewStyle().Foreground(colorWaiting)
 	first := min(workspaceRow, agentRow)
 	last := max(workspaceRow, agentRow)
@@ -320,7 +325,7 @@ func paintHierarchyConnector(
 		lines[row] = replaceStyledCell(
 			lines[row],
 			width,
-			width-1,
+			width-3,
 			glyph,
 			style,
 		)
@@ -626,14 +631,18 @@ func (s paneSeam) border() lipgloss.Border {
 	return border
 }
 
-// foreground colors the rule. A column seam is furniture and stays the
-// border grey; a plane seam takes the accent, so the one line that divides
-// browsing from driving is also the one line on screen that isn't furniture.
-func (s paneSeam) foreground() lipgloss.TerminalColor {
-	if s == seamPlane {
+// seamColor paints a rule. A plane seam takes the accent, so the one line
+// that divides browsing from driving is the one line on screen that isn't
+// furniture. A column seam takes the header band's color at the column it
+// hangs from — the catalog's divider is made of the same faded gradient as
+// the frame it descends out of, which subordinates it to the accent seam by
+// material as well as by weight.
+func seamColor(seam paneSeam, band headerBand, width int) lipgloss.TerminalColor {
+	if seam == seamPlane || band.total <= 1 {
 		return colorAccent
 	}
-	return colorBorder
+	column := clamp(band.start+width-1, 0, band.total-1)
+	return bandColor(float64(column)/float64(band.total-1), false)
 }
 
 // paneEdges describes both sides of a pane's frame. A plane seam is drawn in
@@ -689,7 +698,7 @@ func (m Model) renderPane(
 		style = style.Width(innerWidth).
 			BorderStyle(edges.right.border()).
 			BorderRight(true).
-			BorderForeground(edges.right.foreground())
+			BorderForeground(seamColor(edges.right, frame.band, width))
 	}
 	// The gutter is the far half of a plane seam, so it comes out of this
 	// pane's own columns: the header rule and every body row start one cell
@@ -797,37 +806,41 @@ func renderPaneHeader(
 	active bool,
 	band headerBand,
 ) string {
-	underlined := func(style lipgloss.Style) lipgloss.Style {
-		return style.Underline(true)
-	}
 	// A run of band, positioned by how far into this pane it starts.
 	fill := func(offset, count int) string {
 		return renderBandRun(
 			" ", band.start+offset, max(0, count), band.total, active, true)
 	}
 
-	left := underlined(mutedStyle.Copy().Bold(true)).
-		Render(truncate(" "+label, width))
+	// Labels interrupt the band; they do not sit on it. A rule running under
+	// the words is the construction of a table header — and it was breaking
+	// the band's gradient besides, since an underline takes the color of the
+	// text above it. lazygit sets its titles into the rule the same way.
+	// Each label is followed by a blank the band skips, so the line resumes
+	// clear of the descenders.
+	labelStyle := mutedStyle.Copy().Bold(true)
 	if active {
-		left = underlined(titleStyle.Copy()).
-			Render(truncate(" "+label, width))
+		labelStyle = titleStyle.Copy()
 	}
+	// The padding sits outside truncate, which collapses whitespace runs and
+	// would otherwise eat it.
+	left := labelStyle.Render(" " + truncate(label, max(1, width-2)) + " ")
 	leftWidth := lipgloss.Width(left)
 
-	remaining := width - leftWidth - 2
+	remaining := width - leftWidth - 4
 	if strings.TrimSpace(contextLabel) == "" || remaining < 4 {
 		return left + fill(leftWidth, width-leftWidth)
 	}
 
-	rightStyle := underlined(mutedStyle.Copy())
+	rightStyle := mutedStyle.Copy()
 	if strings.ContainsAny(contextLabel, "‹›") {
-		rightStyle = underlined(accentStyle.Copy())
+		rightStyle = accentStyle.Copy()
 	}
-	right := rightStyle.Render(truncate(contextLabel, remaining))
+	right := rightStyle.Render(" " + truncate(contextLabel, remaining) + " ")
 	rightWidth := lipgloss.Width(right)
 	// One column of band survives past the context label, so it never ends
 	// flush against the seam it sits beside.
-	gap := max(2, width-leftWidth-rightWidth-1)
+	gap := max(1, width-leftWidth-rightWidth-1)
 	tail := max(0, width-leftWidth-gap-rightWidth)
 	return left + fill(leftWidth, gap) + right +
 		fill(leftWidth+gap+rightWidth, tail)

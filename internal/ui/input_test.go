@@ -761,10 +761,11 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	assertViewFitsPane(t, model, 119, 29)
 }
 
-// One rule crosses the dashboard body, and it is the one that matters: the
-// heavy seam between the catalog and the Spanreed, capped under the header
-// band and trailed by a column of air. The catalog's own columns are divided
-// by nothing at all.
+// The dashboard's two seams divide different kinds of thing, so they are not
+// drawn alike: a hairline in the header band's own faded gradient splits the
+// catalog's columns, while a heavy accent rule trailed by a column of air
+// splits the whole catalog from the Spanreed. Both hang from caps under the
+// band, and both keep air on either side.
 func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 120
@@ -784,34 +785,35 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	if header < 0 {
 		t.Fatalf("pane header row not found:\n%s", body)
 	}
-	// The header row carries the seam's cap, not the seam: a half-stroke
-	// that begins at the band and descends out of it.
+	// The header row carries the seams' caps, not the seams: half-strokes
+	// that begin at the band and descend out of it.
+	hairline := strings.Index(lines[header], "╷")
 	plane := strings.Index(lines[header], "╻")
-	if plane < 0 {
-		t.Fatalf("plane seam is not capped under the band: %q", lines[header])
+	if hairline < 0 || plane < 0 || plane < hairline {
+		t.Fatalf("seams are not capped under the band: %q", lines[header])
 	}
-	if strings.ContainsAny(lines[header], "│┃╷") {
+	if strings.ContainsAny(lines[header], "│┃") {
 		t.Fatalf("uncapped seam collides with the header band: %q", lines[header])
 	}
 
 	firstRow := lines[header+1]
-	if strings.Index(firstRow, "┃") != plane {
-		t.Fatalf("seam does not hang from its cap:\n%q\n%q",
+	if strings.Index(firstRow, "│") != hairline ||
+		strings.Index(firstRow, "┃") != plane {
+		t.Fatalf("seams do not hang from their caps:\n%q\n%q",
 			lines[header], firstRow)
 	}
 
 	for _, line := range lines[header+1:] {
-		if strings.Contains(line, "│") {
-			t.Fatalf("a rule still divides the catalog's columns: %q", line)
-		}
 		runes := []rune(line)
-		column := -1
-		for index, glyph := range runes {
-			if glyph == '┃' {
-				column = index
-				break
+		if column := runeIndex(runes, '│'); column >= 0 {
+			if column+1 < len(runes) && runes[column+1] != ' ' {
+				t.Fatalf("catalog rule has no air behind it: %q", line)
+			}
+			if column > 0 && runes[column-1] != ' ' {
+				t.Fatalf("catalog rule has no air before it: %q", line)
 			}
 		}
+		column := runeIndex(runes, '┃')
 		if column < 0 {
 			t.Fatalf("body row has no plane seam: %q", line)
 		}
@@ -821,7 +823,12 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	}
 }
 
-func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
+// The wide layout already says which workspace is selected four ways — the ›
+// marker, the undimmed row, the connector arc, and the agent list's contents —
+// so the header does not spell it out a fifth time. The narrow layout shows
+// one pane at a time, where none of those four are on screen, and there the
+// context label is the only thing naming the workspace.
+func TestAgentPaneHeaderNamesWorkspaceOnlyWhenNarrow(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace/meshclaw")
 	model := NewModel(stubBackend{})
 	model.width = 120
@@ -831,10 +838,18 @@ func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
 	model.rebuildGroups(workspaceContext.ID, "")
 
 	header := strings.Split(ansi.Strip(model.renderBody()), "\n")[0]
-	if !strings.Contains(header, "Agents") ||
-		!strings.Contains(header, "meshclaw") ||
-		strings.Index(header, "meshclaw") < strings.Index(header, "Agents") {
-		t.Fatalf("agent header lacks right-aligned workspace context: %q", header)
+	if !strings.Contains(header, "Agents") {
+		t.Fatalf("agent header is missing its label: %q", header)
+	}
+	if strings.Contains(header, "meshclaw") {
+		t.Fatalf("wide agent header repeats the workspace: %q", header)
+	}
+
+	model.width = 60
+	narrow := strings.Split(ansi.Strip(model.renderBody()), "\n")[0]
+	if !strings.Contains(narrow, "meshclaw") ||
+		strings.Index(narrow, "meshclaw") < strings.Index(narrow, "Agents") {
+		t.Fatalf("narrow agent header lacks its workspace context: %q", narrow)
 	}
 
 	rendered := ansi.Strip(renderPaneHeader("Agents", "a-very-long-workspace-name", 24, true, headerBand{total: 24}))
@@ -846,8 +861,10 @@ func TestAgentPaneHeaderShowsSelectedWorkspace(t *testing.T) {
 func TestPaneHeaderKeepsLabelAlignmentAcrossFocusStates(t *testing.T) {
 	active := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true, headerBand{total: 24}))
 	inactive := ansi.Strip(renderPaneHeader("Workspaces", "", 24, false, headerBand{total: 24}))
-	if !strings.HasPrefix(active, "Workspaces") ||
-		!strings.HasPrefix(inactive, "Workspaces") {
+	// The label is set into the band with a column of padding on each side,
+	// and that padding must not move when focus does.
+	if !strings.HasPrefix(active, " Workspaces ") ||
+		!strings.HasPrefix(inactive, " Workspaces ") {
 		t.Fatalf("labels shifted between focus states:\nactive:   %q\ninactive: %q",
 			active, inactive)
 	}
@@ -1661,17 +1678,17 @@ func TestSortChordChangesMode(t *testing.T) {
 
 func TestHierarchyConnectorBridgesDifferentRows(t *testing.T) {
 	pane := strings.Join([]string{
-		"header  ",
-		"one     ",
-		"two     ",
-		"three   ",
+		"header │",
+		"one    │",
+		"two    │",
+		"three  │",
 	}, "\n")
 	rendered := ansi.Strip(paintHierarchyConnector(pane, 8, 1, 3))
 	lines := strings.Split(rendered, "\n")
-	if !strings.HasSuffix(lines[0], "  ") ||
-		!strings.HasSuffix(lines[1], " ╮") ||
-		!strings.HasSuffix(lines[2], " │") ||
-		!strings.HasSuffix(lines[3], " ╰") {
+	if lines[0] != "header │" ||
+		!strings.HasSuffix(lines[1], "╮ │") ||
+		!strings.HasSuffix(lines[2], "│ │") ||
+		!strings.HasSuffix(lines[3], "╰ │") {
 		t.Fatalf("hierarchy path is incomplete:\n%s", rendered)
 	}
 	for index, line := range lines {
@@ -1696,15 +1713,26 @@ func TestHierarchyKeepsParentRowsSelected(t *testing.T) {
 
 	workspaces := ansi.Strip(model.renderWorkspaces(30, 12))
 	agents := ansi.Strip(model.renderAgents(40, 12))
-	if !strings.Contains(workspaces, "›") ||
-		!strings.Contains(agents, "›") ||
-		strings.Contains(workspaces, "▌") ||
-		strings.Contains(agents, "▌") {
+	// The focus bar belongs to the pane holding the cursor, and the cursor is
+	// in the Spanreed, so neither list claims it.
+	if strings.Contains(workspaces, "▌") || strings.Contains(agents, "▌") {
 		t.Fatalf(
-			"hierarchy selection is unclear:\nworkspaces:\n%s\nagents:\n%s",
+			"a list claimed the focus bar it does not hold:\nworkspaces:\n%s\nagents:\n%s",
 			workspaces,
 			agents,
 		)
+	}
+	if !strings.Contains(agents, "›") {
+		t.Fatalf("selected agent is unmarked:\n%s", agents)
+	}
+	// The workspace row marks nothing: the pane keeps it undimmed while its
+	// neighbours recede, which is signal enough without an arrow.
+	if strings.Contains(workspaces, "›") {
+		t.Fatalf("workspace row still carries a selection arrow:\n%s", workspaces)
+	}
+	lit := model.selectedRowRange(len(model.groups), model.workspaceCursor, 11)
+	if lit.count == 0 {
+		t.Fatalf("no workspace row is held at full strength to mark selection")
 	}
 }
 
@@ -2053,57 +2081,64 @@ func TestCheckoutBadgeColors(t *testing.T) {
 }
 
 // A narrow pane drops the path before the badge: the path restates the
-// checkout, the badge is the only token that names it.
+// checkout, the badge is the only token that names it. Tokens fall from the
+// tail, so the state and the provider outlive both.
 func TestInteractionMetaKeepsCheckoutOverPath(t *testing.T) {
+	agentIn := func(root, executionRoot string) agent.Agent {
+		return agent.Agent{
+			Provider:    agent.ProviderClaude,
+			Activity:    agent.ActivityWorking,
+			ProcessLive: true,
+			Cwd:         "~/repos/stormlight",
+			Workspace: workspace.Context{
+				ID:            "w",
+				Name:          "stormlight",
+				Kind:          workspace.KindGit,
+				Root:          root,
+				ExecutionRoot: executionRoot,
+			},
+		}
+	}
 	for _, testCase := range []struct {
-		name    string
-		badge   checkoutBadge
-		path    string
-		narrow  int
-		keeps   string
-		dropped string
+		name   string
+		agent  agent.Agent
+		narrow int
+		keeps  string
 	}{
 		{
-			name:    "linked worktree",
-			badge:   checkoutBadge{text: "worktree fix-auth"},
-			path:    "~/repo/.claude/worktrees/fix-auth",
-			narrow:  34,
-			keeps:   "worktree fix-auth",
-			dropped: "~/repo",
+			name:   "linked worktree",
+			agent:  agentIn("/repo", "/repo/.claude/worktrees/fix-auth"),
+			narrow: 40,
+			keeps:  "worktree fix-auth",
 		},
 		{
-			name:    "primary checkout",
-			badge:   checkoutBadge{text: "main checkout", primary: true},
-			path:    "~/repos/stormlight",
-			narrow:  32,
-			keeps:   "main checkout",
-			dropped: "~/repos",
+			name:   "primary checkout",
+			agent:  agentIn("/repo", "/repo"),
+			narrow: 36,
+			keeps:  "main checkout",
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			wide := ansi.Strip(interactionMeta(
-				"claude  working", testCase.badge, testCase.path, 80,
-			))
+			wide := ansi.Strip(interactionMeta(testCase.agent, 90))
 			if !strings.Contains(wide, testCase.keeps) ||
-				!strings.Contains(wide, testCase.dropped) {
+				!strings.Contains(wide, "stormlight") {
 				t.Fatalf("wide meta line lost a token: %q", wide)
 			}
+			if !strings.Contains(wide, "working") ||
+				!strings.Contains(wide, "claude") {
+				t.Fatalf("wide meta line lost its state or provider: %q", wide)
+			}
 
-			narrow := ansi.Strip(interactionMeta(
-				"claude  working", testCase.badge, testCase.path, testCase.narrow,
-			))
+			narrow := ansi.Strip(interactionMeta(testCase.agent, testCase.narrow))
 			if !strings.Contains(narrow, testCase.keeps) {
 				t.Fatalf("narrow meta line dropped the checkout: %q", narrow)
 			}
-			if strings.Contains(narrow, testCase.dropped) {
+			if strings.Contains(narrow, "stormlight") {
 				t.Fatalf("narrow meta line kept the path: %q", narrow)
 			}
 			if width := ansi.StringWidth(narrow); width > testCase.narrow {
-				t.Fatalf(
-					"meta line overflows the pane: %d columns in %q",
-					width,
-					narrow,
-				)
+				t.Fatalf("narrow meta line is %d wide, limit %d: %q",
+					width, testCase.narrow, narrow)
 			}
 		})
 	}
@@ -2393,4 +2428,13 @@ func TestClearAttentionHotkeyClearsWholeWorkspace(t *testing.T) {
 			t.Fatalf("agent %s attention = %q", managedAgent.ID, managedAgent.Attention)
 		}
 	}
+}
+
+func runeIndex(runes []rune, want rune) int {
+	for index, glyph := range runes {
+		if glyph == want {
+			return index
+		}
+	}
+	return -1
 }
