@@ -107,6 +107,9 @@ func (s *Surface) Present(
 	if popup.BorderStyle != "" {
 		args = append(args, "-S", popup.BorderStyle)
 	}
+	if popup.BorderLines != "" {
+		args = append(args, "-b", popup.BorderLines)
+	}
 	args = append(args, request.Command.Path)
 	args = append(args, request.Command.Args...)
 	return surface.Presentation{

@@ -478,10 +478,12 @@ func (m Model) renderTaskComposer(width, height int) string {
 	input.SetWidth(innerWidth)
 	input.SetHeight(height)
 
+	// Curved, like the modal it sits inside. A square box nested in a rounded
+	// one reads as a rendering slip rather than a distinction.
 	style := lipgloss.NewStyle().
 		Width(innerWidth).
 		Height(height).
-		BorderStyle(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorBorder)
 	if m.formFocus == dispatchTask {
 		style = style.BorderForeground(colorAccent)
