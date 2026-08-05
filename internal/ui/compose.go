@@ -17,10 +17,16 @@ import (
 func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c", "ctrl+[":
-		m.mode = modeNormal
-		m.sendInput.Blur()
-		m.status = "Ready"
-		return m, nil
+		return m.closeComposer(), nil
+	case "backspace", "ctrl+h":
+		// Backspace deletes backwards until there is nothing left to
+		// delete, and then it deletes the composer: an empty reply box is
+		// the last thing standing between the cursor and the transcript.
+		// Held-down backspace therefore walks out of a reply the same way
+		// it walked into it, without the hand leaving for Esc.
+		if m.sendInput.Value() == "" {
+			return m.closeComposer(), nil
+		}
 	case "ctrl+j":
 		return m.insertComposerNewline()
 	case "ctrl+v":
@@ -69,6 +75,16 @@ func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.sendInput, cmd = m.sendInput.Update(msg)
 	m.syncComposerSize()
 	return m, cmd
+}
+
+// closeComposer leaves the reply box and hands the keyboard back to normal
+// mode. The value is left as it is: nothing that closes the composer discards
+// a draft, and re-entering with i finds the message where it was.
+func (m Model) closeComposer() Model {
+	m.mode = modeNormal
+	m.sendInput.Blur()
+	m.status = "Ready"
+	return m
 }
 
 // insertComposerNewline breaks the line under the cursor (ctrl+j).
