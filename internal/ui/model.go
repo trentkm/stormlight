@@ -328,6 +328,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.formFocus = dispatchTask
 			m.focusForm()
 		}
+		m.syncTaskComposerSize()
 		return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
 
 	case tickMsg:
@@ -486,6 +487,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.cwdInput.SetValue(msg.path)
 		m.formFocus = dispatchTask
 		m.focusForm()
+		m.syncTaskComposerSize()
 		m.status = "Directory selected"
 		return m, tea.EnableMouseCellMotion
 
@@ -499,6 +501,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.taskInput.SetValue(msg.task)
 		m.formFocus = dispatchTask
 		m.focusForm()
+		m.syncTaskComposerSize()
 		m.err = nil
 		m.status = "Task updated"
 		return m, tea.EnableMouseCellMotion

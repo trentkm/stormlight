@@ -149,12 +149,13 @@ func (m Model) commandHints() string {
 			return "name this agent  Enter " + m.nextDispatchField() +
 				"  Tab fields  Esc cancel"
 		default:
-			hints := "Enter launch"
+			// Enter launches, so the newline key has to be spelled out
+			// here — it is the one affordance in this field with nothing
+			// on screen to suggest it. The name row keeps its own label
+			// and cursor, and the line is only so wide.
+			hints := "Enter launch  Ctrl-j newline"
 			if m.nvimPath != "" {
 				hints += "  Ctrl-o Neovim"
-			}
-			if m.dispatchNameVisible() {
-				hints += "  Shift-Tab name"
 			}
 			return hints + "  Esc cancel"
 		}

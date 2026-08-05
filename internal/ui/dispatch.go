@@ -17,7 +17,22 @@ import (
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
+// updateDispatch handles a key in the new-agent form and then re-sizes the
+// task textarea. Nearly every key can change the box the composer is drawn
+// in — a keystroke rewraps it, a directory choice pushes it down the form —
+// and the textarea has to be told, so the sync wraps the key handling
+// instead of trailing every branch of it.
 func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	next, cmd := m.dispatchKey(msg)
+	updated, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	updated.syncTaskComposerSize()
+	return updated, cmd
+}
+
+func (m Model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.formFocus == dispatchDirectory {
 		switch {
@@ -64,6 +79,13 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+o":
 		if m.formFocus == dispatchTask {
 			return m.openTaskEditor()
+		}
+	case "ctrl+j":
+		// Enter launches the agent, so the task box needs its own newline
+		// key — the same one the Spanreed composer uses.
+		if m.formFocus == dispatchTask {
+			insertTextareaNewline(&m.taskInput)
+			return m, nil
 		}
 	case "h", "left":
 		if m.formFocus == dispatchProvider && len(m.providers) > 0 {
@@ -164,10 +186,10 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) dispatchModalDimensions(width, height int) (int, int) {
 	preferredWidth := 62
-	preferredHeight := 21
+	preferredHeight := 24
 	if m.chooseDispatchDirectory {
 		preferredWidth = 78
-		preferredHeight = 27
+		preferredHeight = 29
 	}
 	return modalDimensions(width, height, preferredWidth, preferredHeight)
 }
@@ -192,10 +214,6 @@ func (m Model) renderAddWorkspaceModal(width, height int) string {
 		modalWidth,
 		modalHeight,
 	)
-}
-
-func (m Model) renderAddWorkspace(width int) string {
-	return m.renderAddWorkspaceAt(width, max(12, m.height-5))
 }
 
 func (m Model) renderAddWorkspaceAt(width, height int) string {
@@ -240,26 +258,104 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderDispatch(width int) string {
-	return m.renderDispatchAt(width, max(12, m.height-5))
+// The task composer's floor and ceiling. Under three rows a wrapped task
+// stops being editable — most of what you typed is scrolled out of sight —
+// and past six the box crowds the rest of the form.
+const (
+	minTaskHeight = 3
+	maxTaskHeight = 6
+)
+
+// dispatchFormLayout is the new-agent form's shape inside a given box: the
+// rows above the task composer, how tall the composer gets, and whether the
+// roomy form survived. Drawing the form and sizing the persisted textarea
+// have to agree on all three, so both ask for a layout rather than each
+// deriving its own.
+type dispatchFormLayout struct {
+	head       []string
+	taskHeight int
+	roomy      bool
 }
 
-// roomyForm reports whether the new-agent form has height to spare. A tight
-// form drops its breathing room and the optional name row; the task
-// composer is never what gets cut.
-func roomyForm(height int) bool {
-	return height >= 15
+// dispatchLayout lays the form out at the given content box. The roomy form
+// keeps its breathing room and the optional name row, and gives them up when
+// they would starve the task composer — the composer is the field the form
+// exists to fill, so it is never what gets cut.
+func (m Model) dispatchLayout(width, height int) dispatchFormLayout {
+	roomy := dispatchFormLayout{roomy: true}
+	roomy.head = m.dispatchHeadLines(width, height, true)
+	roomy.taskHeight = dispatchTaskHeight(height, renderedRows(roomy.head), true)
+	if roomy.taskHeight >= minTaskHeight {
+		return roomy
+	}
+	tight := dispatchFormLayout{}
+	tight.head = m.dispatchHeadLines(width, height, false)
+	tight.taskHeight = dispatchTaskHeight(height, renderedRows(tight.head), false)
+	if tight.taskHeight < roomy.taskHeight {
+		return roomy
+	}
+	// A tie goes to the tight form: neither shape can give the composer its
+	// minimum, and the shorter one at least fits more of itself on screen.
+	return tight
 }
 
-// dispatchNameVisible answers the same question against the modal the
-// current terminal actually produces, so focus can skip a field that isn't
-// drawn — a cursor in an invisible input is worse than no field at all.
+// dispatchTaskHeight is what the head rows leave once the composer's border
+// and the hint row have taken their share — plus, in the roomy form, the
+// blank line that separates them.
+func dispatchTaskHeight(height, headRows int, roomy bool) int {
+	reserved := 3
+	if roomy {
+		reserved = 4
+	}
+	return clamp(height-headRows-reserved, 1, maxTaskHeight)
+}
+
+// renderedRows counts the rows a slice of form lines draws. Entries are not
+// all one row: the directory picker arrives as a block of its own, and
+// measuring the composer's share against the slice length hands it rows the
+// modal has already spent — which pushes the hint line, and then the box
+// itself, off the bottom.
+func renderedRows(lines []string) int {
+	rows := 0
+	for _, line := range lines {
+		rows += strings.Count(line, "\n") + 1
+	}
+	return rows
+}
+
+// dispatchNameVisible answers whether the modal the current terminal
+// produces draws the optional name row, so focus can skip a field that isn't
+// there — a cursor in an invisible input is worse than no field at all.
 func (m Model) dispatchNameVisible() bool {
-	_, modalHeight := m.dispatchModalDimensions(m.bodyDimensions())
-	return roomyForm(max(1, modalHeight-2))
+	return m.dispatchLayout(m.dispatchContentDimensions()).roomy
+}
+
+// dispatchContentDimensions is the modal's interior for the terminal as it
+// stands, matching what renderBody hands renderDispatchModal.
+func (m Model) dispatchContentDimensions() (int, int) {
+	modalWidth, modalHeight := m.dispatchModalDimensions(m.bodyDimensions())
+	return max(1, modalWidth-2), max(1, modalHeight-2)
 }
 
 func (m Model) renderDispatchAt(width, height int) string {
+	contentWidth := max(1, width-4)
+	layout := m.dispatchLayout(width, height)
+	lines := append(
+		layout.head,
+		indentLines(m.renderTaskComposer(contentWidth, layout.taskHeight), "  "),
+	)
+	if layout.roomy {
+		lines = append(lines, "")
+	}
+	lines = append(lines,
+		"  "+mutedStyle.Render(truncate(m.commandHints(), contentWidth)),
+	)
+	return strings.Join(lines, "\n")
+}
+
+// dispatchHeadLines renders every row above the task composer. It stops
+// there because how much room is left is the caller's question.
+func (m Model) dispatchHeadLines(width, height int, roomy bool) []string {
 	providerStyle := titleStyle
 	if m.formFocus == dispatchProvider {
 		providerStyle = accentStyle
@@ -306,7 +402,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 			customPathLines = 8
 		}
 		directoryRows := clamp(
-			height-len(lines)-customPathLines-6,
+			height-renderedRows(lines)-customPathLines-6,
 			1,
 			4,
 		)
@@ -323,7 +419,6 @@ func (m Model) renderDispatchAt(width, height int) string {
 		}
 	}
 
-	roomy := roomyForm(height)
 	if roomy {
 		lines = append(lines, "")
 	}
@@ -349,7 +444,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 	if roomy {
 		lines = append(lines, "")
 	}
-	lines = append(lines,
+	return append(lines,
 		"  "+m.renderDispatchSectionTitle(
 			taskStyle,
 			"Task",
@@ -357,13 +452,6 @@ func (m Model) renderDispatchAt(width, height int) string {
 			contentWidth,
 		),
 	)
-	taskHeight := clamp(height-len(lines)-4, 1, 6)
-	lines = append(lines,
-		indentLines(m.renderTaskComposer(contentWidth, taskHeight), "  "),
-		"",
-		"  "+mutedStyle.Render(truncate(m.commandHints(), contentWidth)),
-	)
-	return strings.Join(lines, "\n")
 }
 
 func indentLines(block, prefix string) string {
@@ -384,9 +472,8 @@ func (m Model) renderNameField(width int) string {
 }
 
 func (m Model) renderTaskComposer(width, height int) string {
-	width = max(3, width)
 	height = max(1, height)
-	innerWidth := max(1, width-2)
+	innerWidth := taskComposerWidth(width)
 	input := m.taskInput
 	input.SetWidth(innerWidth)
 	input.SetHeight(height)
@@ -400,6 +487,28 @@ func (m Model) renderTaskComposer(width, height int) string {
 		style = style.BorderForeground(colorAccent)
 	}
 	return style.Render(input.View())
+}
+
+// taskComposerWidth is the textarea's width inside the composer's border.
+func taskComposerWidth(width int) int {
+	return max(1, max(3, width)-2)
+}
+
+// syncTaskComposerSize keeps the persisted task textarea at the size the form
+// draws it. The textarea wraps and scrolls against its own width and height,
+// and that state lives on the model between keystrokes — sizing only the
+// render-time copy leaves the persisted one wrapping at its default width,
+// counting more rows than the box has, and scrolling the viewport the two
+// copies share past the top of what was typed. Nothing scrolls it back.
+func (m *Model) syncTaskComposerSize() {
+	width, height := m.dispatchContentDimensions()
+	layout := m.dispatchLayout(width, height)
+	previous := m.taskInput.Height()
+	m.taskInput.SetWidth(taskComposerWidth(max(1, width-4)))
+	m.taskInput.SetHeight(layout.taskHeight)
+	if layout.taskHeight > previous {
+		resetTextareaScroll(&m.taskInput)
+	}
 }
 
 func nextDispatchMode(mode agent.PermissionMode) agent.PermissionMode {
@@ -1026,6 +1135,7 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	m.mode = modeDispatch
 	m.dispatchPrefix = ""
 	m.focusForm()
+	m.syncTaskComposerSize()
 	m.err = nil
 	m.status = "New agent"
 	return m, nil
