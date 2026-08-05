@@ -6,6 +6,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -122,48 +123,25 @@ func (m Model) renderWorkspaceRow(
 	danger bool,
 ) string {
 	active, urgent, waiting := workspaceStats(group.agents)
-	countLabel := fmt.Sprintf("%d agents", len(group.agents))
-	if len(group.agents) == 1 {
-		countLabel = "1 agent"
-	}
-	suffixes := []string{}
-	if urgent > 0 {
-		suffixes = append(suffixes, fmt.Sprintf("%d input", urgent))
-	}
-	if waiting > 0 {
-		suffixes = append(suffixes, fmt.Sprintf("%d waiting", waiting))
-	}
-	if active > 0 {
-		suffixes = append(suffixes, fmt.Sprintf("%d active", active))
-	}
-	suffixes = append(suffixes, countLabel)
 	contentWidth := max(1, width-1)
-	minimumNameWidth := min(10, max(1, contentWidth/2))
-	maxSuffixWidth := max(
-		1,
-		contentWidth-lipgloss.Width("  ")-minimumNameWidth-1,
+	// What the name actually asks for, floored so a long one still yields
+	// ground to the chips rather than shouldering them off the row.
+	nameNeed := min(
+		lipgloss.Width(group.context.Name),
+		min(10, max(1, contentWidth/2)),
 	)
-	suffix := truncate(suffixes[len(suffixes)-1], maxSuffixWidth)
-	for _, candidate := range suffixes {
-		if lipgloss.Width(candidate) <= maxSuffixWidth {
-			suffix = candidate
-			break
-		}
-	}
-	// One indicator column: the most important glyph wins, and any state
-	// it displaces still speaks through the name styling.
-	indicator := " "
-	switch {
-	case urgent > 0:
-		indicator = "!"
-	case waiting > 0:
-		indicator = "○"
-	case active > 0:
-		indicator = "●"
-	case selected && !focused:
-		indicator = "›"
-	}
-	gutter := indicator + " "
+	chips := fitCountChips(
+		workspaceCountChips(active, urgent, waiting, len(group.agents)),
+		max(1, contentWidth-lipgloss.Width("  ")-1),
+		nameNeed,
+	)
+	suffix := chipsPlain(chips)
+	// Nothing marks this column. A selected-but-unfocused workspace is
+	// already named by the row that stays at full strength while its
+	// neighbours dim, and by the connector arc pointing out of it — an arrow
+	// saying it a third time is texture, not information. The two columns
+	// remain so quiet rows line up with the focused row's marker.
+	gutter := "  "
 	nameWidth := max(
 		1,
 		contentWidth-lipgloss.Width(gutter)-lipgloss.Width(suffix)-1,
@@ -199,40 +177,105 @@ func (m Model) renderWorkspaceRow(
 		)
 	}
 
-	indicatorStyle := mutedStyle
-	if indicator == "›" {
-		indicatorStyle = lipgloss.NewStyle().Foreground(colorBorder)
-	}
 	renderedName := titleStyle.Render(name)
-	suffixStyle := mutedStyle
 	switch {
 	case tier == tierUrgent:
-		// Urgent attention outranks the working glow: the whole row goes
-		// loud amber.
-		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
-		indicatorStyle = attentionStyle
-		renderedName = attentionStyle.Render(name)
-		suffixStyle = attentionStyle
-	case tier == tierWaiting:
-		// Soft tier: amber marker and count only; the row stays calm.
-		softStyle := lipgloss.NewStyle().Foreground(colorWaiting)
-		indicatorStyle = softStyle
-		suffixStyle = softStyle
+		// Urgent attention outranks the working glow: the name goes loud
+		// amber to match the chip already shouting on the right.
+		renderedName = lipgloss.NewStyle().
+			Foreground(colorWaiting).
+			Bold(true).
+			Render(name)
 	case active > 0:
-		indicatorStyle = lipgloss.NewStyle().
-			Foreground(colorWorking).
-			Bold(true)
 		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
-	top := indicatorStyle.Render(gutter) +
+	top := gutter +
 		renderedName +
 		strings.Repeat(" ", gap) +
-		suffixStyle.Render(suffix)
+		chipsStyled(chips)
 	bottom := mutedStyle.Render(" " + bottomContent)
 	if !m.expandedRows() {
 		return top
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+}
+
+// A countChip is one tier of a workspace's population, told in the glyph the
+// agent rows use for it. Words lived in this column once — "1 input",
+// "2 agents" — and a twenty-column pane cannot afford both a sentence and a
+// name, so every workspace read as "stormlig… 1 input". A glyph and a numeral
+// say the same thing in two columns and speak the vocabulary the header and
+// the rows already established.
+type countChip struct {
+	glyph string
+	count int
+	style lipgloss.Style
+}
+
+// workspaceCountChips orders the tiers loudest first. A workspace with
+// nothing pending reports its population instead, in the muted dot the agent
+// rows use for a state worth no alarm — including the honest "· 0".
+func workspaceCountChips(active, urgent, waiting, total int) []countChip {
+	chips := make([]countChip, 0, 3)
+	if urgent > 0 {
+		chips = append(chips, countChip{
+			"!", urgent,
+			lipgloss.NewStyle().Foreground(colorWaiting).Bold(true),
+		})
+	}
+	if waiting > 0 {
+		chips = append(chips, countChip{
+			"○", waiting, lipgloss.NewStyle().Foreground(colorWaiting),
+		})
+	}
+	if active > 0 {
+		chips = append(chips, countChip{
+			"●", active, lipgloss.NewStyle().Foreground(colorWorking),
+		})
+	}
+	if len(chips) == 0 {
+		chips = append(chips, countChip{"·", total, mutedStyle})
+	}
+	return chips
+}
+
+// fitCountChips drops the quietest tiers until the cluster and the name both
+// fit in available. The name asks for what it needs rather than a fixed
+// reservation — a nine-letter workspace should not hold a column open for a
+// twenty-letter one, which is what used to leave a three-tier row showing a
+// single chip beside four columns of nothing. The first chip always survives:
+// a narrow pane still owes you the loudest thing happening in there.
+func fitCountChips(chips []countChip, available, nameNeed int) []countChip {
+	for len(chips) > 1 &&
+		available-lipgloss.Width(chipsPlain(chips)) < nameNeed {
+		chips = chips[:len(chips)-1]
+	}
+	return chips
+}
+
+// A chip breathes: a space between the glyph and its numeral, and a wider
+// one between chips, so a cluster reads as pairs rather than a run of
+// characters. Same rhythm as the header counters.
+const chipGap = "  "
+
+func chipText(chip countChip) string {
+	return chip.glyph + " " + strconv.Itoa(chip.count)
+}
+
+func chipsPlain(chips []countChip) string {
+	parts := make([]string, 0, len(chips))
+	for _, chip := range chips {
+		parts = append(parts, chipText(chip))
+	}
+	return strings.Join(parts, chipGap)
+}
+
+func chipsStyled(chips []countChip) string {
+	parts := make([]string, 0, len(chips))
+	for _, chip := range chips {
+		parts = append(parts, chip.style.Render(chipText(chip)))
+	}
+	return strings.Join(parts, chipGap)
 }
 
 func renderSelectedWorkspaceRow(
