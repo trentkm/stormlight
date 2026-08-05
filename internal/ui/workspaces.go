@@ -124,10 +124,16 @@ func (m Model) renderWorkspaceRow(
 ) string {
 	active, urgent, waiting := workspaceStats(group.agents)
 	contentWidth := max(1, width-1)
-	minimumNameWidth := min(10, max(1, contentWidth/2))
+	// What the name actually asks for, floored so a long one still yields
+	// ground to the chips rather than shouldering them off the row.
+	nameNeed := min(
+		lipgloss.Width(group.context.Name),
+		min(10, max(1, contentWidth/2)),
+	)
 	chips := fitCountChips(
 		workspaceCountChips(active, urgent, waiting, len(group.agents)),
-		max(1, contentWidth-lipgloss.Width("  ")-minimumNameWidth-1),
+		max(1, contentWidth-lipgloss.Width("  ")-1),
+		nameNeed,
 	)
 	suffix := chipsPlain(chips)
 	// The left column is the selection's alone now that the counts carry
@@ -237,18 +243,27 @@ func workspaceCountChips(active, urgent, waiting, total int) []countChip {
 	return chips
 }
 
-// fitCountChips drops the quietest tiers until the cluster fits. The first
-// chip always survives: a narrow pane still owes you the loudest thing
-// happening in that workspace.
-func fitCountChips(chips []countChip, width int) []countChip {
-	for len(chips) > 1 && lipgloss.Width(chipsPlain(chips)) > width {
+// fitCountChips drops the quietest tiers until the cluster and the name both
+// fit in available. The name asks for what it needs rather than a fixed
+// reservation — a nine-letter workspace should not hold a column open for a
+// twenty-letter one, which is what used to leave a three-tier row showing a
+// single chip beside four columns of nothing. The first chip always survives:
+// a narrow pane still owes you the loudest thing happening in there.
+func fitCountChips(chips []countChip, available, nameNeed int) []countChip {
+	for len(chips) > 1 &&
+		available-lipgloss.Width(chipsPlain(chips)) < nameNeed {
 		chips = chips[:len(chips)-1]
 	}
 	return chips
 }
 
+// A chip breathes: a space between the glyph and its numeral, and a wider
+// one between chips, so a cluster reads as pairs rather than a run of
+// characters. Same rhythm as the header counters.
+const chipGap = "  "
+
 func chipText(chip countChip) string {
-	return chip.glyph + strconv.Itoa(chip.count)
+	return chip.glyph + " " + strconv.Itoa(chip.count)
 }
 
 func chipsPlain(chips []countChip) string {
@@ -256,7 +271,7 @@ func chipsPlain(chips []countChip) string {
 	for _, chip := range chips {
 		parts = append(parts, chipText(chip))
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, chipGap)
 }
 
 func chipsStyled(chips []countChip) string {
@@ -264,7 +279,7 @@ func chipsStyled(chips []countChip) string {
 	for _, chip := range chips {
 		parts = append(parts, chip.style.Render(chipText(chip)))
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, chipGap)
 }
 
 func renderSelectedWorkspaceRow(
