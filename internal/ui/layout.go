@@ -118,21 +118,28 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	}
 
 	workspaceWidth, agentWidth, interactionWidth := m.paneWidths(width)
+	listHeight := contentHeight - 2
 
 	dimWorkspaces, dimAgents, dimInteraction := m.paneDimmings(contentHeight)
 
+	// Nothing rules between Workspaces and Agents. They are two views of one
+	// hierarchy — the columns of a file explorer — and explorers separate
+	// their columns with air, not lines. Dropping that hairline leaves the
+	// plane seam as the only rule in the body, which is the whole point of
+	// it, and gives the hierarchy connector room to read as a connection
+	// instead of a mark alongside a rule it was competing with.
 	workspaces := m.renderPane(
 		"Workspaces",
 		"",
-		// One extra column of slack keeps row text from touching the
-		// hierarchy connector drawn in the pane's padding column.
-		m.renderWorkspaces(max(1, workspaceWidth-3), contentHeight-1),
+		// Two columns of slack past the margin: one blank, then the
+		// connector in the block's last column, reaching for the agents.
+		m.renderWorkspaces(max(1, workspaceWidth-3), listHeight),
 		paneFrame{
 			width:   workspaceWidth,
 			height:  contentHeight,
 			active:  m.activePane == paneWorkspaces,
-			edges:   paneEdges{right: seamColumn},
 			band:    headerBand{start: 0, total: width},
+			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
 		},
 	)
@@ -147,13 +154,14 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	agents := m.renderPane(
 		"Agents",
 		m.selectedWorkspaceLabel(),
-		m.renderAgents(max(1, agentWidth-2), contentHeight-1),
+		m.renderAgents(max(1, agentWidth-2), listHeight),
 		paneFrame{
 			width:   agentWidth,
 			height:  contentHeight,
 			active:  m.activePane == paneAgents,
 			edges:   paneEdges{right: seamPlane},
 			band:    headerBand{start: workspaceWidth, total: width},
+			margins: paneMargins{top: true, left: true},
 			dimming: dimAgents,
 		},
 	)
@@ -162,7 +170,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		"",
 		m.renderInteraction(
 			max(1, interactionWidth-3),
-			contentHeight-1,
+			listHeight,
 		),
 		paneFrame{
 			width:   interactionWidth,
@@ -170,12 +178,13 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			active:  m.activePane == paneInteraction,
 			edges:   paneEdges{gutter: true},
 			band:    headerBand{start: workspaceWidth + agentWidth, total: width},
+			margins: paneMargins{top: true},
 			dimming: dimInteraction,
 		},
 	)
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		capSeam(workspaces, workspaceWidth, seamColumn),
+		workspaces,
 		capSeam(agents, agentWidth, seamPlane),
 		interaction,
 	)
@@ -220,12 +229,12 @@ func (m Model) paneDimmings(contentHeight int) (
 	workspaces = paneDimming{dim: true}
 	if len(m.groups) > 0 {
 		workspaces.keep = m.selectedRowRange(
-			len(m.groups), m.workspaceCursor, contentHeight-1)
+			len(m.groups), m.workspaceCursor, contentHeight-2)
 	}
 	agents = paneDimming{dim: true}
 	if list := m.agentsForSelectedWorkspace(); len(list) > 0 {
 		agents.keep = m.selectedRowRange(
-			len(list), m.agentCursor, contentHeight-1)
+			len(list), m.agentCursor, contentHeight-2)
 	}
 	return workspaces, agents, paneDimming{}
 }
@@ -240,7 +249,7 @@ func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
 	}
 
 	expanded := m.expandedRows()
-	listHeight := contentHeight - 1
+	listHeight := contentHeight - 2
 	workspaceCapacity := listRowCapacity(listHeight, expanded)
 	workspaceStart, workspaceEnd := visibleRange(
 		len(m.groups),
@@ -264,8 +273,10 @@ func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
 	if expanded {
 		rowStep = 3
 	}
-	workspaceRow := 1 + (m.workspaceCursor-workspaceStart)*rowStep
-	agentRow := 1 + (m.agentCursor-agentStart)*rowStep
+	// Two rows of chrome above the first list row: the header band and the
+	// blank row the inset opens with.
+	workspaceRow := 2 + (m.workspaceCursor-workspaceStart)*rowStep
+	agentRow := 2 + (m.agentCursor-agentStart)*rowStep
 	return workspaceRow, agentRow, true
 }
 
@@ -286,9 +297,9 @@ func paintHierarchyConnector(
 		return paneContent
 	}
 
-	// The connector lives in the padding column between the workspace text
-	// and the pane divider, so the divider stays continuous and the gold
-	// arc spans exactly its two endpoint rows — rounded caps, no spill.
+	// The connector lives in the workspaces block's last column — the air
+	// where a rule used to be — so the gold arc reaches toward the agent it
+	// names, spanning exactly its two endpoint rows with rounded caps.
 	style := lipgloss.NewStyle().Foreground(colorWaiting)
 	first := min(workspaceRow, agentRow)
 	last := max(workspaceRow, agentRow)
@@ -309,7 +320,7 @@ func paintHierarchyConnector(
 		lines[row] = replaceStyledCell(
 			lines[row],
 			width,
-			width-2,
+			width-1,
 			glyph,
 			style,
 		)
@@ -641,6 +652,13 @@ type headerBand struct {
 	total int
 }
 
+// paneMargins is the air a pane keeps inside its own frame: a blank row
+// under the header band, and a column between the frame and the text.
+type paneMargins struct {
+	top  bool
+	left bool
+}
+
 // paneFrame is everything about a pane that isn't its text.
 type paneFrame struct {
 	width   int
@@ -648,6 +666,7 @@ type paneFrame struct {
 	active  bool
 	edges   paneEdges
 	band    headerBand
+	margins paneMargins
 	dimming paneDimming
 }
 
@@ -689,11 +708,20 @@ func (m Model) renderPane(
 	if dimming.dim {
 		content = dimPane(content, dimming.keep)
 	}
-	body := lipgloss.NewStyle().
-		Width(contentWidth).
-		MaxWidth(contentWidth).
-		Render(content)
-	return style.Render(lipgloss.JoinVertical(lipgloss.Left, header, body))
+	bodyStyle := lipgloss.NewStyle().Width(contentWidth).MaxWidth(contentWidth)
+	if frame.margins.top {
+		// Every pane opens a row below the band, so its content sits inside
+		// the frame rather than pressed against it. The blank row is
+		// prepended after dimming, which keeps the undimmed range indexed
+		// against the rows themselves.
+		content = "\n" + content
+	}
+	if frame.margins.left {
+		bodyStyle = bodyStyle.PaddingLeft(1)
+	}
+	return style.Render(
+		lipgloss.JoinVertical(lipgloss.Left, header, bodyStyle.Render(content)),
+	)
 }
 
 // dimPane lays the terminal's faint attribute over a list pane so its
@@ -797,7 +825,9 @@ func renderPaneHeader(
 	}
 	right := rightStyle.Render(truncate(contextLabel, remaining))
 	rightWidth := lipgloss.Width(right)
-	gap := max(2, width-leftWidth-rightWidth)
+	// One column of band survives past the context label, so it never ends
+	// flush against the seam it sits beside.
+	gap := max(2, width-leftWidth-rightWidth-1)
 	tail := max(0, width-leftWidth-gap-rightWidth)
 	return left + fill(leftWidth, gap) + right +
 		fill(leftWidth+gap+rightWidth, tail)
