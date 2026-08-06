@@ -266,45 +266,75 @@ const (
 	maxTaskHeight = 6
 )
 
+// dispatchDensity is how much of the form's optional furniture a given box
+// can hold. The order is the order things are given up in, and it is a
+// ladder rather than a switch because the two economies are not worth the
+// same: blank lines are decoration, the name row is a field. Spending them
+// together — as one roomy flag once did — meant the first pixel of pressure
+// cost the user a field they could no longer reach, at terminal sizes as
+// ordinary as 100x30. See #73.
+type dispatchDensity int
+
+const (
+	// densityRoomy: blank lines between sections, and the name row.
+	densityRoomy dispatchDensity = iota
+	// densitySnug: the name row, with the blank lines given back.
+	densitySnug
+	// densityTight: neither. The name is optional and the agent falls back
+	// to a name derived from its task, so this is a real if unhappy shape —
+	// but it is the last rung, not the first.
+	densityTight
+)
+
+// spaced reports whether sections are separated by blank lines.
+func (d dispatchDensity) spaced() bool { return d == densityRoomy }
+
+// showsName reports whether the optional name row is drawn — and therefore
+// whether it can hold focus at all.
+func (d dispatchDensity) showsName() bool { return d <= densitySnug }
+
 // dispatchFormLayout is the new-agent form's shape inside a given box: the
-// rows above the task composer, how tall the composer gets, and whether the
-// roomy form survived. Drawing the form and sizing the persisted textarea
+// rows above the task composer, how tall the composer gets, and how much
+// furniture survived. Drawing the form and sizing the persisted textarea
 // have to agree on all three, so both ask for a layout rather than each
 // deriving its own.
 type dispatchFormLayout struct {
 	head       []string
 	taskHeight int
-	roomy      bool
+	density    dispatchDensity
 }
 
-// dispatchLayout lays the form out at the given content box. The roomy form
-// keeps its breathing room and the optional name row, and gives them up when
-// they would starve the task composer — the composer is the field the form
-// exists to fill, so it is never what gets cut.
+// dispatchLayout lays the form out at the given content box, taking the
+// densest shape whose composer still clears its minimum. The composer is the
+// field the form exists to fill, so it is never what gets cut; everything
+// else is given up in the order dispatchDensity sets out.
 func (m Model) dispatchLayout(width, height int) dispatchFormLayout {
-	roomy := dispatchFormLayout{roomy: true}
-	roomy.head = m.dispatchHeadLines(width, height, true)
-	roomy.taskHeight = dispatchTaskHeight(height, renderedRows(roomy.head), true)
-	if roomy.taskHeight >= minTaskHeight {
-		return roomy
+	best := dispatchFormLayout{}
+	for _, density := range []dispatchDensity{densityRoomy, densitySnug, densityTight} {
+		candidate := dispatchFormLayout{density: density}
+		candidate.head = m.dispatchHeadLines(width, height, density)
+		candidate.taskHeight = dispatchTaskHeight(
+			height, renderedRows(candidate.head), density)
+		if candidate.taskHeight >= minTaskHeight {
+			return candidate
+		}
+		// Nothing clears the minimum yet. Keep whichever shape gives the
+		// composer the most, and let a tie fall to the later rung: once no
+		// shape can be edited comfortably, the sparser one at least fits
+		// more of itself on screen.
+		if candidate.taskHeight >= best.taskHeight {
+			best = candidate
+		}
 	}
-	tight := dispatchFormLayout{}
-	tight.head = m.dispatchHeadLines(width, height, false)
-	tight.taskHeight = dispatchTaskHeight(height, renderedRows(tight.head), false)
-	if tight.taskHeight < roomy.taskHeight {
-		return roomy
-	}
-	// A tie goes to the tight form: neither shape can give the composer its
-	// minimum, and the shorter one at least fits more of itself on screen.
-	return tight
+	return best
 }
 
 // dispatchTaskHeight is what the head rows leave once the composer's border
-// and the hint row have taken their share — plus, in the roomy form, the
-// blank line that separates them.
-func dispatchTaskHeight(height, headRows int, roomy bool) int {
+// and the hint row have taken their share — plus, where the form is spaced,
+// the blank line that separates them.
+func dispatchTaskHeight(height, headRows int, density dispatchDensity) int {
 	reserved := 3
-	if roomy {
+	if density.spaced() {
 		reserved = 4
 	}
 	return clamp(height-headRows-reserved, 1, maxTaskHeight)
@@ -327,7 +357,7 @@ func renderedRows(lines []string) int {
 // produces draws the optional name row, so focus can skip a field that isn't
 // there — a cursor in an invisible input is worse than no field at all.
 func (m Model) dispatchNameVisible() bool {
-	return m.dispatchLayout(m.dispatchContentDimensions()).roomy
+	return m.dispatchLayout(m.dispatchContentDimensions()).density.showsName()
 }
 
 // dispatchContentDimensions is the modal's interior for the terminal as it
@@ -344,7 +374,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 		layout.head,
 		indentLines(m.renderTaskComposer(contentWidth, layout.taskHeight), "  "),
 	)
-	if layout.roomy {
+	if layout.density.spaced() {
 		lines = append(lines, "")
 	}
 	lines = append(lines,
@@ -355,7 +385,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 
 // dispatchHeadLines renders every row above the task composer. It stops
 // there because how much room is left is the caller's question.
-func (m Model) dispatchHeadLines(width, height int, roomy bool) []string {
+func (m Model) dispatchHeadLines(width, height int, density dispatchDensity) []string {
 	providerStyle := titleStyle()
 	if m.formFocus == dispatchProvider {
 		providerStyle = accentStyle()
@@ -419,14 +449,16 @@ func (m Model) dispatchHeadLines(width, height int, roomy bool) []string {
 		}
 	}
 
-	if roomy {
+	if density.spaced() {
 		lines = append(lines, "")
 	}
 	lines = append(lines, "  "+m.renderDispatchModeLine(contentWidth))
 
-	if roomy {
+	if density.showsName() {
+		if density.spaced() {
+			lines = append(lines, "")
+		}
 		lines = append(lines,
-			"",
 			"  "+m.renderDispatchSectionTitle(
 				nameStyle,
 				"Name",
@@ -441,7 +473,7 @@ func (m Model) dispatchHeadLines(width, height int, roomy bool) []string {
 		"%d chars",
 		utf8.RuneCountInString(m.taskInput.Value()),
 	)
-	if roomy {
+	if density.spaced() {
 		lines = append(lines, "")
 	}
 	return append(lines,
