@@ -289,6 +289,13 @@ const (
 // spaced reports whether sections are separated by blank lines.
 func (d dispatchDensity) spaced() bool { return d == densityRoomy }
 
+// separated reports whether the form keeps the two blanks that set the
+// header and the directory section apart. They used to be unconditional, so
+// the tightest form still spent two rows on whitespace it had already
+// decided it could not afford — which is most of what pushed the form out of
+// a twenty-row terminal.
+func (d dispatchDensity) separated() bool { return d != densityTight }
+
 // showsName reports whether the optional name row is drawn — and therefore
 // whether it can hold focus at all.
 func (d dispatchDensity) showsName() bool { return d <= densitySnug }
@@ -370,17 +377,41 @@ func (m Model) dispatchContentDimensions() (int, int) {
 func (m Model) renderDispatchAt(width, height int) string {
 	contentWidth := max(1, width-4)
 	layout := m.dispatchLayout(width, height)
-	lines := append(
-		layout.head,
+
+	tail := []string{
 		indentLines(m.renderTaskComposer(contentWidth, layout.taskHeight), "  "),
-	)
-	if layout.density.spaced() {
-		lines = append(lines, "")
 	}
-	lines = append(lines,
+	if layout.density.spaced() {
+		tail = append(tail, "")
+	}
+	tail = append(tail,
 		"  "+mutedStyle().Render(truncate(m.commandHints(), contentWidth)),
 	)
-	return strings.Join(lines, "\n")
+
+	return strings.Join(
+		append(trimHeadToFit(layout.head, renderedRows(tail), height), tail...),
+		"\n",
+	)
+}
+
+// trimHeadToFit drops leading rows until the form fits the box it is drawn
+// in. Below about eighteen rows the terminal cannot hold even the tightest
+// form, and something has to go; what must not go is the composer and the
+// hint line, because between them they are the field the form exists to fill
+// and the only thing on screen that says how to leave.
+//
+// So the head yields, from the top. Those rows are the ones the reader can
+// most afford to lose: the title says what they already know they opened,
+// and the provider list restates a choice the summary line carries anyway.
+// Clipping from the bottom instead — which is what happens when nothing
+// trims and the modal simply cuts — takes the composer's own border and the
+// hints with it, leaving a form that looks broken and strands the reader in
+// it.
+func trimHeadToFit(head []string, tailRows, height int) []string {
+	for len(head) > 0 && renderedRows(head)+tailRows > height {
+		head = head[1:]
+	}
+	return head
 }
 
 // dispatchHeadLines renders every row above the task composer. It stops
@@ -412,13 +443,17 @@ func (m Model) dispatchHeadLines(width, height int, density dispatchDensity) []s
 	gap := max(1, width-lipgloss.Width(headerLeft)-lipgloss.Width(headerRight)-1)
 	lines := []string{
 		headerLeft + strings.Repeat(" ", gap) + headerRight,
-		"",
-		"  " + providerStyle.Render("Coding agent"),
 	}
+	if density.separated() {
+		lines = append(lines, "")
+	}
+	lines = append(lines, "  "+providerStyle.Render("Coding agent"))
 	lines = append(lines, m.renderProviderRows(contentWidth)...)
 	if m.chooseDispatchDirectory {
+		if density.separated() {
+			lines = append(lines, "")
+		}
 		lines = append(lines,
-			"",
 			"  "+m.renderDispatchSectionTitle(
 				directoryStyle,
 				"Working directory",
