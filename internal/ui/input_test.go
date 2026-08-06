@@ -336,10 +336,17 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 		!strings.Contains(view, "not found") {
 		t.Fatalf("provider availability is unclear:\n%s", view)
 	}
-	if !strings.Contains(view, "Coding agent") ||
-		!strings.Contains(view, "Task") ||
+	// A box this short cannot hold the whole form, so the section label above
+	// the provider rows is one of the rows that yields. What may not yield is
+	// the composer and the hint line: the rows the reader types into and
+	// reads to get out. This used to fit only because the form overran the
+	// modal and the hints were the part quietly cut off.
+	if !strings.Contains(view, "Task") ||
 		strings.Contains(view, "Working directory") {
 		t.Fatalf("contextual new-agent form is incorrect:\n%s", view)
+	}
+	if strings.Count(view, "╭") != strings.Count(view, "╰") {
+		t.Fatalf("the form was cut off inside the composer:\n%s", view)
 	}
 	assertViewFitsPane(t, model, 39, 15)
 }
@@ -600,6 +607,50 @@ func TestDispatchFormFitsItsModal(t *testing.T) {
 					size[0], size[1], picker, composer, modal)
 			}
 			assertViewFitsPane(t, model, size[0]-1, size[1]-1)
+		}
+	}
+}
+
+// The form must fit the modal it is drawn in, at every height a terminal
+// can be, and it must never buy that fit by cutting off the composer or the
+// hint line. A twenty-row terminal used to render fourteen rows into a
+// twelve-row box: the modal cut the overflow from the bottom, so the task
+// box lost its lower border and the hints vanished entirely, leaving no
+// on-screen way to tell how to submit or escape. See #79.
+func TestDispatchFormFitsEveryHeight(t *testing.T) {
+	for _, picker := range []bool{false, true} {
+		for width := 60; width <= 160; width += 20 {
+			for height := 12; height <= 50; height++ {
+				model := dispatchTaskFixture(t, width, height)
+				model.chooseDispatchDirectory = picker
+				if picker {
+					model.prepareDirectoryChoices(model.initialCwd)
+					model.directoryIndex = 0
+				}
+				model.syncTaskComposerSize()
+
+				boxWidth, boxHeight := model.dispatchContentDimensions()
+				form := ansi.Strip(model.renderDispatchAt(boxWidth, boxHeight))
+				rows := strings.Split(form, "\n")
+				if len(rows) > boxHeight {
+					t.Fatalf("%dx%d picker=%v: form is %d rows in a %d-row box:\n%s",
+						width, height, picker, len(rows), boxHeight, form)
+				}
+				// The composer is drawn as a bordered box, so an intact one
+				// opens and closes; a clipped form loses the closing edge.
+				if strings.Count(form, "\u256d") != strings.Count(form, "\u2570") {
+					t.Fatalf("%dx%d picker=%v: the composer border is cut:\n%s",
+						width, height, picker, form)
+				}
+				// The hint row is the last thing drawn, and a narrow box
+				// truncates its text — so what is checked is that a row
+				// follows the composer at all, not what it says.
+				last := rows[len(rows)-1]
+				if strings.TrimSpace(last) == "" || strings.Contains(last, "\u2570") {
+					t.Fatalf("%dx%d picker=%v: nothing follows the composer:\n%s",
+						width, height, picker, form)
+				}
+			}
 		}
 	}
 }
