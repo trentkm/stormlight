@@ -133,6 +133,19 @@ func (i lineInput) Update(msg tea.KeyPressMsg) lineInput {
 	return i
 }
 
+// Insert drops pasted text in at the cursor, flattened to one line.
+func (i *lineInput) Insert(text string) {
+	if !i.focused {
+		return
+	}
+	runes := flattenPaste(text)
+	if len(runes) == 0 {
+		return
+	}
+	i.value = append(i.value[:i.cursor], append(runes, i.value[i.cursor:]...)...)
+	i.cursor += len(runes)
+}
+
 func (i lineInput) View() string {
 	if len(i.value) == 0 {
 		placeholder := mutedStyle().Render(ansi.Truncate(i.placeholder, i.width, "…"))

@@ -213,16 +213,25 @@ func (m Model) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.search.input = m.search.input.Update(msg)
-	if query := m.search.input.Value(); query != m.search.query {
-		m.search.query = query
-		m.refreshSearch()
-		m.seekSearchFromAnchor()
-		m.repaintSearch()
-		if len(m.search.matches) > 0 {
-			m.centerSearchMatch()
-		} else {
-			m.interaction.SetYOffset(m.search.anchor)
-		}
-	}
+	m.applySearchQuery()
 	return m, nil
+}
+
+// applySearchQuery re-matches the transcript against whatever the prompt now
+// holds and moves the viewport to the first match ahead of the anchor. Typing
+// and pasting both land here; nothing happens if the text is unchanged.
+func (m *Model) applySearchQuery() {
+	query := m.search.input.Value()
+	if query == m.search.query {
+		return
+	}
+	m.search.query = query
+	m.refreshSearch()
+	m.seekSearchFromAnchor()
+	m.repaintSearch()
+	if len(m.search.matches) > 0 {
+		m.centerSearchMatch()
+	} else {
+		m.interaction.SetYOffset(m.search.anchor)
+	}
 }

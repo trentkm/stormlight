@@ -199,6 +199,16 @@ func (n *pathNav) update(msg tea.KeyPressMsg) {
 	}
 }
 
+// insert routes pasted text to the filter, re-anchoring the highlight the
+// same way typing does.
+func (n *pathNav) insert(text string) {
+	before := n.filter.Value()
+	n.filter.Insert(text)
+	if n.filter.Value() != before {
+		n.highlight = 0
+	}
+}
+
 func (n pathNav) filterEmpty() bool {
 	return strings.TrimSpace(n.filter.Value()) == ""
 }
