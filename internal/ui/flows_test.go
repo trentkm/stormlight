@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -78,12 +78,12 @@ func TestDeleteFlowDeletesAgentAndCancels(t *testing.T) {
 	model := flowModelFixture(t, backend)
 	model.activePane = paneAgents
 
-	updated, _ := model.updateNormal(tea.KeyMsg{Type: tea.KeyCtrlX})
+	updated, _ := model.updateNormal(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	model = updated.(Model)
 	if model.mode != modeDelete {
 		t.Fatalf("ctrl+x mode = %d", model.mode)
 	}
-	next, _ := model.updateDelete(tea.KeyMsg{Type: tea.KeyEscape})
+	next, _ := model.updateDelete(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = next.(Model)
 	if model.mode != modeNormal || len(backend.deletedIDs) != 0 {
 		t.Fatalf("esc did not cancel cleanly: mode=%d deleted=%v",
@@ -140,15 +140,15 @@ func TestRenameFlowRenamesAgentAndWorkspace(t *testing.T) {
 		t.Fatal("rename modal lacks its title")
 	}
 
-	next, _ := model.updateRename(tea.KeyMsg{Type: tea.KeyCtrlU})
+	next, _ := model.updateRename(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	model = next.(Model)
-	next, cmd := model.updateRename(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := model.updateRename(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if cmd != nil {
 		t.Fatal("empty name was accepted")
 	}
 	model.renameInput.SetValue("focused fixer")
-	next, cmd = model.updateRename(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd = model.updateRename(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if cmd == nil {
 		t.Fatal("rename was not submitted")
@@ -162,7 +162,7 @@ func TestRenameFlowRenamesAgentAndWorkspace(t *testing.T) {
 	updated, _ = model.updateNormal(runeKey("R"))
 	model = updated.(Model)
 	model.renameInput.SetValue("better name")
-	_, cmd = model.updateRename(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd = model.updateRename(tea.KeyPressMsg{Code: tea.KeyEnter})
 	cmd()
 	if backend.renamedWorkspace != "/tmp/flows" || backend.renamedName != "better name" {
 		t.Fatalf("workspace rename = %q -> %q",
@@ -205,7 +205,7 @@ func TestAddWorkspaceFlowNavigatesAndSubmits(t *testing.T) {
 		t.Fatal("missing directory was submitted")
 	}
 
-	next, _ = model.updateAddWorkspace(tea.KeyMsg{Type: tea.KeyEscape})
+	next, _ = model.updateAddWorkspace(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = next.(Model)
 	if model.mode != modeNormal {
 		t.Fatalf("esc left mode %d", model.mode)
@@ -221,7 +221,7 @@ func TestComposerRefusesToSendIntoAnActivePrompt(t *testing.T) {
 	updated, _ := model.updateNormal(runeKey("i"))
 	model = updated.(Model)
 	model.sendInput.SetValue("oranges")
-	next, cmd := model.updateCompose(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := model.updateCompose(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if cmd != nil {
 		t.Fatal("send fired into an active prompt")
@@ -279,7 +279,7 @@ func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 	if model.mode != modeHelp {
 		t.Fatalf("? mode = %d", model.mode)
 	}
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	for _, want := range []string{"Keys", "Navigate", "Act", "any key closes"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("help modal missing %q", want)
@@ -446,7 +446,7 @@ func TestComposerCtrlJInsertsNewline(t *testing.T) {
 	updated, _ := model.updateNormal(runeKey("i"))
 	model = updated.(Model)
 	model.sendInput.SetValue("first")
-	next, _ := model.updateCompose(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	next, _ := model.updateCompose(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
 	model = next.(Model)
 	if !strings.Contains(model.sendInput.Value(), "\n") {
 		t.Fatalf("ctrl+j did not insert a newline: %q", model.sendInput.Value())
@@ -459,7 +459,7 @@ func TestComposerBackspaceLeavesOnlyWhenEmpty(t *testing.T) {
 	model = updated.(Model)
 	model.sendInput.SetValue("hi")
 
-	next, _ := model.updateCompose(tea.KeyMsg{Type: tea.KeyBackspace})
+	next, _ := model.updateCompose(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	model = next.(Model)
 	if model.mode != modeCompose {
 		t.Fatalf("backspace over text left compose mode: %d", model.mode)
@@ -468,14 +468,14 @@ func TestComposerBackspaceLeavesOnlyWhenEmpty(t *testing.T) {
 		t.Fatalf("backspace did not delete a rune: %q", model.sendInput.Value())
 	}
 
-	next, _ = model.updateCompose(tea.KeyMsg{Type: tea.KeyBackspace})
+	next, _ = model.updateCompose(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	model = next.(Model)
 	if model.mode != modeCompose || model.sendInput.Value() != "" {
 		t.Fatalf("emptying the box left compose mode early: mode=%d value=%q",
 			model.mode, model.sendInput.Value())
 	}
 
-	next, _ = model.updateCompose(tea.KeyMsg{Type: tea.KeyBackspace})
+	next, _ = model.updateCompose(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	model = next.(Model)
 	if model.mode != modeNormal {
 		t.Fatalf("backspace on an empty box stayed in mode %d", model.mode)
@@ -524,7 +524,7 @@ func selectCustomDirectory(t *testing.T, model *Model) {
 func TestDispatchEnterReachesTheNameField(t *testing.T) {
 	model := dispatchFixture(t)
 	for _, want := range []dispatchFocus{dispatchName, dispatchTask} {
-		next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+		next, _ := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 		model = next.(Model)
 		if model.formFocus != want {
 			t.Fatalf("enter landed on focus %d, want %d", model.formFocus, want)
@@ -535,12 +535,12 @@ func TestDispatchEnterReachesTheNameField(t *testing.T) {
 func TestDispatchTabEscapesThePathPicker(t *testing.T) {
 	model := dispatchFixture(t)
 	selectCustomDirectory(t, &model)
-	next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if model.formFocus != dispatchCustomPath {
 		t.Fatalf("enter did not open the path picker: focus %d", model.formFocus)
 	}
-	after, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyTab})
+	after, _ := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyTab})
 	model = after.(Model)
 	if model.formFocus != dispatchName {
 		t.Fatalf("tab out of the picker landed on %d, want name", model.formFocus)
@@ -549,7 +549,7 @@ func TestDispatchTabEscapesThePathPicker(t *testing.T) {
 
 func TestDispatchNameAcceptsTypedRunes(t *testing.T) {
 	model := dispatchFixture(t)
-	next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	for _, key := range []string{"m", "j", "e", "g"} {
 		updated, _ := model.updateDispatch(runeKey(key))
@@ -567,7 +567,7 @@ func TestDispatchHintsNameTheNextField(t *testing.T) {
 		t.Fatalf("directory hints hide the name field: %q", hints)
 	}
 	selectCustomDirectory(t, &model)
-	next, _ := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if hints := model.commandHints(); !strings.Contains(hints, "Tab name") {
 		t.Fatalf("picker hints hide the way out: %q", hints)
@@ -591,7 +591,7 @@ func TestMarkFlowRecordsTheHumansReading(t *testing.T) {
 		}
 	}
 
-	next, _ := model.updateMark(tea.KeyMsg{Type: tea.KeyEscape})
+	next, _ := model.updateMark(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = next.(Model)
 	if model.mode != modeNormal || backend.markCalls != 0 {
 		t.Fatalf("esc did not cancel: mode=%d calls=%d", model.mode, backend.markCalls)

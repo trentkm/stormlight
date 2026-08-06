@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 )
@@ -15,7 +15,7 @@ import (
 func (m Model) renderAgents(width, height int) string {
 	agents := m.agentsForSelectedWorkspace()
 	if len(agents) == 0 {
-		return mutedStyle.Render(" No agents")
+		return mutedStyle().Render(" No agents")
 	}
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
@@ -110,14 +110,14 @@ func renderAgentRowWithDensity(
 		)
 	}
 
-	renderedTitle := titleStyle.Render(displayTitle)
-	detailStyle := mutedStyle
+	renderedTitle := titleStyle().Render(displayTitle)
+	detailStyle := mutedStyle()
 	switch rowEmphasisFor(managedAgent) {
 	case emphasisUrgent:
 		// Urgent attention outranks the working glow: the row goes loud
 		// amber. The waiting tier keeps its calm row and speaks through
 		// the amber status symbol alone.
-		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
 		renderedTitle = attentionStyle.Render(displayTitle)
 		detailStyle = attentionStyle
 	case emphasisWorking:
@@ -125,7 +125,7 @@ func renderAgentRowWithDensity(
 	}
 	indicator := statusStyle.Render(symbol)
 	if selected {
-		indicator = lipgloss.NewStyle().Foreground(colorBorder).Render("›")
+		indicator = lipgloss.NewStyle().Foreground(colorBorder()).Render("›")
 	}
 	top := indicator + " " +
 		renderedTitle +
@@ -188,7 +188,7 @@ func renderSelectedAgentRow(
 		// Same ranking as the quiet row: urgent attention outranks the
 		// working glow.
 		renderedTitle = baseStyle.Copy().
-			Foreground(colorWaiting).
+			Foreground(colorWaiting()).
 			Bold(true).
 			Render(title)
 	case emphasisWorking:
@@ -223,7 +223,7 @@ func listRowCapacity(height int, expanded bool) int {
 }
 
 func renderFocusedRow(top, bottom string, width int) string {
-	return selectTheme.focusedRow(top, bottom, width)
+	return selectTheme().focusedRow(top, bottom, width)
 }
 
 func (t rowTheme) focusedRow(top, bottom string, width int) string {
@@ -263,7 +263,7 @@ func (t rowTheme) focusedRow(top, bottom string, width int) string {
 }
 
 func renderContextRow(top, bottom string, width int) string {
-	return selectTheme.contextRow(top, bottom, width)
+	return selectTheme().contextRow(top, bottom, width)
 }
 
 func (t rowTheme) contextRow(top, bottom string, width int) string {
@@ -451,30 +451,30 @@ func agentStateLabel(managedAgent agent.Agent) string {
 func statusVisual(managedAgent agent.Agent) (string, lipgloss.Style) {
 	switch managedAgent.EffectiveMark() {
 	case agent.MarkWorking:
-		return "●", lipgloss.NewStyle().Foreground(colorWorking)
+		return "●", lipgloss.NewStyle().Foreground(colorWorking())
 	case agent.MarkAttention:
 		// A diamond rather than the inferred tiers' ○ and !: a glance should
 		// tell you whether the amber is Stormlight's reading or your own.
-		return "◆", lipgloss.NewStyle().Foreground(colorWaiting)
+		return "◆", lipgloss.NewStyle().Foreground(colorWaiting())
 	}
 	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() {
-		return "!", lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+		return "!", lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
 	}
 	if managedAgent.ProcessLive && managedAgent.Attention == agent.AttentionWaiting {
-		return "○", lipgloss.NewStyle().Foreground(colorWaiting)
+		return "○", lipgloss.NewStyle().Foreground(colorWaiting())
 	}
 	switch managedAgent.Activity {
 	case agent.ActivityStarting, agent.ActivityWorking:
-		return "●", lipgloss.NewStyle().Foreground(colorWorking)
+		return "●", lipgloss.NewStyle().Foreground(colorWorking())
 	case agent.ActivityIdle:
-		return "○", mutedStyle
+		return "○", mutedStyle()
 	case agent.ActivityCompleted:
-		return "✓", lipgloss.NewStyle().Foreground(colorDone)
+		return "✓", lipgloss.NewStyle().Foreground(colorDone())
 	case agent.ActivityFailed:
-		return "×", lipgloss.NewStyle().Foreground(colorFailed).Bold(true)
+		return "×", lipgloss.NewStyle().Foreground(colorFailed()).Bold(true)
 	case agent.ActivityStopped:
-		return "■", mutedStyle
+		return "■", mutedStyle()
 	default:
-		return "·", mutedStyle
+		return "·", mutedStyle()
 	}
 }

@@ -11,11 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/provider"
@@ -27,8 +26,8 @@ func TestLineInputEditsAtCursor(t *testing.T) {
 	input := newLineInput("")
 	input.SetValue("ac")
 	input.Focus()
-	input = input.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	input = input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	input = input.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	input = input.Update(tea.KeyPressMsg{Code: []rune("b")[0], Text: "b"})
 
 	if got := input.Value(); got != "abc" {
 		t.Fatalf("got %q", got)
@@ -39,7 +38,7 @@ func TestLineInputDeletesPreviousWord(t *testing.T) {
 	input := newLineInput("")
 	input.SetValue("hello brave world")
 	input.Focus()
-	input = input.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	input = input.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
 
 	if got := input.Value(); got != "hello brave " {
 		t.Fatalf("got %q", got)
@@ -50,7 +49,7 @@ func TestLineInputAcceptsSpaceKey(t *testing.T) {
 	input := newLineInput("")
 	input.SetValue("review")
 	input.Focus()
-	input = input.Update(tea.KeyMsg{Type: tea.KeySpace})
+	input = input.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	input = input.Update(runeKey("this repo"))
 
 	if got := input.Value(); got != "review this repo" {
@@ -275,7 +274,7 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 	model.mode = modeDispatch
 	model.chooseDispatchDirectory = true
 
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	if !strings.Contains(view, "Codex") ||
 		!strings.Contains(view, "Claude") {
 		t.Fatalf("provider selector is incomplete:\n%s", view)
@@ -330,7 +329,7 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 40, Height: 16})
 	model = updated.(Model)
 
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	if !strings.Contains(view, "Codex") ||
 		!strings.Contains(view, "Claude") ||
 		!strings.Contains(view, "not found") {
@@ -362,7 +361,7 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 
 	updated, _ = model.beginDispatch(false)
 	model = updated.(Model)
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	for _, label := range []string{
 		"Workspaces",
 		"Agents",
@@ -390,14 +389,14 @@ func TestDispatchOptionalNameReachesTheRequest(t *testing.T) {
 	updated, _ = model.beginDispatch(false)
 	model = updated.(Model)
 
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	if !strings.Contains(view, "Name") || !strings.Contains(view, "optional") {
 		t.Fatalf("new-agent form has no optional name field:\n%s", view)
 	}
 
 	// Tab from the provider list lands on the name before the task, so the
 	// field is reachable without leaving the keyboard home row.
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	model = updated.(Model)
 	if model.formFocus != dispatchName {
 		t.Fatalf("tab focus = %v, want the name field", model.formFocus)
@@ -411,7 +410,7 @@ func TestDispatchOptionalNameReachesTheRequest(t *testing.T) {
 	}
 
 	// Enter moves on to the task rather than launching a nameless agent.
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if model.formFocus != dispatchTask {
 		t.Fatalf("focus after naming = %v, want the task field", model.formFocus)
@@ -448,12 +447,12 @@ func TestDispatchWithoutANameLaunchesUnnamed(t *testing.T) {
 
 	// Enter stops on the optional name; leaving it blank is what makes the
 	// launch unnamed.
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if model.formFocus != dispatchName {
 		t.Fatalf("Enter focus = %v, want the name field", model.formFocus)
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if model.formFocus != dispatchTask {
 		t.Fatalf("Enter focus = %v, want the task field", model.formFocus)
@@ -508,7 +507,7 @@ func taskComposerRows(t *testing.T, model Model) []string {
 
 // typeTask types into the task box the way the event loop does, drawing
 // after every key — the textarea scrolls against what was last drawn.
-func typeTask(t *testing.T, model Model, keys ...tea.KeyMsg) Model {
+func typeTask(t *testing.T, model Model, keys ...tea.KeyPressMsg) Model {
 	t.Helper()
 	for _, key := range keys {
 		updated, _ := model.updateDispatch(key)
@@ -523,7 +522,7 @@ func TestDispatchTaskCtrlJInsertsNewline(t *testing.T) {
 	model := dispatchTaskFixture(t, 120, 40)
 	model = typeTask(t, model,
 		runeKey("first"),
-		tea.KeyMsg{Type: tea.KeyCtrlJ},
+		tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl},
 		runeKey("second"),
 	)
 	if got := model.taskInput.Value(); got != "first\nsecond" {
@@ -580,9 +579,24 @@ func TestDispatchFormFitsItsModal(t *testing.T) {
 				t.Fatalf("%dx%d picker=%v: the hint line was clipped:\n%s",
 					size[0], size[1], picker, modal)
 			}
-			if !strings.Contains(modal, "task task") {
-				t.Fatalf("%dx%d picker=%v: the task box was clipped:\n%s",
-					size[0], size[1], picker, modal)
+			// What the composer shows depends on how many rows it got. Given
+			// two or more it shows the wrapped task from the top; given the
+			// single row a cramped form leaves it, it shows the row the cursor
+			// is on — which is the tail, since the task was just typed. Both
+			// are the box doing its job, so the assertion is that the typed
+			// text reached it, not which end of it is visible.
+			width, height := model.dispatchContentDimensions()
+			layout := model.dispatchLayout(width, height)
+			composer := ansi.Strip(
+				model.renderTaskComposer(max(1, width-4), layout.taskHeight),
+			)
+			want := "task task"
+			if layout.taskHeight < 2 {
+				want = "task"
+			}
+			if !strings.Contains(composer, want) {
+				t.Fatalf("%dx%d picker=%v: the task box was clipped:\n%s\n%s",
+					size[0], size[1], picker, composer, modal)
 			}
 			assertViewFitsPane(t, model, size[0]-1, size[1]-1)
 		}
@@ -602,7 +616,7 @@ func TestDispatchFocusSkipsHiddenNameField(t *testing.T) {
 	if model.dispatchNameVisible() {
 		t.Fatal("compact form claims room for the name field")
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	model = updated.(Model)
 	if model.formFocus == dispatchName {
 		t.Fatal("focus landed on a name field that is not drawn")
@@ -684,7 +698,7 @@ func TestAddWorkspaceOnlyOffersNewDirectoryActions(t *testing.T) {
 			t.Fatalf("active directory is selectable: %#v", choice)
 		}
 	}
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	if !strings.Contains(view, "Add workspace") ||
 		!strings.Contains(view, "Browse with Yazi") ||
 		!strings.Contains(view, "Enter a path") ||
@@ -744,7 +758,7 @@ func TestFooterShowsOnlyChordOptionsWhilePending(t *testing.T) {
 		t.Fatalf("normal hints shown while g chord is pending: %q", footer)
 	}
 
-	updated, _ = model.updateNormal(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = model.updateNormal(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = updated.(Model)
 	footer = ansi.Strip(model.renderFooter())
 	if strings.Contains(footer, "Go:") || !strings.Contains(footer, "j/k select") {
@@ -767,7 +781,7 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	model = updated.(Model)
 	model.interaction.SetContent("agent response")
 
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	for _, label := range []string{"Workspaces", "Agents", "Spanreed", "agent response"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("dashboard is missing %q:\n%s", label, view)
@@ -972,7 +986,7 @@ func TestRowDensityChangesListHeight(t *testing.T) {
 
 func assertViewFitsPane(t *testing.T, model Model, maxWidth, maxLines int) {
 	t.Helper()
-	lines := strings.Split(ansi.Strip(model.View()), "\n")
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
 	if len(lines) > maxLines {
 		t.Fatalf("rendered %d lines; maximum is %d", len(lines), maxLines)
 	}
@@ -1012,7 +1026,7 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 
 	model.formFocus = dispatchTask
 	model.taskInput.SetValue("check provider routing")
-	updated, cmd := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if cmd == nil {
 		t.Fatal("dispatch command was not created")
@@ -1157,14 +1171,14 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 		if model.formFocus == dispatchTask {
 			break
 		}
-		updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+		updated, _ = model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 		model = updated.(Model)
 	}
 	if model.formFocus != dispatchTask {
 		t.Fatalf("Enter never reached the task field: %v", model.formFocus)
 	}
 	model.taskInput.SetValue("review this workspace")
-	updated, cmd := model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if cmd == nil {
 		t.Fatal("dispatch command was not created")
@@ -1825,10 +1839,9 @@ func TestFocusedAgentRowUsesTaskFirstTitleAndSelectionRail(t *testing.T) {
 // made it read exactly like an idle one — which is what "the blue pulse
 // clears as soon as I navigate left" describes. See #63.
 func TestSelectedAgentRowKeepsWorkingAndUrgentState(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-
+	// No profile to force: v2 dropped the global renderer that used to
+	// downsample to whatever it had detected, so a Style emits full-fidelity
+	// ANSI whether or not a terminal is attached.
 	base := agent.Agent{
 		Provider:    agent.ProviderCodex,
 		Name:        "cx-fix-parser",
@@ -1949,7 +1962,7 @@ func TestInteractionComposerSendsToSelectedAgent(t *testing.T) {
 	}
 	updated, _ = model.updateCompose(runeKey("please run the tests"))
 	model = updated.(Model)
-	updated, cmd := model.updateCompose(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.updateCompose(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if cmd == nil {
 		t.Fatal("send command was not created")
@@ -1978,7 +1991,7 @@ func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 	model.rebuildGroups(workspaceContext.ID, "agent-one")
 	model.activePane = paneAgents
 
-	updated, cmd := model.updateNormal(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.updateNormal(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if cmd == nil || model.status != "Opening agent-one" {
 		t.Fatalf("terminal open was not started: status=%q", model.status)
@@ -2086,11 +2099,11 @@ func TestInteractionHeadingNamesTheCheckout(t *testing.T) {
 // work happens.
 func TestCheckoutBadgeColors(t *testing.T) {
 	linked := checkoutStyle(checkoutBadge{text: "worktree fix-auth"})
-	if linked.GetForeground() != colorAccent {
+	if linked.GetForeground() != colorAccent() {
 		t.Fatalf("linked worktree lost its accent: %v", linked.GetForeground())
 	}
 	primary := checkoutStyle(checkoutBadge{text: "main checkout", primary: true})
-	if primary.GetForeground() != colorMuted {
+	if primary.GetForeground() != colorMuted() {
 		t.Fatalf("primary checkout is not muted: %v", primary.GetForeground())
 	}
 }
@@ -2169,7 +2182,7 @@ func TestInteractionRefreshPreservesScrollPosition(t *testing.T) {
 		Workspace: workspaceContext,
 	}}
 	model.rebuildGroups(workspaceContext.ID, "one")
-	model.interaction = viewport.New(40, 2)
+	model.interaction = viewport.New(viewport.WithWidth(40), viewport.WithHeight(2))
 	model.interaction.SetContent("one\ntwo\nthree\nfour")
 	model.interaction.GotoTop()
 	model.interactionID = "one"
@@ -2179,8 +2192,8 @@ func TestInteractionRefreshPreservesScrollPosition(t *testing.T) {
 		content: "one\ntwo\nthree\nfour\nfive",
 	})
 	model = updated.(Model)
-	if model.interaction.YOffset != 0 {
-		t.Fatalf("refresh moved viewport to offset %d", model.interaction.YOffset)
+	if model.interaction.YOffset() != 0 {
+		t.Fatalf("refresh moved viewport to offset %d", model.interaction.YOffset())
 	}
 
 	model.interaction.GotoBottom()
@@ -2190,7 +2203,7 @@ func TestInteractionRefreshPreservesScrollPosition(t *testing.T) {
 	})
 	model = updated.(Model)
 	if !model.interaction.AtBottom() {
-		t.Fatalf("viewport stopped following output at offset %d", model.interaction.YOffset)
+		t.Fatalf("viewport stopped following output at offset %d", model.interaction.YOffset())
 	}
 }
 
@@ -2238,8 +2251,8 @@ func TestActionErrorSurvivesSuccessfulRefresh(t *testing.T) {
 	}
 }
 
-func runeKey(value string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+func runeKey(value string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: []rune(value)[0], Text: value}
 }
 
 type stubBackend struct{}
@@ -2376,13 +2389,13 @@ func unreadAgentModel(active pane) Model {
 func TestSeenClearingMarksSelectedAgentOnEngagement(t *testing.T) {
 	cases := []struct {
 		label  string
-		key    tea.KeyMsg
+		key    tea.KeyPressMsg
 		active pane
 	}{
 		{"scroll the transcript", runeKey("k"), paneInteraction},
 		{"jump to its end", runeKey("G"), paneInteraction},
 		{"reply", runeKey("i"), paneAgents},
-		{"open its terminal", tea.KeyMsg{Type: tea.KeyEnter}, paneAgents},
+		{"open its terminal", tea.KeyPressMsg{Code: tea.KeyEnter}, paneAgents},
 	}
 	for _, testCase := range cases {
 		model := unreadAgentModel(testCase.active)
@@ -2401,12 +2414,12 @@ func TestSeenClearingMarksSelectedAgentOnEngagement(t *testing.T) {
 func TestSeenClearingSurvivesNavigation(t *testing.T) {
 	cases := []struct {
 		label  string
-		key    tea.KeyMsg
+		key    tea.KeyPressMsg
 		active pane
 	}{
 		{"left, out of the transcript", runeKey("h"), paneInteraction},
 		{"right, into the transcript", runeKey("l"), paneAgents},
-		{"cycling panes", tea.KeyMsg{Type: tea.KeyTab}, paneAgents},
+		{"cycling panes", tea.KeyPressMsg{Code: tea.KeyTab}, paneAgents},
 		{"up the agent list", runeKey("k"), paneAgents},
 		{"down the workspace list", runeKey("j"), paneWorkspaces},
 	}

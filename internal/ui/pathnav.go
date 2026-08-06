@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // pathNav is the fzf-shaped picker behind "Enter a path": every directory
@@ -191,7 +191,7 @@ func expandHomePath(path string) string {
 
 // update routes a key to the filter and re-anchors the highlight on the
 // best match whenever the text changes.
-func (n *pathNav) update(msg tea.KeyMsg) {
+func (n *pathNav) update(msg tea.KeyPressMsg) {
 	before := n.filter.Value()
 	n.filter = n.filter.Update(msg)
 	if n.filter.Value() != before {
@@ -209,28 +209,28 @@ func (n pathNav) view(width, maxRows int) string {
 	width = max(10, width)
 	n.filter.SetWidth(max(1, width-2))
 	lines := []string{
-		accentStyle.Render("cd ") +
-			mutedStyle.Render(truncatePathTail(shortPath(n.root), max(1, width-3))),
+		accentStyle().Render("cd ") +
+			mutedStyle().Render(truncatePathTail(shortPath(n.root), max(1, width-3))),
 		"> " + n.filter.View(),
 	}
 	if n.loadErr != nil {
-		lines = append(lines, errorStyle.Render(truncate("cannot read directory", width)))
+		lines = append(lines, errorStyle().Render(truncate("cannot read directory", width)))
 		return strings.Join(lines, "\n")
 	}
 	// A typed absolute or ~ path puts the picker in cd mode: Enter re-roots
 	// there instead of choosing a match, so show that action, not the list.
 	if target, attempted, ok := n.jumpTarget(); attempted {
 		if ok {
-			lines = append(lines, accentStyle.Render(" cd ")+
+			lines = append(lines, accentStyle().Render(" cd ")+
 				truncatePathTail(shortPath(target), max(1, width-4)))
 		} else {
-			lines = append(lines, mutedStyle.Render(truncate("no such directory", width)))
+			lines = append(lines, mutedStyle().Render(truncate("no such directory", width)))
 		}
 		return strings.Join(lines, "\n")
 	}
 	matches := n.matches()
 	if len(matches) == 0 {
-		lines = append(lines, mutedStyle.Render(truncate("no matching directories", width)))
+		lines = append(lines, mutedStyle().Render(truncate("no matching directories", width)))
 		return strings.Join(lines, "\n")
 	}
 	highlight := min(n.highlight, len(matches)-1)
@@ -242,17 +242,17 @@ func (n pathNav) view(width, maxRows int) string {
 	for index := start; index < start+rows && index < len(matches); index++ {
 		name := matches[index]
 		if index == highlight {
-			lines = append(lines, selectTheme.selectableRow(name, width, true))
+			lines = append(lines, selectTheme().selectableRow(name, width, true))
 			continue
 		}
-		style := titleStyle
+		style := titleStyle()
 		if name == rootEntry {
-			style = mutedStyle
+			style = mutedStyle()
 		}
 		lines = append(lines, " "+style.Render(truncate(name, max(1, width-1))))
 	}
 	if remaining := len(matches) - start - rows; remaining > 0 {
-		lines = append(lines, mutedStyle.Render(truncate(
+		lines = append(lines, mutedStyle().Render(truncate(
 			"… "+itoa(remaining)+" more", width)))
 	}
 	return strings.Join(lines, "\n")

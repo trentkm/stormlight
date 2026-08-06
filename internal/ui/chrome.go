@@ -7,7 +7,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/trentkm/stormlight/internal/theme"
 )
 
 func (m Model) renderFooter() string {
@@ -18,18 +19,18 @@ func (m Model) renderFooter() string {
 		content = chord
 	} else {
 		hints := m.commandHints()
-		content = mutedStyle.Render(truncate(hints, inner))
+		content = mutedStyle().Render(truncate(hints, inner))
 		if m.err != nil {
-			content = renderFooterStatus(inner, m.err.Error(), hints, errorStyle)
+			content = renderFooterStatus(inner, m.err.Error(), hints, errorStyle())
 		} else if m.status != "Ready" {
-			content = renderFooterStatus(inner, m.status, hints, successStyle)
+			content = renderFooterStatus(inner, m.status, hints, successStyle())
 		}
 	}
 	glint := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{
+		Foreground(theme.Color(theme.Pair{
 			Light: wordmarkStopsLight[1],
 			Dark:  wordmarkStopsDark[1],
-		}).
+		})).
 		Render("✦ ")
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
 		renderFooterRule(width) + "\n " + glint + content,
@@ -49,10 +50,10 @@ func renderComposerRule(width int) string {
 		dark := gradientStop(wordmarkStopsDark, s)
 		light := gradientStop(wordmarkStopsLight, s)
 		out.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{
+			Foreground(theme.Color(theme.Pair{
 				Light: lerpHex(light, wordmarkCrest.Light, s*0.5),
 				Dark:  lerpHex(dark, wordmarkCrest.Dark, s*0.5),
-			}).
+			})).
 			Render("─"))
 	}
 	return out.String()
@@ -67,15 +68,17 @@ func renderComposerRule(width int) string {
 // swapped out for another.
 //
 // bandColor is that gradient sampled at t, the fraction of the way across
-// the dashboard.
-func bandColor(t float64, lit bool) lipgloss.AdaptiveColor {
+// the dashboard. It returns an unresolved pair rather than a painted color:
+// the band is palette data, blended toward the border grey, and only the
+// thing that draws with it knows which background it is drawing on.
+func bandColor(t float64, lit bool) theme.Pair {
 	fade := 0.55
 	if lit {
 		fade = 0
 	}
-	return lipgloss.AdaptiveColor{
-		Light: lerpHex(gradientStop(wordmarkStopsLight, t), colorBorder.Light, fade),
-		Dark:  lerpHex(gradientStop(wordmarkStopsDark, t), colorBorder.Dark, fade),
+	return theme.Pair{
+		Light: lerpHex(gradientStop(wordmarkStopsLight, t), theme.Border.Light, fade),
+		Dark:  lerpHex(gradientStop(wordmarkStopsDark, t), theme.Border.Dark, fade),
 	}
 }
 
@@ -92,7 +95,7 @@ func renderBandRun(glyph string, start, count, total int, lit, underlined bool) 
 		if total > 1 {
 			t = float64(clamp(start+index, 0, total-1)) / float64(total-1)
 		}
-		style := lipgloss.NewStyle().Foreground(bandColor(t, lit))
+		style := lipgloss.NewStyle().Foreground(theme.Color(bandColor(t, lit)))
 		if underlined {
 			style = style.Underline(true)
 		}
@@ -119,12 +122,12 @@ func (m Model) chordHints() string {
 		return ""
 	}
 	parts := make([]string, 0, len(options)+2)
-	parts = append(parts, titleStyle.Render(label))
+	parts = append(parts, titleStyle().Render(label))
 	for _, option := range options {
 		parts = append(parts,
-			accentStyle.Render(option[0])+" "+mutedStyle.Render(option[1]))
+			accentStyle().Render(option[0])+" "+mutedStyle().Render(option[1]))
 	}
-	parts = append(parts, mutedStyle.Render("Esc cancel"))
+	parts = append(parts, mutedStyle().Render("Esc cancel"))
 	return strings.Join(parts, "  ")
 }
 
@@ -138,10 +141,10 @@ func renderFooterStatus(
 	statusWidth := clamp(available/3, 8, 28)
 	hintWidth := available - statusWidth - 2
 	if hintWidth < 12 {
-		return mutedStyle.Render(truncate(hints, available))
+		return mutedStyle().Render(truncate(hints, available))
 	}
 	renderedStatus := statusStyle.Render(truncate(status, statusWidth))
-	renderedHints := mutedStyle.Render(truncate(hints, hintWidth))
+	renderedHints := mutedStyle().Render(truncate(hints, hintWidth))
 	return renderedStatus + "  " + renderedHints
 }
 

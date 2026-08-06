@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -28,17 +28,22 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !m.ready || !scrollable {
 		return m, nil
 	}
-	if msg.Button == tea.MouseButtonLeft && m.mode == modeNormal {
+	mouse := msg.Mouse()
+	if mouse.Button == tea.MouseLeft && m.mode == modeNormal {
 		return m.handleSelectionMouse(msg)
 	}
-	if msg.Action != tea.MouseActionPress {
+	// A wheel tick is its own message type, so asking for one is the whole
+	// filter: under the v1 action enum this had to reject every non-press
+	// event first, because a wheel arrived as a press carrying a wheel
+	// button.
+	if _, ok := msg.(tea.MouseWheelMsg); !ok {
 		return m, nil
 	}
 	direction := 0
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
+	switch mouse.Button {
+	case tea.MouseWheelUp:
 		direction = -1
-	case tea.MouseButtonWheelDown:
+	case tea.MouseWheelDown:
 		direction = 1
 	default:
 		return m, nil
@@ -46,7 +51,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Only the transcript wheels: scrolling a list would move its
 	// selection, and losing the selected agent to a stray wheel tick is
 	// worse than no scroll at all.
-	if m.paneAt(msg.X) != paneInteraction {
+	if m.paneAt(mouse.X) != paneInteraction {
 		return m, nil
 	}
 	m.moveSelectionIn(paneInteraction, direction*3)
@@ -56,14 +61,18 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // handleSelectionMouse turns press-drag-release over the transcript into a
 // line-wise selection: the drag highlights, the release copies the lines
 // to the tmux buffer and system clipboard.
+// The three stages of a drag are three message types in v2 rather than
+// three values of an action enum, so the state machine switches on the
+// message itself; the coordinates come from the Mouse each one carries.
 func (m Model) handleSelectionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	switch msg.Action {
-	case tea.MouseActionPress:
-		if m.paneAt(msg.X) != paneInteraction {
+	mouse := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseClickMsg:
+		if m.paneAt(mouse.X) != paneInteraction {
 			m.selectionActive = false
 			return m, nil
 		}
-		line, ok := m.transcriptLineAt(msg.Y)
+		line, ok := m.transcriptLineAt(mouse.Y)
 		if !ok {
 			m.selectionActive = false
 			return m, nil
@@ -73,15 +82,15 @@ func (m Model) handleSelectionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.selectionAnchor = line
 		m.selectionHead = line
 		return m, nil
-	case tea.MouseActionMotion:
+	case tea.MouseMotionMsg:
 		if !m.selectionDragging {
 			return m, nil
 		}
-		if line, ok := m.transcriptLineAt(msg.Y); ok {
+		if line, ok := m.transcriptLineAt(mouse.Y); ok {
 			m.selectionHead = line
 		}
 		return m, nil
-	case tea.MouseActionRelease:
+	case tea.MouseReleaseMsg:
 		if !m.selectionDragging {
 			return m, nil
 		}
@@ -105,14 +114,14 @@ func (m Model) transcriptLineAt(y int) (int, bool) {
 	if row < 0 {
 		row = 0
 	}
-	if row >= m.interaction.Height {
-		row = max(0, m.interaction.Height-1)
+	if row >= m.interaction.Height() {
+		row = max(0, m.interaction.Height()-1)
 	}
 	total := m.interaction.TotalLineCount()
 	if total == 0 {
 		return 0, false
 	}
-	return clamp(m.interaction.YOffset+row, 0, total-1), true
+	return clamp(m.interaction.YOffset()+row, 0, total-1), true
 }
 
 // paintTranscriptSelection reverses the video of the visible rows inside

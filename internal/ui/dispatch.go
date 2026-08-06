@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
@@ -22,7 +22,7 @@ import (
 // in — a keystroke rewraps it, a directory choice pushes it down the form —
 // and the textarea has to be told, so the sync wraps the key handling
 // instead of trailing every branch of it.
-func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateDispatch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	next, cmd := m.dispatchKey(msg)
 	updated, ok := next.(Model)
 	if !ok {
@@ -32,7 +32,7 @@ func (m Model) updateDispatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return updated, cmd
 }
 
-func (m Model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) dispatchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.formFocus == dispatchDirectory {
 		switch {
@@ -220,10 +220,10 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 	contentWidth := max(1, width-4)
 	m.cwdInput.SetWidth(max(10, contentWidth-2))
 	lines := []string{
-		titleStyle.Render("  Add workspace"),
+		titleStyle().Render("  Add workspace"),
 		"",
 		"  " + m.renderDispatchSectionTitle(
-			accentStyle,
+			accentStyle(),
 			"Choose a directory",
 			fmt.Sprintf("%d/%d", m.directoryIndex+1, len(m.directories)),
 			contentWidth,
@@ -243,7 +243,7 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 		lines = append(lines,
 			"",
 			"  "+m.renderDispatchSectionTitle(
-				mutedStyle.Copy().Bold(true),
+				mutedStyle().Copy().Bold(true),
 				"Active workspaces",
 				"read only",
 				contentWidth,
@@ -348,7 +348,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 		lines = append(lines, "")
 	}
 	lines = append(lines,
-		"  "+mutedStyle.Render(truncate(m.commandHints(), contentWidth)),
+		"  "+mutedStyle().Render(truncate(m.commandHints(), contentWidth)),
 	)
 	return strings.Join(lines, "\n")
 }
@@ -356,29 +356,29 @@ func (m Model) renderDispatchAt(width, height int) string {
 // dispatchHeadLines renders every row above the task composer. It stops
 // there because how much room is left is the caller's question.
 func (m Model) dispatchHeadLines(width, height int, roomy bool) []string {
-	providerStyle := titleStyle
+	providerStyle := titleStyle()
 	if m.formFocus == dispatchProvider {
-		providerStyle = accentStyle
+		providerStyle = accentStyle()
 	}
 
-	directoryStyle := titleStyle
-	nameStyle := titleStyle
-	taskStyle := titleStyle
+	directoryStyle := titleStyle()
+	nameStyle := titleStyle()
+	taskStyle := titleStyle()
 	if m.formFocus == dispatchDirectory {
-		directoryStyle = accentStyle
+		directoryStyle = accentStyle()
 	}
 	if m.formFocus == dispatchName {
-		nameStyle = accentStyle
+		nameStyle = accentStyle()
 	}
 	if m.formFocus == dispatchTask {
-		taskStyle = accentStyle
+		taskStyle = accentStyle()
 	}
 	contentWidth := max(1, width-4)
 	m.cwdInput.SetWidth(max(10, contentWidth-2))
 
-	headerLeft := titleStyle.Render("  New agent")
+	headerLeft := titleStyle().Render("  New agent")
 	summaryWidth := max(1, width-lipgloss.Width(headerLeft)-3)
-	headerRight := mutedStyle.Render(truncate(m.dispatchSummary(), summaryWidth))
+	headerRight := mutedStyle().Render(truncate(m.dispatchSummary(), summaryWidth))
 	gap := max(1, width-lipgloss.Width(headerLeft)-lipgloss.Width(headerRight)-1)
 	lines := []string{
 		headerLeft + strings.Repeat(" ", gap) + headerRight,
@@ -480,13 +480,16 @@ func (m Model) renderTaskComposer(width, height int) string {
 
 	// Curved, like the modal it sits inside. A square box nested in a rounded
 	// one reads as a rendering slip rather than a distinction.
+	//
+	// The border is counted inside these dimensions in v2, so the box is
+	// described by its outside edges; innerWidth stays the input's width.
 	style := lipgloss.NewStyle().
-		Width(innerWidth).
-		Height(height).
+		Width(width).
+		Height(height + 2).
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorBorder)
+		BorderForeground(colorBorder())
 	if m.formFocus == dispatchTask {
-		style = style.BorderForeground(colorAccent)
+		style = style.BorderForeground(colorAccent())
 	}
 	return style.Render(input.View())
 }
@@ -548,17 +551,17 @@ func modeBadge(mode agent.PermissionMode) string {
 
 func (m Model) renderDispatchModeLine(width int) string {
 	label, description := modeSummary(m.dispatchMode)
-	rendered := titleStyle.Render("Mode") + "  "
+	rendered := titleStyle().Render("Mode") + "  "
 	if m.dispatchMode == agent.ModeAuto {
 		rendered += lipgloss.NewStyle().
-			Foreground(colorWaiting).Bold(true).Render(label)
+			Foreground(colorWaiting()).Bold(true).Render(label)
 	} else {
-		rendered += accentStyle.Render(label)
+		rendered += accentStyle().Render(label)
 	}
 	rendered += "  "
 	available := max(0, width-lipgloss.Width(rendered))
 	detail := description + "  (m)"
-	return rendered + mutedStyle.Render(truncate(detail, available))
+	return rendered + mutedStyle().Render(truncate(detail, available))
 }
 
 func (m Model) renderDispatchSectionTitle(
@@ -568,14 +571,14 @@ func (m Model) renderDispatchSectionTitle(
 	width int,
 ) string {
 	renderedLabel := style.Render(label)
-	renderedRight := mutedStyle.Render(right)
+	renderedRight := mutedStyle().Render(right)
 	gap := max(1, width-lipgloss.Width(renderedLabel)-lipgloss.Width(renderedRight))
 	return renderedLabel + strings.Repeat(" ", gap) + renderedRight
 }
 
 func (m Model) renderDirectoryRows(width, maxRows int) []string {
 	if len(m.directories) == 0 {
-		return []string{"    " + mutedStyle.Render("No directories available")}
+		return []string{"    " + mutedStyle().Render("No directories available")}
 	}
 	maxRows = clamp(maxRows, 1, 8)
 	start, end := visibleRange(len(m.directories), m.directoryIndex, maxRows)
@@ -614,7 +617,7 @@ func (m Model) renderActiveWorkspaceRows(width, maxRows int) []string {
 			Render(truncate(name, nameWidth)) +
 			"  " +
 			truncatePathTail(value.Root, pathWidth)
-		rows = append(rows, "    "+mutedStyle.Render(row))
+		rows = append(rows, "    "+mutedStyle().Render(row))
 	}
 	return rows
 }
@@ -655,11 +658,11 @@ func (m Model) renderDirectoryRow(
 		plain = label +
 			"  " + kind +
 			"  " + detail
-		styled = titleStyle.Render(label) +
-			"  " + mutedStyle.Render(
+		styled = titleStyle().Render(label) +
+			"  " + mutedStyle().Render(
 			kind,
 		) +
-			"  " + mutedStyle.Render(detail)
+			"  " + mutedStyle().Render(detail)
 	} else {
 		labelWidth := max(8, contentWidth/2)
 		detailWidth := max(1, contentWidth-labelWidth-2)
@@ -668,7 +671,7 @@ func (m Model) renderDirectoryRow(
 			Render(truncate(choice.label, labelWidth))
 		detail = truncate(detail, detailWidth)
 		plain = label + "  " + detail
-		styled = titleStyle.Render(label) + "  " + mutedStyle.Render(detail)
+		styled = titleStyle().Render(label) + "  " + mutedStyle().Render(detail)
 	}
 	if selected {
 		return renderSelectableRow(
@@ -686,7 +689,7 @@ func (m Model) renderDirectoryRow(
 }
 
 func renderSelectableRow(content string, width int, focused bool) string {
-	return selectTheme.selectableRow(content, width, focused)
+	return selectTheme().selectableRow(content, width, focused)
 }
 
 func (t rowTheme) selectableRow(content string, width int, focused bool) string {
@@ -741,7 +744,7 @@ func (m Model) dispatchSummary() string {
 func (m Model) renderProviderRows(width int) []string {
 	if len(m.providers) == 0 {
 		return []string{
-			"    " + mutedStyle.Render("No coding agents available"),
+			"    " + mutedStyle().Render("No coding agents available"),
 		}
 	}
 
@@ -767,11 +770,11 @@ func (m Model) renderProviderRows(width int) []string {
 			))
 			continue
 		}
-		statusStyle := successStyle
+		statusStyle := successStyle()
 		if !info.Available {
-			statusStyle = errorStyle
+			statusStyle = errorStyle()
 		}
-		styled := titleStyle.Render(label) +
+		styled := titleStyle().Render(label) +
 			"  " + statusStyle.Render(status)
 		rows = append(rows, "  "+lipgloss.NewStyle().
 			Width(width).
@@ -808,7 +811,7 @@ func (m *Model) startPathNav() {
 // navigator is sitting in.
 // handlePathNavKey drives the fzf-style picker; a true return means Enter
 // chose a directory (available via pathNav.chosen()).
-func (m *Model) handlePathNavKey(msg tea.KeyMsg) bool {
+func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 	switch msg.String() {
 	case "down", "ctrl+n":
 		m.pathNav.moveHighlight(1)

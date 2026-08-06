@@ -9,12 +9,12 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
-func (m Model) updateCompose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c", "ctrl+[":
 		return m.closeComposer(), nil
@@ -103,7 +103,7 @@ func (m Model) insertComposerNewline() (tea.Model, tea.Cmd) {
 // viewport, so an inserted rune leaves the view a row behind the cursor
 // until the next keystroke drags it along.
 func insertTextareaNewline(input *textarea.Model) {
-	*input, _ = input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	*input, _ = input.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
 // syncComposerSize keeps the persisted reply textarea sized to the Spanreed
@@ -138,7 +138,7 @@ func resetTextareaScroll(input *textarea.Model) {
 	for input.Line() > row {
 		input.CursorUp()
 	}
-	input.SetCursor(column)
+	input.SetCursorColumn(column)
 }
 
 // insertComposerToken inserts text into the reply at the cursor, padded
