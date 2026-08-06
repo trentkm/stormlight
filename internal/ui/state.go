@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -273,9 +273,9 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 		m.agentCursor = clamp(m.agentCursor+delta, 0, len(agents)-1)
 	case paneInteraction:
 		if delta > 0 {
-			m.interaction.LineDown(delta)
+			m.interaction.ScrollDown(delta)
 		} else {
-			m.interaction.LineUp(-delta)
+			m.interaction.ScrollUp(-delta)
 		}
 	}
 }

@@ -6,20 +6,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
-// withColor forces a color profile for the default renderer: tests run
-// without a terminal, where lipgloss renders everything plain.
-func withColor(t *testing.T) {
-	t.Helper()
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
-}
+// withColor marks the tests that assert exact color sequences.
+//
+// It used to force a profile. v1 rendered through a global renderer that
+// downsampled to whatever profile it had detected, so with no terminal
+// attached it dropped color entirely and these tests saw plain text. v2 has
+// no global profile — a Style always emits full-fidelity ANSI and
+// downsampling moved to Bubble Tea's renderer, which is not in play here —
+// so there is nothing left to force.
+func withColor(t *testing.T) { t.Helper() }
 
 func TestRenderClaudeTranscriptRendersConversation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
@@ -87,9 +86,9 @@ func TestRenderClaudeTranscriptPaintsConversation(t *testing.T) {
 		byText[strings.TrimSpace(ansi.Strip(line))] = line
 	}
 	for _, want := range []struct{ text, styled string }{
-		{"❯ fix the parser", promptMarkStyle.Render("❯ ")},
-		{"⏺ Bash(go test ./...)", toolNameStyle.Render("Bash")},
-		{"⎿ ok", resultStyle.Render("  ⎿ ok")},
+		{"❯ fix the parser", promptMarkStyle().Render("❯ ")},
+		{"⏺ Bash(go test ./...)", toolNameStyle().Render("Bash")},
+		{"⎿ ok", resultStyle().Render("  ⎿ ok")},
 	} {
 		line, ok := byText[want.text]
 		if !ok {

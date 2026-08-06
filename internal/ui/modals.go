@@ -10,12 +10,12 @@ import (
 	"slices"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
-func (m Model) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "x", "ctrl+x", "y", "enter":
 		if m.activePane == paneWorkspaces {
@@ -119,7 +119,7 @@ func (m Model) renderInfoModal(width, height int) string {
 	modalWidth, modalHeight := modalDimensions(width, height, 72, len(rows)+6)
 	innerWidth := max(1, modalWidth-2)
 	lines := []string{
-		"  " + titleStyle.Render("Workspace · "+m.selectedWorkspaceLabel()),
+		"  " + titleStyle().Render("Workspace · "+m.selectedWorkspaceLabel()),
 		"",
 	}
 	labelWidth := 0
@@ -130,10 +130,10 @@ func (m Model) renderInfoModal(width, height int) string {
 		pad := strings.Repeat(" ", labelWidth-lipgloss.Width(row[0]))
 		value := truncate(row[1], max(1, innerWidth-labelWidth-6))
 		lines = append(lines,
-			"  "+mutedStyle.Render(row[0])+pad+"  "+value,
+			"  "+mutedStyle().Render(row[0])+pad+"  "+value,
 		)
 	}
-	lines = append(lines, "", "  "+mutedStyle.Render("any key closes"))
+	lines = append(lines, "", "  "+mutedStyle().Render("any key closes"))
 	return renderModal(strings.Join(lines, "\n"), modalWidth, modalHeight)
 }
 
@@ -177,20 +177,20 @@ func (m Model) renderHelpModal(width, height int) string {
 		}},
 	}
 
-	lines := []string{"  " + titleStyle.Render("Keys"), ""}
+	lines := []string{"  " + titleStyle().Render("Keys"), ""}
 	for _, section := range sections {
-		lines = append(lines, "  "+accentStyle.Render(section.title))
+		lines = append(lines, "  "+accentStyle().Render(section.title))
 		for _, key := range section.keys {
 			pad := max(1, 20-lipgloss.Width(key[0]))
 			lines = append(lines,
-				"    "+titleStyle.Render(key[0])+
+				"    "+titleStyle().Render(key[0])+
 					strings.Repeat(" ", pad)+
-					mutedStyle.Render(key[1]),
+					mutedStyle().Render(key[1]),
 			)
 		}
 		lines = append(lines, "")
 	}
-	lines = append(lines, "  "+mutedStyle.Render("any key closes"))
+	lines = append(lines, "  "+mutedStyle().Render("any key closes"))
 
 	modalWidth, modalHeight := modalDimensions(width, height, 64, len(lines)+2)
 	return renderModal(strings.Join(lines, "\n"), modalWidth, modalHeight)
@@ -224,7 +224,7 @@ func (m Model) beginRename() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
@@ -264,11 +264,11 @@ func (m Model) renderRenameModal(width, height int) string {
 	}
 	m.renameInput.SetWidth(max(10, innerWidth-6))
 	content := strings.Join([]string{
-		"  " + titleStyle.Render(title),
+		"  " + titleStyle().Render(title),
 		"",
 		"    " + m.renameInput.View(),
 		"",
-		"  " + mutedStyle.Render("Enter apply  Esc cancel"),
+		"  " + mutedStyle().Render("Enter apply  Esc cancel"),
 	}, "\n")
 	return renderModal(content, modalWidth, modalHeight)
 }

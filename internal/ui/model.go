@@ -7,15 +7,16 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/surface"
+	"github.com/trentkm/stormlight/internal/theme"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -266,8 +267,8 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 	taskInput := newTaskInput("What should the agent do?")
 
 	sendInput := newTaskInput("Reply to the selected agent")
-	sendInput.SetPromptFunc(2, func(lineIdx int) string {
-		if lineIdx == 0 {
+	sendInput.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
 			return "> "
 		}
 		return "  "
@@ -305,21 +306,36 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refreshCmd(), tickCmd(), shimmerTickCmd())
+	return tea.Batch(
+		m.refreshCmd(),
+		tickCmd(),
+		shimmerTickCmd(),
+		// Ask the terminal what it is painted on. Lip Gloss v1 answered this
+		// itself by querying behind the program's back on first use; v2 does
+		// not, so the palette runs on its dark default until this comes back.
+		tea.RequestBackgroundColor,
+	)
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case tea.BackgroundColorMsg:
+		// Settling the palette changes every color the next frame draws,
+		// and the transcript renderer reads the same answer when it rebuilds
+		// its markdown stylesheet.
+		theme.Resolve(msg.IsDark())
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		interactionWidth, contentHeight := m.interactionDimensions()
 		if !m.ready {
-			m.interaction = viewport.New(interactionWidth, contentHeight)
+			m.interaction = viewport.New(viewport.WithWidth(interactionWidth), viewport.WithHeight(contentHeight))
 			m.ready = true
 		} else {
-			m.interaction.Width = interactionWidth
-			m.interaction.Height = contentHeight
+			m.interaction.SetWidth(interactionWidth)
+			m.interaction.SetHeight(contentHeight)
 		}
 		// A shrink can drop the optional name row out of the form; typing
 		// must not keep landing in a field that is no longer drawn.
@@ -396,15 +412,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectionActive = false
 			}
 			followOutput := m.interactionID != msg.id || m.interaction.AtBottom()
-			previousOffset := m.interaction.YOffset
+			previousOffset := m.interaction.YOffset()
 			m.interactionID = msg.id
 			if msg.err != nil {
-				m.interaction.SetContent(errorStyle.Render(msg.err.Error()))
+				m.interaction.SetContent(errorStyle().Render(msg.err.Error()))
 			} else {
 				selected, _ := m.selectedAgent()
 				m.interactionContent = cleanInteraction(
 					msg.content,
-					m.interaction.Width,
+					m.interaction.Width(),
 					selected.Provider,
 				)
 				m.refreshSearch()
@@ -453,19 +469,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = msg.status
 		}
-		// Bubble Tea does not restore mouse reporting after ExecProcess
-		// (external attach, suspended overlays); without it the terminal
-		// falls back to native tmux selection. Re-asserting is free.
-		return m, tea.Batch(m.refreshCmd(), tea.EnableMouseCellMotion)
+		return m, m.refreshCmd()
 
 	case directoryPickedMsg:
-		// The picker may have run via ExecProcess, which loses mouse
-		// reporting on resume; re-assert it (free when already on).
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "Action failed"
 			diagnostic.Logger().Error("directory picker failed", "error", msg.err)
-			return m, tea.EnableMouseCellMotion
+			return m, nil
 		}
 		if msg.path == "" {
 			if m.mode == modeAddWorkspace {
@@ -473,15 +484,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.status = "New agent"
 			}
-			return m, tea.EnableMouseCellMotion
+			return m, nil
 		}
 		if m.mode == modeAddWorkspace {
 			m.cwdInput.SetValue(msg.path)
 			m.status = "Adding workspace"
-			return m, tea.Batch(
-				addWorkspaceCmd(m.backend, msg.path),
-				tea.EnableMouseCellMotion,
-			)
+			return m, addWorkspaceCmd(m.backend, msg.path)
 		}
 		m.prepareDirectoryChoices(msg.path)
 		m.cwdInput.SetValue(msg.path)
@@ -489,14 +497,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.focusForm()
 		m.syncTaskComposerSize()
 		m.status = "Directory selected"
-		return m, tea.EnableMouseCellMotion
+		return m, nil
 
 	case taskEditedMsg:
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "Action failed"
 			diagnostic.Logger().Error("task editor failed", "error", msg.err)
-			return m, tea.EnableMouseCellMotion
+			return m, nil
 		}
 		m.taskInput.SetValue(msg.task)
 		m.formFocus = dispatchTask
@@ -504,7 +512,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncTaskComposerSize()
 		m.err = nil
 		m.status = "Task updated"
-		return m, tea.EnableMouseCellMotion
+		return m, nil
 
 	case workspaceAddedMsg:
 		if msg.err != nil {
@@ -524,7 +532,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.err != nil {
 			m.err = nil
 			if m.status == "Action failed" {
@@ -582,18 +590,34 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+// View draws the dashboard and, with it, declares the terminal state the
+// dashboard needs.
+//
+// The alt screen and mouse reporting are fields here rather than commands
+// sent from Update because they are properties of the view, not events. That
+// distinction is what retires a standing workaround: an external attach or a
+// suspended overlay runs through ExecProcess, which returns with mouse
+// reporting off, and under v1 every message that could follow one had to
+// remember to re-assert it. A field is re-asserted by every frame, so there
+// is nothing left to forget.
+func (m Model) View() tea.View {
+	view := tea.NewView("")
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
+
 	if !m.ready {
-		return "\n  Loading..."
+		view.SetContent("\n  Loading...")
+		return view
 	}
 
 	header := m.renderHeader()
 	body := m.renderBody()
 	footer := m.renderFooter()
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	view.SetContent(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	return view
 }
 
-func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.normalPrefix == "," {
 		m.normalPrefix = ""

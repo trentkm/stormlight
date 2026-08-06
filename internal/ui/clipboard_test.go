@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type fakeClipboard struct {
@@ -67,7 +67,7 @@ func TestComposeCtrlVInsertsPastedImagePath(t *testing.T) {
 	model.mode = modeCompose
 	model.sendInput.SetValue("look at this:")
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
 	model = updated.(Model)
 
 	value := model.sendInput.Value()
@@ -98,7 +98,7 @@ func TestComposeCtrlVReportsMissingImage(t *testing.T) {
 	model.mode = modeCompose
 	model.sendInput.SetValue("before")
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
 	model = updated.(Model)
 
 	if model.err == nil || model.err.Error() != "clipboard has no image" {

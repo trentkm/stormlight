@@ -9,7 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 )
@@ -17,9 +17,9 @@ import (
 func (m Model) renderInteraction(width, height int) string {
 	managedAgent, ok := m.selectedAgent()
 	if !ok {
-		return mutedStyle.Render(truncate("No agent selected", width))
+		return mutedStyle().Render(truncate("No agent selected", width))
 	}
-	title := titleStyle.Render(truncate(agentDisplayTitle(managedAgent), width))
+	title := titleStyle().Render(truncate(agentDisplayTitle(managedAgent), width))
 	if rowEmphasisFor(managedAgent) == emphasisWorking {
 		title = shimmerText(
 			truncate(agentDisplayTitle(managedAgent), width),
@@ -30,7 +30,7 @@ func (m Model) renderInteraction(width, height int) string {
 	meta := interactionMeta(managedAgent, width)
 	switch {
 	case managedAgent.EffectiveMark() == agent.MarkAttention:
-		meta = lipgloss.NewStyle().Foreground(colorWaiting).
+		meta = lipgloss.NewStyle().Foreground(colorWaiting()).
 			Render(truncate("Marked needs attention", width))
 	case managedAgent.EffectiveMark() == agent.MarkWorking:
 		// The human said it is still going, and the meta line already reads
@@ -42,20 +42,20 @@ func (m Model) renderInteraction(width, height int) string {
 		if managedAgent.Attention.TerminalOwned() {
 			hint = " — Enter opens the terminal"
 		}
-		meta = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true).
+		meta = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true).
 			Render(truncate(
 				"Needs "+string(managedAgent.Attention)+hint,
 				width,
 			))
 	case managedAgent.ProcessLive &&
 		managedAgent.Attention == agent.AttentionWaiting:
-		meta = lipgloss.NewStyle().Foreground(colorWaiting).
+		meta = lipgloss.NewStyle().Foreground(colorWaiting()).
 			Render(truncate("Unseen result", width))
 	}
 	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
 
 	viewportCopy := m.interaction
-	composer := mutedStyle.Render(truncate("i reply  / search  Enter open terminal", width))
+	composer := mutedStyle().Render(truncate("i reply  / search  Enter open terminal", width))
 	if managedAgent.ProcessLive && managedAgent.Attention.Urgent() &&
 		m.mode != modeCompose && m.mode != modeSearch {
 		// The heading line is easy to slide past; the band above the
@@ -71,11 +71,11 @@ func (m Model) renderInteraction(width, height int) string {
 			guidance = " ⚠ Needs " + string(managedAgent.Attention) +
 				" — Enter opens the terminal"
 		}
-		composer = attentionBandStyle.Width(width).Render(truncate(guidance, width))
+		composer = attentionBandStyle().Width(width).Render(truncate(guidance, width))
 	}
 	if m.mode == modeSearch {
 		m.search.input.SetWidth(max(1, width-2))
-		composer = accentStyle.Render("/") + m.search.input.View()
+		composer = accentStyle().Render("/") + m.search.input.View()
 	} else if m.search.query != "" {
 		position := "no matches"
 		if len(m.search.matches) > 0 {
@@ -85,7 +85,7 @@ func (m Model) renderInteraction(width, height int) string {
 				len(m.search.matches),
 			)
 		}
-		composer = mutedStyle.Render(truncate(
+		composer = mutedStyle().Render(truncate(
 			"/"+m.search.query+"  "+position+"  n next  N prev  Esc clear",
 			width,
 		))
@@ -108,7 +108,7 @@ func (m Model) renderInteraction(width, height int) string {
 		// Yield from the top: when the reader was at the bottom, the last
 		// output must stay visible above the composer.
 		atBottom := m.interaction.AtBottom()
-		viewportCopy.Height = max(1, viewportCopy.Height-inputHeight-2+1)
+		viewportCopy.SetHeight(max(1, viewportCopy.Height()-inputHeight-2+1))
 		if atBottom {
 			viewportCopy.GotoBottom()
 		}
@@ -116,11 +116,11 @@ func (m Model) renderInteraction(width, height int) string {
 	view := viewportCopy.View()
 	if m.selectionActive {
 		start, end := m.selectionRange()
-		view = paintTranscriptSelection(view, viewportCopy.YOffset, start, end)
+		view = paintTranscriptSelection(view, viewportCopy.YOffset(), start, end)
 	}
 	transcript := view + ansi.ResetStyle
 	if m.interactionID != managedAgent.ID {
-		transcript = mutedStyle.Render(truncate("Loading interaction...", width))
+		transcript = mutedStyle().Render(truncate("Loading interaction...", width))
 	}
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -163,18 +163,18 @@ func interactionMeta(managedAgent agent.Agent, width int) string {
 	tokens := []metaToken{{
 		plain: symbol + " " + agentStateLabel(managedAgent),
 		rendered: symbolStyle.Render(symbol) + " " +
-			mutedStyle.Render(agentStateLabel(managedAgent)),
+			mutedStyle().Render(agentStateLabel(managedAgent)),
 	}}
 	if provider := string(managedAgent.Provider); provider != "" {
-		tokens = append(tokens, metaToken{provider, mutedStyle.Render(provider)})
+		tokens = append(tokens, metaToken{provider, mutedStyle().Render(provider)})
 	}
 	if badge := modeBadge(managedAgent.Mode); badge != "" {
 		// AUTO is the one token here that changes what happens without you.
 		// The dispatch modal has always said it in amber; saying it in grey
 		// on the screen that stays open was the inconsistency.
-		style := mutedStyle
+		style := mutedStyle()
 		if managedAgent.Mode == agent.ModeAuto {
-			style = lipgloss.NewStyle().Foreground(colorWaiting).Bold(true)
+			style = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
 		}
 		tokens = append(tokens, metaToken{badge, style.Render(badge)})
 	}
@@ -185,7 +185,7 @@ func interactionMeta(managedAgent agent.Agent, width int) string {
 		})
 	}
 	if path := shortPath(managedAgent.Cwd); path != "" {
-		tokens = append(tokens, metaToken{path, mutedStyle.Render(path)})
+		tokens = append(tokens, metaToken{path, mutedStyle().Render(path)})
 	}
 	return joinMetaTokens(tokens, width)
 }
@@ -215,7 +215,7 @@ func joinMetaTokens(tokens []metaToken, width int) string {
 	for _, token := range tokens[:kept] {
 		parts = append(parts, token.rendered)
 	}
-	return strings.Join(parts, mutedStyle.Render(metaSeparator))
+	return strings.Join(parts, mutedStyle().Render(metaSeparator))
 }
 
 // checkoutStyle picks the badge's color. A linked worktree is the tree worth
@@ -227,9 +227,9 @@ func joinMetaTokens(tokens []metaToken, width int) string {
 // alarm belongs to a per-workspace setting (#47); the fact belongs here.
 func checkoutStyle(checkout checkoutBadge) lipgloss.Style {
 	if checkout.primary {
-		return mutedStyle
+		return mutedStyle()
 	}
-	return accentStyle
+	return accentStyle()
 }
 
 func cleanInteraction(content string, width int, providerID agent.Provider) string {
@@ -237,7 +237,7 @@ func cleanInteraction(content string, width int, providerID agent.Provider) stri
 	lines := focusConversation(strings.Split(clean, "\n"), providerID)
 	lines = trimBlankInteractionLines(lines)
 	if len(lines) == 0 {
-		return mutedStyle.Render("No output yet")
+		return mutedStyle().Render("No output yet")
 	}
 
 	compacted := make([]string, 0, len(lines))
@@ -271,7 +271,7 @@ func cleanInteraction(content string, width int, providerID agent.Provider) stri
 	}
 	compacted = trimBlankInteractionLines(compacted)
 	if len(compacted) == 0 {
-		return mutedStyle.Render("No output yet")
+		return mutedStyle().Render("No output yet")
 	}
 	return strings.Join(compacted, "\n")
 }

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
+	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
@@ -27,17 +27,43 @@ import (
 // row to the wrap width with styled spaces, which the pane then has to strip.
 
 var (
-	// markdownOnce builds the renderer lazily: the stylesheet resolves
-	// adaptive colors, so it must not be built before lipgloss has settled
-	// on a terminal background.
-	markdownOnce = sync.OnceValue(newMarkdownRenderer)
-	// markdownMu serializes Render. A TermRenderer carries one render
-	// context with a block stack across calls, so two transcripts rendered
-	// at once would interleave their blocks.
+	// markdownMu serializes Render and guards the cached renderer below. A
+	// TermRenderer carries one render context with a block stack across
+	// calls, so two transcripts rendered at once would interleave their
+	// blocks.
 	markdownMu sync.Mutex
-	// proseStyle paints prose when markdown rendering is unavailable.
-	proseStyle = lipgloss.NewStyle().Foreground(theme.Text)
+	// markdownRenderer is the cached renderer and markdownDark is the
+	// background its stylesheet was built for.
+	//
+	// The stylesheet is a data structure of resolved color strings, so it
+	// is only correct for one background. Caching it outright — as a
+	// sync.OnceValue did — was safe only while Lip Gloss v1 answered the
+	// background question synchronously on first use. The answer now
+	// arrives as a message, so a transcript rendered before it lands would
+	// otherwise pin the guessed palette for the rest of the session.
+	// Keying the cache on the background rebuilds it exactly once, when
+	// the answer changes it.
+	markdownRenderer *glamour.TermRenderer
+	markdownDark     bool
+	markdownBuilt    bool
 )
+
+// proseStyle paints prose when markdown rendering is unavailable.
+func proseStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(theme.Color(theme.Text))
+}
+
+// cachedRenderer returns the renderer for the current background, building
+// it if the background has changed since the last call. Callers must hold
+// markdownMu.
+func cachedRenderer() *glamour.TermRenderer {
+	if dark := theme.Dark(); !markdownBuilt || dark != markdownDark {
+		markdownRenderer = newMarkdownRenderer()
+		markdownDark = dark
+		markdownBuilt = true
+	}
+	return markdownRenderer
+}
 
 func newMarkdownRenderer() *glamour.TermRenderer {
 	renderer, err := glamour.NewTermRenderer(
@@ -60,15 +86,16 @@ func newMarkdownRenderer() *glamour.TermRenderer {
 // styling rather than failing: a transcript that renders is worth more than
 // one that reports why it could not.
 func renderMarkdown(text string) string {
-	renderer := markdownOnce()
-	if renderer == nil {
-		return paintLines(text, proseStyle)
-	}
 	markdownMu.Lock()
+	renderer := cachedRenderer()
+	if renderer == nil {
+		markdownMu.Unlock()
+		return paintLines(text, proseStyle())
+	}
 	rendered, err := renderer.Render(text)
 	markdownMu.Unlock()
 	if err != nil {
-		return paintLines(text, proseStyle)
+		return paintLines(text, proseStyle())
 	}
 	// Glamour brackets a document with blank lines. The caller lays the ⏺
 	// marker on the first row, which has to be text.
@@ -86,7 +113,7 @@ func paintLines(text string, style lipgloss.Style) string {
 	return strings.Join(lines, "\n")
 }
 
-func color(c lipgloss.TerminalColor) *string {
+func color(c theme.Pair) *string {
 	hex := theme.Hex(c)
 	return &hex
 }

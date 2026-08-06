@@ -7,8 +7,8 @@ import (
 	"context"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
@@ -69,7 +69,7 @@ func (m Model) beginMark() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateMark(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateMark(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc", "ctrl+c", "ctrl+[":
@@ -150,7 +150,7 @@ func (m Model) renderMarkModal(width, height int) string {
 		title = "Mark · " + truncate(agentDisplayTitle(selected), contentWidth-8)
 	}
 	lines := []string{
-		"  " + titleStyle.Render(title),
+		"  " + titleStyle().Render(title),
 		"",
 	}
 	for index, choice := range markChoices {
@@ -172,13 +172,13 @@ func (m Model) renderMarkModal(width, height int) string {
 		lines = append(lines, "  "+lipgloss.NewStyle().
 			Width(contentWidth).
 			MaxWidth(contentWidth).
-			Render(" "+accentStyle.Render(choice.key)+"  "+
-				titleStyle.Render(label)+"  "+
-				mutedStyle.Render(detail)))
+			Render(" "+accentStyle().Render(choice.key)+"  "+
+				titleStyle().Render(label)+"  "+
+				mutedStyle().Render(detail)))
 	}
 	lines = append(lines,
 		"",
-		"  "+mutedStyle.Render("j/k choose  Enter apply  Esc cancel"),
+		"  "+mutedStyle().Render("j/k choose  Enter apply  Esc cancel"),
 	)
 	return renderModal(strings.Join(lines, "\n"), modalWidth, modalHeight)
 }

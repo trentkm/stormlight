@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -117,7 +117,7 @@ func TestDispatchPathNavPicksIntoTheNextField(t *testing.T) {
 
 	updated, _ := model.updateDispatch(runeKey("payments"))
 	model = updated.(Model)
-	updated, _ = model.updateDispatch(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	if model.formFocus != dispatchName {
 		t.Fatalf("enter did not confirm into the name field; focus = %v",

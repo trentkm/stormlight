@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -84,7 +84,7 @@ func TestSlashSearchFlowMatchesJumpsAndClears(t *testing.T) {
 		t.Fatalf("live search state = %#v", model.search)
 	}
 
-	next, _ = model.updateSearch(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = model.updateSearch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if model.mode != modeNormal || model.status != "Match 1/2" {
 		t.Fatalf("confirm state: mode=%d status=%q", model.mode, model.status)
@@ -109,7 +109,7 @@ func TestSlashSearchFlowMatchesJumpsAndClears(t *testing.T) {
 		t.Fatalf("N did not go back: %q", model.status)
 	}
 
-	updated, _ = model.updateNormal(tea.KeyMsg{Type: tea.KeyEscape})
+	updated, _ = model.updateNormal(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = updated.(Model)
 	if model.search.query != "" {
 		t.Fatalf("esc kept the query: %q", model.search.query)
@@ -134,18 +134,13 @@ func TestMouseWheelScrollsTranscriptWhileComposing(t *testing.T) {
 	if model.mode != modeCompose {
 		t.Fatalf("mode after i = %d", model.mode)
 	}
-	offset := model.interaction.YOffset
-	wheel := tea.MouseMsg{
-		X:      90,
-		Y:      5,
-		Button: tea.MouseButtonWheelUp,
-		Action: tea.MouseActionPress,
-	}
+	offset := model.interaction.YOffset()
+	wheel := tea.MouseWheelMsg{X: 90, Y: 5, Button: tea.MouseWheelUp}
 	updated, _ = model.Update(wheel)
 	model = updated.(Model)
-	if model.interaction.YOffset >= offset {
+	if model.interaction.YOffset() >= offset {
 		t.Fatalf("wheel did not scroll while composing: %d -> %d",
-			offset, model.interaction.YOffset)
+			offset, model.interaction.YOffset())
 	}
 	if model.mode != modeCompose {
 		t.Fatalf("wheel left compose mode: %d", model.mode)
@@ -159,10 +154,7 @@ func TestDragSelectsHighlightsAndCopies(t *testing.T) {
 	model.interaction.SetContent(model.interactionContent)
 	model.interaction.GotoTop()
 
-	press := tea.MouseMsg{
-		X: 90, Y: spanreedContentTop + 2,
-		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
-	}
+	press := tea.MouseClickMsg{X: 90, Y: spanreedContentTop + 2, Button: tea.MouseLeft}
 	updated, _ := model.Update(press)
 	model = updated.(Model)
 	if !model.selectionActive || model.selectionAnchor != 2 {
@@ -170,8 +162,7 @@ func TestDragSelectsHighlightsAndCopies(t *testing.T) {
 			model.selectionActive, model.selectionAnchor)
 	}
 
-	motion := press
-	motion.Action = tea.MouseActionMotion
+	motion := tea.MouseMotionMsg(press)
 	motion.Y = spanreedContentTop + 6
 	updated, _ = model.Update(motion)
 	model = updated.(Model)
@@ -187,8 +178,7 @@ func TestDragSelectsHighlightsAndCopies(t *testing.T) {
 		t.Fatalf("selection painted wrong rows: %q", painted)
 	}
 
-	release := press
-	release.Action = tea.MouseActionRelease
+	release := tea.MouseReleaseMsg(press)
 	release.Y = motion.Y
 	updated, cmd := model.Update(release)
 	model = updated.(Model)
@@ -210,36 +200,16 @@ func TestSearchEscRestoresViewportOffset(t *testing.T) {
 	model = updated.(Model)
 	next, _ := model.updateSearch(runeKey("needle"))
 	model = next.(Model)
-	if model.interaction.YOffset == 3 {
+	if model.interaction.YOffset() == 3 {
 		t.Fatal("live search did not move the viewport")
 	}
-	next, _ = model.updateSearch(tea.KeyMsg{Type: tea.KeyEscape})
+	next, _ = model.updateSearch(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = next.(Model)
-	if model.interaction.YOffset != 3 {
-		t.Fatalf("esc offset = %d, want 3", model.interaction.YOffset)
+	if model.interaction.YOffset() != 3 {
+		t.Fatalf("esc offset = %d, want 3", model.interaction.YOffset())
 	}
 	if model.search.query != "" {
 		t.Fatalf("esc kept the query: %q", model.search.query)
-	}
-}
-
-func TestDropMouseFragmentsFiltersSGRNoise(t *testing.T) {
-	for _, fragment := range []string{
-		"[<65;127;30M", "[<65;127;30", "<64;124;39M", "[<65;110;33m",
-	} {
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(fragment)}
-		if DropMouseFragments(nil, msg) != nil {
-			t.Fatalf("fragment %q was not dropped", fragment)
-		}
-	}
-	for _, legit := range []string{"M", "hello", "[<ok>]", "<3", "a[<65"} {
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(legit)}
-		if DropMouseFragments(nil, msg) == nil {
-			t.Fatalf("legitimate input %q was dropped", legit)
-		}
-	}
-	if DropMouseFragments(nil, tea.KeyMsg{Type: tea.KeyEnter}) == nil {
-		t.Fatal("non-rune key was dropped")
 	}
 }
 
@@ -251,7 +221,7 @@ func TestComposerStaysOpenAfterSending(t *testing.T) {
 		t.Fatalf("mode after i = %d", model.mode)
 	}
 	model.sendInput.SetValue("first message")
-	next, cmd := model.updateCompose(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := model.updateCompose(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 	if cmd == nil {
 		t.Fatal("send command was not created")
@@ -262,7 +232,7 @@ func TestComposerStaysOpenAfterSending(t *testing.T) {
 	if model.sendInput.Value() != "" {
 		t.Fatalf("composer kept the sent text: %q", model.sendInput.Value())
 	}
-	next, _ = model.updateCompose(tea.KeyMsg{Type: tea.KeyEscape})
+	next, _ = model.updateCompose(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = next.(Model)
 	if model.mode != modeNormal {
 		t.Fatalf("esc did not leave the composer: mode = %d", model.mode)
@@ -276,27 +246,22 @@ func TestMouseWheelScrollsPaneUnderPointer(t *testing.T) {
 	model.interaction.SetContent(model.interactionContent)
 	model.interaction.GotoTop()
 
-	wheel := tea.MouseMsg{
-		X:      90,
-		Y:      5,
-		Button: tea.MouseButtonWheelDown,
-		Action: tea.MouseActionPress,
-	}
+	wheel := tea.MouseWheelMsg{X: 90, Y: 5, Button: tea.MouseWheelDown}
 	updated, _ := model.Update(wheel)
 	model = updated.(Model)
-	if model.interaction.YOffset == 0 {
+	if model.interaction.YOffset() == 0 {
 		t.Fatal("wheel over the Spanreed region did not scroll it")
 	}
 	if model.activePane != paneWorkspaces {
 		t.Fatalf("wheel moved keyboard focus to pane %d", model.activePane)
 	}
 
-	offset := model.interaction.YOffset
+	offset := model.interaction.YOffset()
 	cursor := model.workspaceCursor
 	wheel.X = 5
 	updated, _ = model.Update(wheel)
 	model = updated.(Model)
-	if model.interaction.YOffset != offset {
+	if model.interaction.YOffset() != offset {
 		t.Fatal("wheel over the workspace list scrolled the transcript")
 	}
 	if model.workspaceCursor != cursor {
@@ -310,7 +275,7 @@ func TestSearchSurvivesTranscriptRefresh(t *testing.T) {
 	model = updated.(Model)
 	next, _ := model.updateSearch(runeKey("error"))
 	model = next.(Model)
-	next, _ = model.updateSearch(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = model.updateSearch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
 
 	refreshed, _ := model.Update(interactionMsg{

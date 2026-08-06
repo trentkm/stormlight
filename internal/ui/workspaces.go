@@ -9,13 +9,13 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
-func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.formFocus == dispatchDirectory {
 		switch {
@@ -91,7 +91,7 @@ func (m Model) updateAddWorkspace(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) renderWorkspaces(width, height int) string {
 	if len(m.groups) == 0 {
-		return mutedStyle.Render(" No workspaces")
+		return mutedStyle().Render(" No workspaces")
 	}
 
 	expanded := m.expandedRows()
@@ -177,13 +177,13 @@ func (m Model) renderWorkspaceRow(
 		)
 	}
 
-	renderedName := titleStyle.Render(name)
+	renderedName := titleStyle().Render(name)
 	switch {
 	case tier == tierUrgent:
 		// Urgent attention outranks the working glow: the name goes loud
 		// amber to match the chip already shouting on the right.
 		renderedName = lipgloss.NewStyle().
-			Foreground(colorWaiting).
+			Foreground(colorWaiting()).
 			Bold(true).
 			Render(name)
 	case active > 0:
@@ -193,7 +193,7 @@ func (m Model) renderWorkspaceRow(
 		renderedName +
 		strings.Repeat(" ", gap) +
 		chipsStyled(chips)
-	bottom := mutedStyle.Render(" " + bottomContent)
+	bottom := mutedStyle().Render(" " + bottomContent)
 	if !m.expandedRows() {
 		return top
 	}
@@ -220,21 +220,21 @@ func workspaceCountChips(active, urgent, waiting, total int) []countChip {
 	if urgent > 0 {
 		chips = append(chips, countChip{
 			"!", urgent,
-			lipgloss.NewStyle().Foreground(colorWaiting).Bold(true),
+			lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true),
 		})
 	}
 	if waiting > 0 {
 		chips = append(chips, countChip{
-			"○", waiting, lipgloss.NewStyle().Foreground(colorWaiting),
+			"○", waiting, lipgloss.NewStyle().Foreground(colorWaiting()),
 		})
 	}
 	if active > 0 {
 		chips = append(chips, countChip{
-			"●", active, lipgloss.NewStyle().Foreground(colorWorking),
+			"●", active, lipgloss.NewStyle().Foreground(colorWorking()),
 		})
 	}
 	if len(chips) == 0 {
-		chips = append(chips, countChip{"·", total, mutedStyle})
+		chips = append(chips, countChip{"·", total, mutedStyle()})
 	}
 	return chips
 }
@@ -324,14 +324,14 @@ func renderSelectedWorkspaceRow(
 	switch {
 	case tier == tierUrgent:
 		activityStyle = activityStyle.
-			Foreground(colorWaiting).
+			Foreground(colorWaiting()).
 			Bold(true)
 		renderedName = activityStyle.Render(name)
 	case tier == tierWaiting:
-		activityStyle = activityStyle.Foreground(colorWaiting)
+		activityStyle = activityStyle.Foreground(colorWaiting())
 	case active:
 		activityStyle = activityStyle.
-			Foreground(colorWorking).
+			Foreground(colorWorking()).
 			Bold(true)
 		renderedName = shimmerText(name, shimmerPhase, theme.background)
 	}
