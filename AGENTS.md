@@ -218,13 +218,46 @@ The dashboard and agent lifecycle can be exercised without a real terminal:
   server. The `script` log captures the full client byte stream, including
   popup contents that `capture-pane` can't see.
 - Drive the UI with `send-keys`; read it with `capture-pane -p`.
+- **Launch the binary by absolute path**, never by name off a `PATH` you
+  set on the session:
+
+  ```sh
+  tmux -L <sock> send-keys "$PWD/stormlight" Enter   # yes
+  tmux -L <sock> ... -e PATH="$PWD:$PATH"            # no
+  ```
+
+  `-e PATH=...` reaches the session environment, and then the pane's login
+  shell sources its rc and puts `~/.local/bin` back in front — so `stormlight`
+  resolves to the *installed* binary and the branch build under test never
+  runs. It fails silently and looks exactly like the change not working. When
+  a fix passes its tests but the dashboard disagrees, confirm which binary is
+  running before believing the screen: point `STORMLIGHT_LOG_FILE` at a
+  scratch file and read the `command started` line, which names the version.
 - For server post-mortems, start tmux with `-vv` and read the
   `tmux-server-*.log` it drops in the working directory.
 - **Isolate all state**: set both `XDG_CONFIG_HOME` and `XDG_STATE_HOME` for
   every end-to-end run. The workspace catalog lives in
   `$XDG_STATE_HOME/stormlight/workspaces.json` and is mutated by
   add/remove/rename flows — an unisolated test run will edit your real
-  catalog.
+  catalog. Seed it by copying a catalog the app itself wrote, not by
+  hand-authoring one: the file is an object, a plausible-looking array is
+  rejected at load, and the dashboard then starts with no workspaces and
+  every subsequent capture shows a screen you did not mean to test.
+- **`capture-pane` on a session with no attached client is not what the user
+  sees.** With no client, tmux has no UTF-8 hint and downgrades box drawing,
+  so rounded corners come back as `┌` where a real terminal shows `╭`. Bubble
+  Tea v2 also declines to assume capabilities it cannot confirm, so a
+  clientless run degrades further than v1 did. Assert on glyphs only through
+  the attached-client recipe above; a plain detached capture is fine for
+  layout and text, not for appearance.
+
+Two habits make the difference between measuring the program and measuring
+the harness. Reproduce in a Go test before trusting a capture — the same
+render path, driven directly, is deterministic where a live session carries
+state from whatever you pressed earlier. And when a branch and `main` seem to
+differ, build both and diff their captures rather than reading one and
+reasoning about the other; `diff` on two `capture-pane` dumps settles in a
+second what a screenshot argues about for an hour.
 
 ## tmux version notes
 
