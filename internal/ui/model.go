@@ -532,6 +532,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
+	case tea.PasteMsg:
+		return m.updatePaste(msg)
+
 	case tea.KeyPressMsg:
 		if m.err != nil {
 			m.err = nil
