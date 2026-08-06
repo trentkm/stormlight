@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -599,6 +600,37 @@ func TestDispatchFormFitsItsModal(t *testing.T) {
 					size[0], size[1], picker, composer, modal)
 			}
 			assertViewFitsPane(t, model, size[0]-1, size[1]-1)
+		}
+	}
+}
+
+// One more row in the directory list must not cost the user a field.
+//
+// The list grows by a row when Yazi is installed, and that single row used to
+// tip an ordinary 100x30 terminal out of the roomy form — which took the name
+// field with it, out of the drawing and out of the focus order both, so an
+// agent could not be named at all. CI never saw it because the runners have
+// no Yazi. See #73.
+func TestDispatchNameSurvivesAnExtraDirectoryRow(t *testing.T) {
+	for _, yazi := range []string{"", "/opt/homebrew/bin/yazi"} {
+		model := dispatchTaskFixture(t, 100, 30)
+		model.chooseDispatchDirectory = true
+		model.yaziPath = yazi
+		model.prepareDirectoryChoices(model.initialCwd)
+		model.syncTaskComposerSize()
+
+		if !model.dispatchNameVisible() {
+			t.Fatalf("yazi=%q: the name field is not drawn at 100x30", yazi)
+		}
+		order := model.dispatchFocusOrder()
+		if !slices.Contains(order, dispatchName) {
+			t.Fatalf("yazi=%q: name missing from the focus order %v", yazi, order)
+		}
+		// The composer is the field the form exists to fill, so buying the
+		// name row back must not starve it below its own floor.
+		width, height := model.dispatchContentDimensions()
+		if task := model.dispatchLayout(width, height).taskHeight; task < minTaskHeight {
+			t.Fatalf("yazi=%q: composer starved to %d rows", yazi, task)
 		}
 	}
 }
