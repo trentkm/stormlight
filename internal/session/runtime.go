@@ -24,6 +24,18 @@ type Runtime interface {
 	SyncWindowSizes(context.Context, int, int) error
 }
 
+// StatusPublisher is an optional runtime capability: a runtime whose
+// terminal has chrome of its own can carry Stormlight's tally on it, so the
+// count of what is working and what is waiting stays readable from inside an
+// agent rather than only from the dashboard.
+//
+// It is separate from Runtime because it is presentation, not agent
+// semantics: a runtime with nowhere to put a status line is complete without
+// it, and callers treat its absence as "nothing to show it on".
+type StatusPublisher interface {
+	PublishStatus(context.Context, agent.Stats) error
+}
+
 type DispatchRequest struct {
 	Provider  agent.Provider
 	Name      string

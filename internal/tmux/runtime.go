@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
@@ -37,9 +38,9 @@ const (
 	statusLeftBaseOption    = "@stormlight_status_left_base"
 	statusLeftPrefixOption  = "@stormlight_status_left_prefix"
 	statusVersionOption     = "@stormlight_status_version"
-	statusVersion           = "3"
+	statusVersion           = "4"
 	prefixStatusStyle       = "bg=#e5c07b,fg=#1f2328,bold"
-	prefixStatusLeft        = " PREFIX  [Q] return  [?] all keys "
+	prefixStatusLeft        = " PREFIX  [Q] return  [N] next waiting  [?] all keys "
 	// The agents session lives on the Stormlight-owned server, so its
 	// status bar carries the dashboard's identity: a deep sapphire band
 	// with the glint-and-wordmark status-left, echoing the header.
@@ -89,7 +90,7 @@ const (
 		`#{T;=/#{status-right-length}:status-right}` +
 		`#[pop-default]#[norange default]`
 	basePaneFieldCount = 10
-	metadataFieldCount = 20
+	metadataFieldCount = 21
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -113,6 +114,7 @@ var agentMetadataFields = [metadataFieldCount]string{
 	"mode",
 	"transcript_path",
 	"mark",
+	"attention_at",
 }
 
 type Runtime struct {
@@ -121,6 +123,12 @@ type Runtime struct {
 	executable  string
 	socket      string
 	returnKeys  []string
+	nextKeys    []string
+
+	// statusMu guards the last tally written to the band. The dashboard
+	// publishes from its polling command, which runs off the render loop.
+	statusMu        sync.Mutex
+	publishedStatus string
 }
 
 var _ session.Runtime = (*Runtime)(nil)
@@ -160,10 +168,6 @@ func (r *Runtime) effectiveReturnKeys() []string {
 		return r.returnKeys
 	}
 	return []string{"C-6", "C-^"}
-}
-
-func (r *Runtime) statusRightHint() string {
-	return " " + r.effectiveReturnKeys()[0] + " ⏎ dashboard "
 }
 
 func (r *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
@@ -240,17 +244,18 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 
 	createdAt := time.Now().UTC()
 	options := map[string]string{
-		"@stormlight_id":         id,
-		"@stormlight_provider":   string(req.Provider),
-		"@stormlight_task":       metadataValue(req.Task),
-		"@stormlight_summary":    metadataValue(req.Task),
-		"@stormlight_cwd":        cwd,
-		"@stormlight_created_at": strconv.FormatInt(createdAt.Unix(), 10),
-		"@stormlight_activity":   string(agent.ActivityStarting),
-		"@stormlight_attention":  "",
-		"@stormlight_mark":       "",
-		"@stormlight_pane":       target.paneID,
-		"@stormlight_mode":       string(req.Mode),
+		"@stormlight_id":           id,
+		"@stormlight_provider":     string(req.Provider),
+		"@stormlight_task":         metadataValue(req.Task),
+		"@stormlight_summary":      metadataValue(req.Task),
+		"@stormlight_cwd":          cwd,
+		"@stormlight_created_at":   strconv.FormatInt(createdAt.Unix(), 10),
+		"@stormlight_activity":     string(agent.ActivityStarting),
+		"@stormlight_attention":    "",
+		"@stormlight_attention_at": "",
+		"@stormlight_mark":         "",
+		"@stormlight_pane":         target.paneID,
+		"@stormlight_mode":         string(req.Mode),
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(req.Workspace)
 	if err != nil {
@@ -442,6 +447,7 @@ func (r *Runtime) configureReturn(ctx context.Context, sessionName, windowID, ta
 	); err != nil {
 		return fmt.Errorf("install tmux return binding: %w", err)
 	}
+	r.configureNextPrefix(ctx, listing)
 	r.configureRootReturn(ctx)
 	if err := r.configureStatusBar(ctx, sessionName); err != nil {
 		diagnostic.Logger().Warn("tmux status bar unavailable", "error", err)
@@ -493,6 +499,7 @@ func (r *Runtime) configureRootReturn(ctx context.Context) {
 			)
 		}
 	}
+	r.configureNextRoot(ctx, listing)
 }
 
 // configureStatusBar dresses the managed session's status bar: the sapphire
@@ -524,8 +531,8 @@ func (r *Runtime) configureStatusBar(ctx context.Context, sessionName string) er
 		{"status-left", dynamicStatusLeft},
 		{"status-left-length", strconv.Itoa(
 			max(baseStatusLeftLength, len(prefixStatusLeft)))},
-		{"status-right", r.statusRightHint()},
-		{"status-right-length", strconv.Itoa(len(r.statusRightHint()))},
+		{"status-right", r.statusRight()},
+		{"status-right-length", strconv.Itoa(r.statusRightHintWidth())},
 		{"status-format[0]", statusFormat},
 	}
 	for _, option := range options {
@@ -703,6 +710,9 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 	if strings.TrimSpace(update.Summary) != "" {
 		values["@stormlight_summary"] = metadataValue(update.Summary)
 	}
+	if stamp, restamp := attentionStamp(managedAgent, values); restamp {
+		values["@stormlight_attention_at"] = stamp
+	}
 	for key, value := range values {
 		if _, err := r.runner.Run(ctx, nil,
 			"set-option", "-w", "-t", managedAgent.WindowID, key, value,
@@ -711,6 +721,35 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 		}
 	}
 	return nil
+}
+
+// attentionStamp decides whether an update moves an agent across the edge of
+// the amber inbox, and what the queue's ordering key becomes if it does.
+//
+// The stamp records entry, not the latest signal: an agent already pending on
+// a human keeps the time it started pending, however many summaries or
+// escalations arrive while it waits, or cycling the queue would reshuffle it
+// under the human's hand. Leaving the inbox clears the stamp, so the next
+// entry starts a fresh place in line.
+func attentionStamp(
+	before agent.Agent,
+	values map[string]string,
+) (string, bool) {
+	after := before
+	if attention, ok := values["@stormlight_attention"]; ok {
+		after.Attention = agent.Attention(attention)
+	}
+	if mark, ok := values["@stormlight_mark"]; ok {
+		after.Mark = agent.Mark(mark)
+	}
+	switch {
+	case after.NeedsAttention() == before.NeedsAttention():
+		return "", false
+	case after.NeedsAttention():
+		return formatUnixOption(time.Now().UTC()), true
+	default:
+		return "", true
+	}
 }
 
 func (r *Runtime) SetWorkspace(
@@ -930,11 +969,8 @@ func parseAgent(line string) (agent.Agent, bool) {
 	}
 
 	windowIndex, _ := strconv.Atoi(parts[2])
-	createdUnix, _ := strconv.ParseInt(core[5], 10, 64)
-	createdAt := time.Unix(createdUnix, 0).UTC()
-	if createdUnix == 0 {
-		createdAt = time.Time{}
-	}
+	createdAt := parseUnixOption(core[5])
+	attentionAt := parseUnixOption(core[20])
 	paneDead := parts[8] == "1"
 	var exitCode *int
 	if paneDead && parts[9] != "" {
@@ -969,6 +1005,7 @@ func parseAgent(line string) (agent.Agent, bool) {
 		CreatedAt:      createdAt,
 		Activity:       activity,
 		Attention:      agent.Attention(core[7]),
+		AttentionAt:    attentionAt,
 		TmuxSession:    parts[0],
 		WindowID:       parts[1],
 		WindowIndex:    windowIndex,
@@ -994,19 +1031,16 @@ func parseAgent(line string) (agent.Agent, bool) {
 }
 
 func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
-	createdAt := ""
-	if !managedAgent.CreatedAt.IsZero() {
-		createdAt = strconv.FormatInt(managedAgent.CreatedAt.Unix(), 10)
-	}
 	options := map[string]string{
 		"@stormlight_id":              managedAgent.ID,
 		"@stormlight_provider":        string(managedAgent.Provider),
 		"@stormlight_task":            metadataValue(managedAgent.Task),
 		"@stormlight_summary":         metadataValue(managedAgent.Summary),
 		"@stormlight_cwd":             managedAgent.Cwd,
-		"@stormlight_created_at":      createdAt,
+		"@stormlight_created_at":      formatUnixOption(managedAgent.CreatedAt),
 		"@stormlight_activity":        string(managedAgent.Activity),
 		"@stormlight_attention":       string(managedAgent.Attention),
+		"@stormlight_attention_at":    formatUnixOption(managedAgent.AttentionAt),
 		"@stormlight_pane":            managedAgent.PaneID,
 		"@stormlight_mode":            string(managedAgent.Mode),
 		"@stormlight_transcript_path": managedAgent.TranscriptPath,
@@ -1020,6 +1054,24 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		options[key] = value
 	}
 	return options, nil
+}
+
+// parseUnixOption reads a window option holding a Unix timestamp. An unset
+// or unparsable option is the zero time rather than 1970, so callers can
+// tell "never stamped" from "stamped at the epoch".
+func parseUnixOption(value string) time.Time {
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds == 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0).UTC()
+}
+
+func formatUnixOption(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return strconv.FormatInt(value.Unix(), 10)
 }
 
 func encodeWorkspaceOptions(value workspace.Context) (map[string]string, error) {

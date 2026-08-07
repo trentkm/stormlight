@@ -12,12 +12,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
 func (m Model) renderHeader() string {
 	width := max(1, m.width-1)
-	working, urgent, waiting := workspaceStats(m.agents)
+	stats := agent.Count(m.agents)
 	// No chrome: the wordmark's own gradient is the identity, floating on
 	// the terminal background with the counters at the far edge.
 	left := renderWordmark(m.shimmerPhaseOrRest())
@@ -26,15 +27,15 @@ func (m Model) renderHeader() string {
 	// legend for everything below it.
 	counts := []string{
 		renderHeaderCount("●", colorWorking(), false,
-			fmt.Sprintf("%d working", working)),
+			fmt.Sprintf("%d working", stats.Working)),
 	}
-	if waiting > 0 {
+	if stats.Waiting > 0 {
 		counts = append(counts, renderHeaderCount("○", colorWaiting(), false,
-			fmt.Sprintf("%d waiting", waiting)))
+			fmt.Sprintf("%d waiting", stats.Waiting)))
 	}
-	if urgent > 0 {
-		attentionLabel := fmt.Sprintf("%d need input", urgent)
-		if urgent == 1 {
+	if stats.Urgent > 0 {
+		attentionLabel := fmt.Sprintf("%d need input", stats.Urgent)
+		if stats.Urgent == 1 {
 			attentionLabel = "1 needs input"
 		}
 		counts = append(counts,

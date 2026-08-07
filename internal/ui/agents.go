@@ -340,56 +340,15 @@ const (
 	tierUrgent
 )
 
-func attentionTierOf(urgent, waiting int) attentionTier {
+func attentionTierOf(stats agent.Stats) attentionTier {
 	switch {
-	case urgent > 0:
+	case stats.Urgent > 0:
 		return tierUrgent
-	case waiting > 0:
+	case stats.Waiting > 0:
 		return tierWaiting
 	default:
 		return tierNone
 	}
-}
-
-// workspaceStats counts a workspace's agents into the same triage buckets the
-// rows use, marks included: a corrected row is corrected in the counters too,
-// or the summary would keep reporting the reading the human overruled.
-func workspaceStats(agents []agent.Agent) (active, urgent, waiting int) {
-	for _, managedAgent := range agents {
-		if agentCountsActive(managedAgent) {
-			active++
-		}
-		if !managedAgent.ProcessLive {
-			// A dead pane can't be waiting on anyone; its exit status is
-			// the story.
-			continue
-		}
-		switch managedAgent.EffectiveMark() {
-		case agent.MarkWorking:
-			// The human said it is still going; nothing is pending on them.
-			continue
-		case agent.MarkAttention:
-			waiting++
-			continue
-		}
-		switch {
-		case managedAgent.Attention.Urgent():
-			urgent++
-		case managedAgent.Attention == agent.AttentionWaiting:
-			waiting++
-		}
-	}
-	return active, urgent, waiting
-}
-
-// agentCountsActive reports whether an agent belongs in the "active" tally —
-// running by Stormlight's reading, or by the human's.
-func agentCountsActive(managedAgent agent.Agent) bool {
-	if managedAgent.EffectiveMark() == agent.MarkWorking {
-		return true
-	}
-	return managedAgent.Activity == agent.ActivityWorking ||
-		managedAgent.Activity == agent.ActivityStarting
 }
 
 func agentLocation(managedAgent agent.Agent) string {

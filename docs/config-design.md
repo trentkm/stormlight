@@ -77,6 +77,7 @@ session  = "stormlight-agents" # managed agents session name
 [tmux]
 socket      = "stormlight"     # tmux -L <socket>; "" targets the default server
 return_keys = ["C-6", "C-^"]   # single-press escape keys (root table)
+next_keys   = ["M-n"]          # single-press next-agent-waiting keys (root table)
 
 [ui]
 rows = "compact"               # compact | expanded
