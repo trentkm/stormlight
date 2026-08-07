@@ -13,8 +13,14 @@ Adapters deliberately do not own tmux behavior.
 The CLI adapters currently add provider-native lifecycle callbacks:
 
 - Codex: per-launch prompt and stop hooks report state, passed as a `-c`
-  config override. The external completion notifier they replaced carried
-  only turn ends, so a turn begun in the agent's own pane was invisible.
+  config override, over the external completion notifier. The notifier alone
+  carried only turn ends, so a turn begun in the agent's own pane was
+  invisible; it is retained because Codex holds injected hooks inert behind
+  a one-time trust review, and an agent reporting nothing would sit at
+  `working` until its process exited. The notifier has no trust gate, so it
+  is the floor and the hooks are the ceiling. Both surfaces report a turn
+  end once trusted; the two events carry identical state, so applying both
+  is idempotent.
 - Claude: per-launch prompt, notification, and stop hooks report state.
   Permission prompts raise attention through the notification hook; they
   are answered in the agent's own terminal, never intercepted.
