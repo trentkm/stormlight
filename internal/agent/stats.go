@@ -96,16 +96,28 @@ func queuedAt(a Agent) time.Time {
 	return a.AttentionAt
 }
 
-// NextInQueue picks the agent to hand a human next, given a queue from Queue
-// and the agent they are looking at now.
+// QueueStep is which way a cycle moves through the inbox.
+type QueueStep int
+
+const (
+	QueueForward QueueStep = 1
+	QueueBack    QueueStep = -1
+)
+
+// StepInQueue picks the agent to hand a human next, given a queue from Queue,
+// the agent they are looking at now, and which way they asked to go.
 //
-// From inside the queue it advances one place and wraps, so a key pressed
-// repeatedly walks the whole inbox even where arriving does not clear the
-// amber — an urgent prompt stays urgent until it is answered, and a cycle
-// that kept landing on it would never reach anything else. From anywhere
-// else it hands back the head, which is the plain first-in-first-out
-// answer.
-func NextInQueue(queue []Agent, currentID string) (Agent, bool) {
+// Visiting an agent does not take it out of the queue — nothing about
+// arriving answers what the agent is waiting for — so the queue holds still
+// and the human's place in it is what moves. That is why a step is relative:
+// pressing forward repeatedly walks the whole inbox and wraps, and pressing
+// back returns to what was just looked at rather than to the front of a line
+// that never shortened.
+//
+// From outside the queue there is no place to move from, so a step lands on
+// the end it came from: forward on the head, which is the plain
+// first-in-first-out answer, and back on the tail.
+func StepInQueue(queue []Agent, currentID string, step QueueStep) (Agent, bool) {
 	if len(queue) == 0 {
 		return Agent{}, false
 	}
@@ -116,7 +128,11 @@ func NextInQueue(queue []Agent, currentID string) (Agent, bool) {
 		if len(queue) == 1 {
 			return Agent{}, false
 		}
-		return queue[(index+1)%len(queue)], true
+		next := (index + int(step) + len(queue)) % len(queue)
+		return queue[next], true
+	}
+	if step == QueueBack {
+		return queue[len(queue)-1], true
 	}
 	return queue[0], true
 }

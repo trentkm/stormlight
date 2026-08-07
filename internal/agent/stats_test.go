@@ -102,36 +102,65 @@ func TestQueueFallsBackToCreationTimeWithoutAStamp(t *testing.T) {
 	}
 }
 
-func TestNextInQueueAdvancesAndWraps(t *testing.T) {
+func TestStepInQueueWalksBothWaysAndWraps(t *testing.T) {
 	queue := Queue([]Agent{
 		waiter("a", 100, 0),
 		waiter("b", 200, 0),
 		waiter("c", 300, 0),
 	})
 
-	for _, test := range []struct{ from, want string }{
-		{"", "a"},
-		{"elsewhere", "a"},
-		{"a", "b"},
-		{"b", "c"},
-		{"c", "a"},
+	for _, test := range []struct {
+		from string
+		step QueueStep
+		want string
+	}{
+		// From outside, a step lands on the end it came from.
+		{"", QueueForward, "a"},
+		{"elsewhere", QueueForward, "a"},
+		{"", QueueBack, "c"},
+		{"a", QueueForward, "b"},
+		{"b", QueueForward, "c"},
+		{"c", QueueForward, "a"},
+		{"c", QueueBack, "b"},
+		{"b", QueueBack, "a"},
+		{"a", QueueBack, "c"},
 	} {
-		next, ok := NextInQueue(queue, test.from)
+		next, ok := StepInQueue(queue, test.from, test.step)
 		if !ok || next.ID != test.want {
-			t.Fatalf("next after %q = %q (%v), want %q", test.from, next.ID, ok, test.want)
+			t.Fatalf("step %d from %q = %q (%v), want %q",
+				test.step, test.from, next.ID, ok, test.want)
 		}
 	}
 }
 
-func TestNextInQueueStopsWhenThereIsNowhereToGo(t *testing.T) {
-	if _, ok := NextInQueue(nil, ""); ok {
+// Nothing about arriving answers what an agent is waiting for, so the queue
+// holds still and a step is relative to where the human stands in it: one
+// too far forward has to be one back, not a lap.
+func TestStepInQueueReturnsToWhereItCameFrom(t *testing.T) {
+	queue := Queue([]Agent{
+		waiter("a", 100, 0),
+		waiter("b", 200, 0),
+		waiter("c", 300, 0),
+	})
+	forward, _ := StepInQueue(queue, "a", QueueForward)
+	back, _ := StepInQueue(queue, forward.ID, QueueBack)
+	if back.ID != "a" {
+		t.Fatalf("stepping forward then back landed on %q", back.ID)
+	}
+}
+
+func TestStepInQueueStopsWhenThereIsNowhereToGo(t *testing.T) {
+	if _, ok := StepInQueue(nil, "", QueueForward); ok {
 		t.Fatal("empty queue offered an agent")
 	}
 	queue := Queue([]Agent{waiter("only", 100, 0)})
-	if _, ok := NextInQueue(queue, "only"); ok {
-		t.Fatal("the only waiting agent was offered as the next one")
+	for _, step := range []QueueStep{QueueForward, QueueBack} {
+		if _, ok := StepInQueue(queue, "only", step); ok {
+			t.Fatalf("the only waiting agent was offered as step %d", step)
+		}
 	}
-	if next, ok := NextInQueue(queue, "somewhere-else"); !ok || next.ID != "only" {
+	if next, ok := StepInQueue(queue, "somewhere-else", QueueForward); !ok ||
+		next.ID != "only" {
 		t.Fatalf("next = %q (%v)", next.ID, ok)
 	}
 }

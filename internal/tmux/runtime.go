@@ -40,7 +40,7 @@ const (
 	statusVersionOption     = "@stormlight_status_version"
 	statusVersion           = "4"
 	prefixStatusStyle       = "bg=#e5c07b,fg=#1f2328,bold"
-	prefixStatusLeft        = " PREFIX  [Q] return  [N] next waiting  [?] all keys "
+	prefixStatusLeft        = " PREFIX  [Q] return  [N] next  [P] previous  [?] all keys "
 	// The agents session lives on the Stormlight-owned server, so its
 	// status bar carries the dashboard's identity: a deep sapphire band
 	// with the glint-and-wordmark status-left, echoing the header.
@@ -122,12 +122,13 @@ var agentMetadataFields = [metadataFieldCount]string{
 }
 
 type Runtime struct {
-	runner      Runner
-	sessionName string
-	executable  string
-	socket      string
-	returnKeys  []string
-	nextKeys    []string
+	runner       Runner
+	sessionName  string
+	executable   string
+	socket       string
+	returnKeys   []string
+	nextKeys     []string
+	previousKeys []string
 
 	// statusMu guards the last tally written to the band. The dashboard
 	// publishes from its polling command, which runs off the render loop.
@@ -1240,6 +1241,12 @@ func isNoServerError(err error) bool {
 
 // tableBinding finds the bind-key line for a key in `list-keys -T <table>`
 // output. Lines look like `bind-key [-r] -T <table> <key> <command...>`.
+//
+// tmux writes the listing to be pasted back into tmux, so a key containing a
+// backslash comes out doubled: C-\ prints as C-\\. Comparing raw would miss
+// it, and a miss here reads as "nobody has this key" — which is how a
+// binding someone else owns gets replaced without the warning that exists to
+// stop exactly that.
 func tableBinding(listing, table, key string) (string, bool) {
 	for _, line := range strings.Split(listing, "\n") {
 		fields := strings.Fields(line)
@@ -1247,7 +1254,8 @@ func tableBinding(listing, table, key string) (string, bool) {
 			if fields[i] != "-T" {
 				continue
 			}
-			if fields[i+1] == table && fields[i+2] == key {
+			listed := strings.ReplaceAll(fields[i+2], `\\`, `\`)
+			if fields[i+1] == table && listed == key {
 				return strings.TrimSpace(line), true
 			}
 			break

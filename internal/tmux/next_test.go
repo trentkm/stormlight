@@ -148,56 +148,61 @@ func TestNextWaitingCarriesTheReturnTarget(t *testing.T) {
 	}
 }
 
-// Arriving is engagement, exactly as opening a terminal from the dashboard
-// is: the soft amber comes down so the queue drains as it is worked.
-func TestNextWaitingClearsSoftAttentionOnArrival(t *testing.T) {
-	runner := &queueRunner{panes: []queuePane{
-		{id: "unseen", window: "@1", attention: agent.AttentionWaiting, attentionAt: 100},
-	}}
-	runtime := newQueueRuntime(runner)
+// Landing in a window is not an answer to what the agent is asking, so
+// cycling leaves the amber exactly as it was — a cycle that marked rows seen
+// on the way past would empty the inbox with nothing done about it.
+func TestNextWaitingLeavesAttentionAlone(t *testing.T) {
+	for _, attention := range []agent.Attention{
+		agent.AttentionWaiting, agent.AttentionQuestion,
+	} {
+		runner := &queueRunner{panes: []queuePane{
+			{id: "waiter", window: "@1", attention: attention, attentionAt: 100},
+			{id: "other", window: "@2", attention: attention, attentionAt: 200},
+		}}
+		runtime := newQueueRuntime(runner)
 
-	if err := runtime.NextWaiting(context.Background(), NextRequest{}); err != nil {
-		t.Fatal(err)
-	}
-	cleared := false
-	for _, call := range runner.calls {
-		if len(call) == 6 && call[0] == "set-option" &&
-			call[4] == "@stormlight_attention" && call[5] == "" {
-			cleared = true
+		if err := runtime.NextWaiting(context.Background(), NextRequest{}); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if !cleared {
-		t.Fatalf("attention was not cleared on arrival: %#v", runner.calls)
+		for _, call := range runner.calls {
+			if len(call) == 6 && call[0] == "set-option" &&
+				call[4] == "@stormlight_attention" {
+				t.Fatalf("%s attention was written: %#v", attention, call)
+			}
+		}
 	}
 }
 
-// An urgent prompt is only resolved by answering it, so landing on one must
-// not mark it seen — and the cycle has to be able to step past it.
-func TestNextWaitingLeavesUrgentAttentionStanding(t *testing.T) {
+// The queue does not shorten as it is walked, so one step too far has to be
+// answerable with one step back.
+func TestNextWaitingStepsBack(t *testing.T) {
 	runner := &queueRunner{panes: []queuePane{
-		{id: "asked", window: "@1", attention: agent.AttentionQuestion, attentionAt: 100},
-		{id: "unseen", window: "@2", attention: agent.AttentionWaiting, attentionAt: 200},
+		{id: "first", window: "@1", attention: agent.AttentionWaiting, attentionAt: 100},
+		{id: "second", window: "@2", attention: agent.AttentionWaiting, attentionAt: 200},
+		{id: "third", window: "@3", attention: agent.AttentionQuestion, attentionAt: 300},
 	}}
 	runtime := newQueueRuntime(runner)
 
-	if err := runtime.NextWaiting(context.Background(), NextRequest{}); err != nil {
-		t.Fatal(err)
-	}
-	for _, call := range runner.calls {
-		if len(call) == 6 && call[0] == "set-option" &&
-			call[4] == "@stormlight_attention" {
-			t.Fatalf("urgent attention was written: %#v", call)
-		}
-	}
-	runner.calls = nil
 	if err := runtime.NextWaiting(context.Background(), NextRequest{
-		Window: "@1", Agent: "asked",
+		Window: "@2", Agent: "second", Step: agent.QueueBack,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if switched, _ := runner.call("switch-client"); !slices.Equal(switched,
-		[]string{"switch-client", "-t", "@2"}) {
-		t.Fatalf("cycle did not step past the urgent agent: %#v", switched)
+		[]string{"switch-client", "-t", "@1"}) {
+		t.Fatalf("back = %#v", switched)
+	}
+
+	// From outside the queue, back lands on the newest waiter.
+	runner.calls = nil
+	if err := runtime.NextWaiting(context.Background(), NextRequest{
+		Step: agent.QueueBack,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if switched, _ := runner.call("switch-client"); !slices.Equal(switched,
+		[]string{"switch-client", "-t", "@3"}) {
+		t.Fatalf("back from outside = %#v", switched)
 	}
 }
 
@@ -266,7 +271,7 @@ func TestNextShellCommandCarriesItsOwnServer(t *testing.T) {
 		socket:      "stormlight",
 		sessionName: "stormlight-agents",
 	}
-	command := runtime.nextShellCommand()
+	command := runtime.nextShellCommand(agent.QueueForward)
 	for _, want := range []string{
 		"'/usr/local/bin/stormlight'",
 		"'--tmux-socket' 'stormlight'",
@@ -280,7 +285,15 @@ func TestNextShellCommandCarriesItsOwnServer(t *testing.T) {
 			t.Fatalf("command missing %q: %s", want, command)
 		}
 	}
-	if quoted := runtime.nextTmuxCommand(); !strings.HasPrefix(
+	if strings.Contains(command, "--previous") {
+		t.Fatalf("a forward step asked to go back: %s", command)
+	}
+	if back := runtime.nextShellCommand(agent.QueueBack); !strings.Contains(
+		back, "'--previous'",
+	) {
+		t.Fatalf("a back step did not say so: %s", back)
+	}
+	if quoted := runtime.nextTmuxCommand(agent.QueueForward); !strings.HasPrefix(
 		quoted, `run-shell -b "`,
 	) || !strings.HasSuffix(quoted, `"`) {
 		t.Fatalf("tmux command = %s", quoted)

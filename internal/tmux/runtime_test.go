@@ -293,8 +293,8 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 		{"list-keys", "-T", "prefix"},
 		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
-		nextPrefixCall(runtime),
 	}
+	wantCalls = append(wantCalls, nextPrefixCalls(runtime)...)
 	wantCalls = append(wantCalls, rootReturnCalls(runtime)...)
 	wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
@@ -346,8 +346,8 @@ func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
 				{"list-keys", "-T", "prefix"},
 				{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 					"run-shell", "-C", returnBindingFormat},
-				nextPrefixCall(runtime),
 			}
+			wantCalls = append(wantCalls, nextPrefixCalls(runtime)...)
 			wantCalls = append(wantCalls, rootReturnCalls(runtime)...)
 			wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 			wantCalls = append(wantCalls,
@@ -413,8 +413,8 @@ func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 		{"list-keys", "-T", "prefix"},
 		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
-		nextPrefixCall(runtime),
 	}
+	wantCalls = append(wantCalls, nextPrefixCalls(runtime)...)
 	wantCalls = append(wantCalls, rootReturnCalls(runtime)...)
 	wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
@@ -445,7 +445,7 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 			boundKeys = append(boundKeys, call[5])
 		}
 	}
-	want := []string{"C-^", returnMouseKey, "C-]"}
+	want := []string{"C-^", returnMouseKey, "C-]", `C-\`}
 	if !slices.Equal(boundKeys, want) {
 		t.Fatalf("root keys bound = %#v, want %#v", boundKeys, want)
 	}
@@ -866,20 +866,30 @@ func rootReturnCalls(runtime *Runtime) [][]string {
 // rootNextCalls is the single-press queue key, installed alongside the
 // return keys off the same root-table listing.
 func rootNextCalls(runtime *Runtime) [][]string {
-	return [][]string{{
-		"bind-key", "-T", "root", "-N", nextBindingNote, "C-]",
-		"if-shell", "-F", `#{==:#{@stormlight_id},}`,
-		"send-keys C-]", runtime.nextTmuxCommand(),
-	}}
+	calls := make([][]string, 0, 2)
+	for _, direction := range runtime.queueDirections() {
+		key := direction.rootKeys[0]
+		calls = append(calls, []string{
+			"bind-key", "-T", "root", "-N", direction.note, key,
+			"if-shell", "-F", `#{==:#{@stormlight_id},}`,
+			"send-keys " + key, runtime.nextTmuxCommand(direction.step),
+		})
+	}
+	return calls
 }
 
 // nextPrefixCall is the prefix-table queue key, installed off the same
 // prefix listing the return key is checked against.
-func nextPrefixCall(runtime *Runtime) []string {
-	return []string{
-		"bind-key", "-T", "prefix", "-N", nextBindingNote, nextPrefixKey,
-		"run-shell", "-b", runtime.nextShellCommand(),
+func nextPrefixCalls(runtime *Runtime) [][]string {
+	calls := make([][]string, 0, 2)
+	for _, direction := range runtime.queueDirections() {
+		calls = append(calls, []string{
+			"bind-key", "-T", "prefix", "-N", direction.note,
+			direction.prefixKey, "run-shell", "-b",
+			runtime.nextShellCommand(direction.step),
+		})
 	}
+	return calls
 }
 
 func assertCalls(t *testing.T, got, want [][]string) {
@@ -936,6 +946,7 @@ func TestTableBindingFindsKeyInTableListing(t *testing.T) {
 	listing := "bind-key    -T prefix !       break-pane\n" +
 		"bind-key -r -T prefix Up      select-pane -U\n" +
 		"bind-key    -T prefix Q       run-shell -C \"#{?…}\"\n" +
+		"bind-key    -T root   C-\\\\    send-keys C-\\\\\n" +
 		"bind-key    -T root   Q       send-keys Q"
 
 	binding, bound := tableBinding(listing, "prefix", "Q")
@@ -948,6 +959,11 @@ func TestTableBindingFindsKeyInTableListing(t *testing.T) {
 	if binding, bound := tableBinding(listing, "prefix", "Up"); !bound ||
 		!strings.Contains(binding, "select-pane") {
 		t.Fatalf("repeat-flag binding = %q, bound = %v", binding, bound)
+	}
+	// tmux doubles a backslash in the listing so the line can be pasted back
+	// in; a raw comparison misses it and reads as nobody owning the key.
+	if _, bound := tableBinding(listing, "root", `C-\`); !bound {
+		t.Fatal("escaped backslash key was not recognised")
 	}
 	if binding, bound := tableBinding(listing, "root", "Q"); !bound ||
 		!strings.Contains(binding, "send-keys") {

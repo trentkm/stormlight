@@ -109,7 +109,8 @@ func TestStatusRightSeparatesTheTallyFromTheKeys(t *testing.T) {
 		}
 	}
 	keys := visibleText(runtime.statusRightKeys())
-	for _, want := range []string{"C-6 ⏎ dashboard", "C-] ↻ next"} {
+	// The queue keys share one label and sit in the order they move.
+	for _, want := range []string{"C-6 ⏎ dashboard", `C-\ C-] ↻ queue`} {
 		if !strings.Contains(keys, want) {
 			t.Fatalf("key hints missing %q: %q", want, keys)
 		}
