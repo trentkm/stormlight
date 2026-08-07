@@ -23,6 +23,24 @@ func TestEnsureServerConfigWritesManagedConfig(t *testing.T) {
 	}
 }
 
+// The boot config and the live-apply list are two halves of one statement:
+// a fresh server reads the file, a running one gets the options asserted. A
+// value declared in only one of them reaches only half the servers.
+func TestServerConfigAndOptionsAgree(t *testing.T) {
+	for _, option := range serverOptions {
+		line := "set -g " + option[0] + " " + option[1]
+		if !strings.Contains(serverConfig, line) {
+			t.Fatalf("serverConfig is missing %q", line)
+		}
+	}
+	for _, feature := range serverFeatures {
+		line := "set -as terminal-features '," + feature + "'"
+		if !strings.Contains(serverConfig, line) {
+			t.Fatalf("serverConfig is missing %q", line)
+		}
+	}
+}
+
 func TestEnsureServerConfigOverwritesDrift(t *testing.T) {
 	directory := t.TempDir()
 	path, err := EnsureServerConfig(directory)
