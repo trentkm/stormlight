@@ -328,12 +328,26 @@ Stormlight-specific code. See [workspace resolvers](docs/workspace-resolvers.md)
 
 Stormlight injects agent-scoped lifecycle integration for managed providers:
 
-- Codex uses its external `agent-turn-complete` notification to become idle and
-  publish the latest response summary.
+- Codex uses `UserPromptSubmit` and `Stop` hooks to report state. Both
+  providers now speak the same hook schema, so a Codex agent prompted in its
+  own terminal turns blue like a Claude one; its older `agent-turn-complete`
+  notifier only fired at the end of a turn, which left a manually prompted
+  agent claiming `idle` for the whole time it was working.
 - Claude uses `UserPromptSubmit`, `Notification`, and `Stop` hooks to report
   state; the permission notification raises attention on the agent whose
   terminal is holding the prompt.
 - Replies sent from the dashboard mark any provider working immediately.
+
+Stormlight registers observers, never resolvers. Neither Claude's `PreToolUse`
+nor Codex's `PermissionRequest` hook is installed: their replies decide whether
+a tool call proceeds, and approvals belong to the agent's own terminal.
+
+Hooks are wired per launch, so nothing is written to `~/.claude` or
+`~/.codex` — an agent Stormlight did not start behaves exactly as it always
+did. The hook command reads `$STORMLIGHT_BIN`, which names Stormlight by its
+launcher on `PATH` rather than the version-stamped path behind it, so hooks
+keep working across an upgrade instead of pointing at a binary the new
+release deleted.
 
 The runtime also exposes an `event` command so other provider hooks can report
 semantic state without screen scraping:

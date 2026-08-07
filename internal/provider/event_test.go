@@ -8,15 +8,79 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
-func TestParseCodexCompletion(t *testing.T) {
+// Codex reports through the same hook schema Claude does, including a
+// turn start — the signal its old `notify` callback never carried, and
+// without which an agent prompted in its own pane stayed `idle` (#66).
+func TestParseCodexLifecycle(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   string
+		activity  agent.Activity
+		attention agent.Attention
+		summary   string
+		turnEnded bool
+	}{
+		{
+			name: "prompt",
+			payload: `{"hook_event_name":"UserPromptSubmit",` +
+				`"prompt":"Run the tests","transcript_path":"/tmp/codex.jsonl"}`,
+			activity: agent.ActivityWorking,
+			summary:  "Run the tests",
+		},
+		{
+			name: "stop",
+			payload: `{"hook_event_name":"Stop",` +
+				`"last_assistant_message":"Tests pass.","stop_hook_active":false}`,
+			activity:  agent.ActivityIdle,
+			attention: agent.AttentionWaiting,
+			summary:   "Tests pass.",
+			turnEnded: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event, handled, err := ParseEvent(agent.ProviderCodex, []byte(test.payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled ||
+				event.Activity != test.activity ||
+				event.Attention != test.attention ||
+				event.Summary != test.summary ||
+				event.TurnEnded != test.turnEnded {
+				t.Fatalf("event = %#v, handled = %v", event, handled)
+			}
+		})
+	}
+}
+
+// Codex leaves transcript_path and last_assistant_message nullable, and a
+// JSON null must decode to an absent value rather than fail the hook.
+func TestParseCodexTolerantOfNullFields(t *testing.T) {
 	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
-		`{"type":"agent-turn-complete","last-assistant-message":"Tests pass."}`,
+		`{"hook_event_name":"Stop","last_assistant_message":null,`+
+			`"transcript_path":null,"stop_hook_active":false}`,
 	))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !handled || event.Activity != agent.ActivityIdle || event.Summary != "Tests pass." {
+	if !handled || event.Activity != agent.ActivityIdle || !event.TurnEnded {
 		t.Fatalf("event = %#v, handled = %v", event, handled)
+	}
+	if event.Summary != "" || event.TranscriptPath != "" {
+		t.Fatalf("null fields leaked: %#v", event)
+	}
+}
+
+// Nothing registers `notify` any more, so its payload is not a lifecycle
+// signal — treating it as one would report a turn end twice.
+func TestParseCodexIgnoresLegacyNotify(t *testing.T) {
+	_, handled, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"type":"agent-turn-complete","last-assistant-message":"Tests pass."}`,
+	))
+	if err != nil || handled {
+		t.Fatalf("handled=%v err=%v, want ignored", handled, err)
 	}
 }
 
@@ -68,7 +132,7 @@ func TestParseClaudeLifecycle(t *testing.T) {
 
 func TestEventSummaryIsBounded(t *testing.T) {
 	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
-		`{"type":"agent-turn-complete","last-assistant-message":"`+
+		`{"hook_event_name":"Stop","last_assistant_message":"`+
 			strings.Repeat("a", maxEventSummaryRunes+20)+`"}`,
 	))
 	if err != nil {
@@ -134,8 +198,8 @@ func TestIdlePromptNotificationIsIgnored(t *testing.T) {
 }
 
 func TestCodexCompletionClassifiesQuestions(t *testing.T) {
-	payload := []byte(`{"type":"agent-turn-complete",` +
-		`"last-assistant-message":"Should I also update the docs?"}`)
+	payload := []byte(`{"hook_event_name":"Stop",` +
+		`"last_assistant_message":"Should I also update the docs?"}`)
 	event, handled, err := ParseEvent(agent.ProviderCodex, payload)
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)
