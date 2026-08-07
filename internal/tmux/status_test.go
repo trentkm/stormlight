@@ -115,6 +115,23 @@ func TestStatusRightSeparatesTheTallyFromTheKeys(t *testing.T) {
 			t.Fatalf("key hints missing %q: %q", want, keys)
 		}
 	}
+	// Each queue hint claims a mouse range of its own, and hands the region
+	// back to the return range afterwards so no column answers to nothing.
+	format := runtime.statusRightKeys()
+	for _, want := range []string{
+		"#[range=user|" + queueBackRange + "]",
+		"#[range=user|" + queueForwardRange + "]",
+	} {
+		if !strings.Contains(format, want) {
+			t.Fatalf("key hints missing %q: %q", want, format)
+		}
+	}
+	if strings.Contains(format, "#[norange]") {
+		t.Fatalf("a hint left dead columns behind it: %q", format)
+	}
+	if count := strings.Count(format, "#[range=right]"); count != 2 {
+		t.Fatalf("ranges reopened %d times, want 2: %q", count, format)
+	}
 	// With no agents there is no tally, so there is no rule to hang the
 	// keys off either.
 	if runtime.statusSummary(agent.Stats{}) != "" {
@@ -196,4 +213,19 @@ func visibleText(format string) string {
 		text.WriteByte(format[index])
 	}
 	return text.String()
+}
+
+// tmux stores a user range name in a fixed 16-byte field and cuts the rest
+// without complaint. Two names that survive the cut identically dispatch as
+// one range, which reads exactly like the binding never fired.
+func TestQueueRangeNamesSurviveTmuxTruncation(t *testing.T) {
+	for _, name := range []string{queueForwardRange, queueBackRange} {
+		if len(name) > queueRangeMaxLength {
+			t.Fatalf("range name %q is %d bytes, over tmux's %d",
+				name, len(name), queueRangeMaxLength)
+		}
+	}
+	if queueForwardRange == queueBackRange {
+		t.Fatal("the two queue ranges are indistinguishable")
+	}
 }

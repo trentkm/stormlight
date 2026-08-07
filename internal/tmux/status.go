@@ -45,6 +45,17 @@ const (
 	// and no more. It is a format rather than a number because the right
 	// section is not one width: see statusSummary.
 	statusWidthOption = "@stormlight_status_width"
+	// The names the queue hints answer to when clicked, read back through
+	// #{mouse_status_range}.
+	//
+	// tmux keeps a user range name in a fixed 16-byte field, so anything
+	// past 15 characters is silently cut. Two names sharing a prefix longer
+	// than that arrive identical and the comparison that tells them apart
+	// matches neither — the click then falls through to the default and
+	// looks exactly like the binding never fired.
+	queueRangeMaxLength = 15
+	queueForwardRange   = "sl-queue-next"
+	queueBackRange      = "sl-queue-prev"
 	// statusLineageMinWidth is what the left keeps before the counters may
 	// spell themselves out. The bar's first job is naming where you are, so
 	// the words are what yields: below this much room for the lineage the
@@ -209,13 +220,38 @@ func (r *Runtime) statusRight() string {
 // either way along the queue. The two queue keys share one label — spelling
 // both out costs more of the band than the direction is worth, and they sit
 // in the order they move, back on the left.
+//
+// Each queue hint carries a tmux user range, so a click on it does what it
+// says. Without one the whole right section is a single `range=right`, and
+// the hints inherit whatever that region means — which is how a hint reading
+// "queue" came to send people to the dashboard.
 func (r *Runtime) statusRightKeys() string {
-	queue := "#[fg=" + statusKeyColor + "]" +
-		r.effectivePreviousKeys()[0] + " " + r.effectiveNextKeys()[0] +
-		"#[fg=" + statusLabelColor + "] ↻ queue#[default]"
+	back := statusRange(queueBackRange,
+		" #[fg="+statusKeyColor+"]"+r.effectivePreviousKeys()[0])
+	forward := statusRange(queueForwardRange,
+		" #[fg="+statusKeyColor+"]"+r.effectiveNextKeys()[0]+
+			"#[fg="+statusLabelColor+"] ↻ queue")
 	return "  " +
-		statusKeyHint(r.effectiveReturnKeys()[0], "⏎ dashboard") + "  " +
-		queue + " "
+		statusKeyHint(r.effectiveReturnKeys()[0], "⏎ dashboard") + " " +
+		back + forward + "#[default] "
+}
+
+// statusRange marks a span of the bar as its own mouse target.
+//
+// The span opens on the space before the hint rather than on the hint
+// itself, because tmux records a status range one column to the right of
+// where it draws the text — measured on 3.7, the same single column in two
+// unrelated layouts. A range that opens at the glyph therefore answers for
+// the column after it, and the first character of each key cap would do the
+// neighbouring hint's job: clicking the C of C-] would step backwards.
+// Opening a column early cancels that, and if tmux ever stops adding the
+// column the error is the same one column in the other direction.
+//
+// The span closes by reopening range=right rather than with #[norange]:
+// everything around these hints belongs to the return region, and a bare
+// norange would leave dead columns that answer to nothing.
+func statusRange(name, content string) string {
+	return "#[range=user|" + name + "]" + content + "#[range=right]"
 }
 
 func statusKeyHint(key, label string) string {

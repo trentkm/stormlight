@@ -57,7 +57,9 @@ report. Press the tmux prefix followed by `Q` to return to the dashboard, or
 `N` and `P` for the same queue. Stormlight installs these bindings only when
 the keys are unbound or already owned by Stormlight. While the prefix is
 active, the managed session highlights the tmux status bar and shows `Q` for
-return, `N` and `P` for the queue, and `?` for the full tmux key list.
+return, `N` and `P` for the queue, and `?` for the full tmux key list. Both
+queue hints on the bar are clickable and do what they say; the rest of the
+bar returns to the dashboard.
 Closing the dashboard removes only its temporary session; agents keep
 running on the Stormlight server.
 

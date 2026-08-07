@@ -38,7 +38,7 @@ const (
 	statusLeftBaseOption    = "@stormlight_status_left_base"
 	statusLeftPrefixOption  = "@stormlight_status_left_prefix"
 	statusVersionOption     = "@stormlight_status_version"
-	statusVersion           = "4"
+	statusVersion           = "5"
 	prefixStatusStyle       = "bg=#e5c07b,fg=#1f2328,bold"
 	prefixStatusLeft        = " PREFIX  [Q] return  [N] next  [P] previous  [?] all keys "
 	// The agents session lives on the Stormlight-owned server, so its
