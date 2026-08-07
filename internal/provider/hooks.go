@@ -63,22 +63,22 @@ func (s hookSettings) json() (string, error) {
 	return string(encoded), nil
 }
 
-// tomlOverride renders the settings as a single `hooks = {...}` assignment
-// suitable for `codex -c`. Codex parses the value as TOML and rejects JSON,
-// and it reads the override from one argument, so the encoding has to be
-// inline and single-line rather than the table-per-section layout a TOML
-// document would normally use.
-func (s hookSettings) tomlOverride() (string, error) {
+// tomlOverride renders a settings struct as a single `key = value`
+// assignment suitable for `codex -c`. Codex parses the value as TOML and
+// rejects JSON, and reads the override from one argument, so the encoding
+// has to be inline and single-line rather than the table-per-section layout
+// a TOML document would normally use.
+func tomlOverride(settings any) (string, error) {
 	var buffer bytes.Buffer
 	encoder := toml.NewEncoder(&buffer)
 	encoder.SetTablesInline(true)
 	encoder.SetArraysMultiline(false)
-	if err := encoder.Encode(s); err != nil {
-		return "", fmt.Errorf("encode hook settings: %w", err)
+	if err := encoder.Encode(settings); err != nil {
+		return "", fmt.Errorf("encode Codex override: %w", err)
 	}
 	override := strings.TrimSpace(buffer.String())
 	if strings.ContainsAny(override, "\r\n") {
-		return "", fmt.Errorf("hook settings did not encode to a single line")
+		return "", fmt.Errorf("Codex override did not encode to a single line")
 	}
 	return override, nil
 }

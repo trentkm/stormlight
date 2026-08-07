@@ -25,11 +25,46 @@ type Event struct {
 
 func ParseEvent(providerID agent.Provider, payload []byte) (Event, bool, error) {
 	switch providerID {
-	case agent.ProviderCodex, agent.ProviderClaude:
+	case agent.ProviderCodex:
+		return parseCodexEvent(payload)
+	case agent.ProviderClaude:
 		return parseHookEvent(providerID, payload)
 	default:
 		return Event{}, false, fmt.Errorf("unsupported provider event %q", providerID)
 	}
+}
+
+// parseCodexEvent accepts either of the two lifecycle surfaces a Codex
+// agent is launched with. Its hooks report turn starts and turn ends but
+// only once a human has trusted them; `notify` reports turn ends
+// unconditionally and is what keeps an agent with untrusted hooks from
+// sitting at `working` forever. A notify payload carries no
+// hook_event_name, so the hook parser passes on it and it falls through.
+func parseCodexEvent(payload []byte) (Event, bool, error) {
+	event, handled, err := parseHookEvent(agent.ProviderCodex, payload)
+	if err != nil || handled {
+		return event, handled, err
+	}
+	return parseCodexNotification(payload)
+}
+
+func parseCodexNotification(payload []byte) (Event, bool, error) {
+	var notification struct {
+		Type                 string `json:"type"`
+		LastAssistantMessage string `json:"last-assistant-message"`
+	}
+	if err := json.Unmarshal(payload, &notification); err != nil {
+		return Event{}, false, fmt.Errorf("decode Codex notification: %w", err)
+	}
+	if notification.Type != "agent-turn-complete" {
+		return Event{}, false, nil
+	}
+	return Event{
+		Activity:  agent.ActivityIdle,
+		Attention: turnEndAttention(notification.LastAssistantMessage),
+		Summary:   eventSummary(notification.LastAssistantMessage),
+		TurnEnded: true,
+	}, true, nil
 }
 
 // hookPayload is the JSON a provider writes to a hook's stdin. Claude and

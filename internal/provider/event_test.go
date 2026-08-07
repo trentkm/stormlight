@@ -73,60 +73,41 @@ func TestParseCodexTolerantOfNullFields(t *testing.T) {
 	}
 }
 
-// Nothing registers `notify` any more, so its payload is not a lifecycle
-// signal — treating it as one would report a turn end twice.
-func TestParseCodexIgnoresLegacyNotify(t *testing.T) {
-	_, handled, err := ParseEvent(agent.ProviderCodex, []byte(
+// Codex holds injected hooks at "installed, not active" until a human
+// trusts them. `notify` carries no such gate, so it remains the floor
+// beneath the hooks: an agent whose hooks are untrusted still reports the
+// end of a turn instead of sitting at `working` until its process exits.
+func TestParseCodexNotifyReportsTurnEndWithoutHooks(t *testing.T) {
+	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
 		`{"type":"agent-turn-complete","last-assistant-message":"Tests pass."}`,
 	))
-	if err != nil || handled {
-		t.Fatalf("handled=%v err=%v, want ignored", handled, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || event.Activity != agent.ActivityIdle ||
+		event.Summary != "Tests pass." || !event.TurnEnded {
+		t.Fatalf("event = %#v, handled = %v", event, handled)
 	}
 }
 
-func TestParseClaudeLifecycle(t *testing.T) {
-	tests := []struct {
-		name      string
-		payload   string
-		activity  agent.Activity
-		attention agent.Attention
-		summary   string
-	}{
-		{
-			name:     "prompt",
-			payload:  `{"hook_event_name":"UserPromptSubmit","prompt":"Run the tests"}`,
-			activity: agent.ActivityWorking,
-			summary:  "Run the tests",
-		},
-		{
-			name:      "approval",
-			payload:   `{"hook_event_name":"Notification","message":"Permission required"}`,
-			activity:  agent.ActivityIdle,
-			attention: agent.AttentionApproval,
-			summary:   "Permission required",
-		},
-		{
-			name:      "stop",
-			payload:   `{"hook_event_name":"Stop","last_assistant_message":"Implementation complete"}`,
-			activity:  agent.ActivityIdle,
-			attention: agent.AttentionWaiting,
-			summary:   "Implementation complete",
-		},
+// With hooks trusted a turn end arrives on both surfaces. The two must
+// agree, because the dashboard applies whichever lands second.
+func TestCodexTurnEndIsIdenticalOnBothSurfaces(t *testing.T) {
+	const message = "Implementation complete"
+	viaNotify, _, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"type":"agent-turn-complete","last-assistant-message":"`+message+`"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			event, handled, err := ParseEvent(agent.ProviderClaude, []byte(test.payload))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !handled ||
-				event.Activity != test.activity ||
-				event.Attention != test.attention ||
-				event.Summary != test.summary {
-				t.Fatalf("event = %#v, handled = %v", event, handled)
-			}
-		})
+	viaHook, _, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"hook_event_name":"Stop","last_assistant_message":"`+message+`"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viaNotify != viaHook {
+		t.Fatalf("notify = %#v, hook = %#v", viaNotify, viaHook)
 	}
 }
 

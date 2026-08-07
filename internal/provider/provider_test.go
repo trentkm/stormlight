@@ -33,13 +33,30 @@ func TestCodexArgsConfigureLifecycleHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(args) != 7 || args[0] != "-c" || args[len(args)-1] != "do work" {
+	if len(args) != 9 || args[0] != "-c" || args[2] != "-c" ||
+		args[len(args)-1] != "do work" {
 		t.Fatalf("unexpected args: %#v", args)
 	}
+	// Codex holds injected hooks at "installed, not active" until a human
+	// trusts them, and reports nothing at all in the meantime. `notify` has
+	// no such gate, so it stays as the floor: without it an agent whose
+	// hooks are untrusted would sit at `working` until its process exited.
+	var notify struct {
+		Notify []string `toml:"notify"`
+	}
+	if err := toml.Unmarshal([]byte(args[1]), &notify); err != nil {
+		t.Fatalf("decode notify override: %v", err)
+	}
+	if len(notify.Notify) != 3 ||
+		!strings.Contains(notify.Notify[2], "_provider-event codex") ||
+		!strings.Contains(notify.Notify[2], "STORMLIGHT_BIN") {
+		t.Fatalf("notify fallback lost: %#v", notify.Notify)
+	}
+
 	// Codex reads the override from a single argument and parses the value
 	// as TOML, rejecting JSON outright, so the encoding has to stay an
 	// inline single-line assignment.
-	override := args[1]
+	override := args[3]
 	if strings.ContainsAny(override, "\r\n") {
 		t.Fatalf("override spans lines: %q", override)
 	}
@@ -77,10 +94,6 @@ func TestCodexArgsConfigureLifecycleHooks(t *testing.T) {
 	// an approval it never answers.
 	if groups := settings.Hooks["PermissionRequest"]; len(groups) != 0 {
 		t.Fatalf("PermissionRequest hook resurfaced: %#v", groups)
-	}
-	// `notify` only ever fired at turn end; the hooks replace it outright.
-	if strings.Contains(override, "notify") {
-		t.Fatalf("legacy notify override survived: %q", override)
 	}
 }
 
@@ -130,7 +143,8 @@ func TestPermissionModeMapsToProviderFlags(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantCodex := append([]string{codex[0], codex[1]}, c.codex...)
+		// Two -c overrides precede the mode flags: notify, then hooks.
+		wantCodex := append(slices.Clone(codex[:4]), c.codex...)
 		wantCodex = append(wantCodex, "do work")
 		if !slices.Equal(codex, wantCodex) {
 			t.Fatalf("codex %s args = %#v, want %#v", c.mode, codex, wantCodex)

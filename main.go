@@ -765,9 +765,11 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 	// that quietly does nothing is exactly what makes broken lifecycle
 	// wiring so hard to spot, so the log always says what happened.
 	return &cobra.Command{
-		Use:    "_provider-event <provider>",
+		Use:    "_provider-event <provider> [payload]",
 		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		// Hooks deliver the payload on stdin; Codex's `notify` callback
+		// passes it as an argument instead.
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			providerID := agent.Provider(args[0])
 			id := agentIDFromEnv()
@@ -778,13 +780,19 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 				return nil
 			}
 
-			payload, err := io.ReadAll(cmd.InOrStdin())
-			if err != nil {
-				diagnostic.Logger().Warn("read provider event payload",
-					"provider", providerID,
-					"error", err,
-				)
-				return nil
+			var payload []byte
+			if len(args) == 2 {
+				payload = []byte(args[1])
+			} else {
+				read, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					diagnostic.Logger().Warn("read provider event payload",
+						"provider", providerID,
+						"error", err,
+					)
+					return nil
+				}
+				payload = read
 			}
 			event, handled, err := provider.ParseEvent(providerID, payload)
 			if err != nil {
