@@ -38,12 +38,23 @@ current pane directly and reaches agents through a nested client. Selecting an
 agent switches to its window, and that window's status bar names where you
 are — `workspace › worktree › agent` — rather than listing the session's other
 agents, which the dashboard is already for. A narrow terminal drops the outer
-segments first; the agent's own name always stays. Press the tmux prefix
-followed by `Q` to return to the dashboard. Stormlight installs this binding
-only when `Q` is unbound or already owned by Stormlight. While the prefix is
-active, the managed session highlights the tmux status bar and shows `Q` for
-return and `?` for the full tmux key list. Closing the dashboard removes only
-its temporary session; agents keep running on the Stormlight server.
+segments first; the agent's own name always stays. The right of that bar
+carries the dashboard's own counters — working, waiting, needing input, and
+idle — so the question that would otherwise send you back to the dashboard
+is answered where you already are.
+
+When something is waiting, `Alt-n` hands you the next one directly, oldest
+first: agents queue in the order they started waiting, and arriving marks a
+result seen the same way opening its terminal from the dashboard does, so
+pressing it again moves on. An agent blocked on a question or an approval
+keeps its amber until you answer it, and the cycle steps past rather than
+sticking. Press the tmux prefix followed by `Q` to return to the dashboard,
+or `N` for the same queue. Stormlight installs these bindings only when the
+keys are unbound or already owned by Stormlight. While the prefix is active,
+the managed session highlights the tmux status bar and shows `Q` for return,
+`N` for the queue, and `?` for the full tmux key list. Closing the dashboard
+removes only its temporary session; agents keep running on the Stormlight
+server.
 
 ## Requirements
 
@@ -155,6 +166,8 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `Enter` | Enter Agents from Workspaces, or open the selected agent terminal |
 | `Ctrl-6` | Return from an agent to the dashboard (vim's alternate-buffer toggle; also shown in the agent status bar, which is clickable) |
 | tmux prefix, then `Q` | Return from an agent to the dashboard (tmux-native fallback) |
+| `Alt-n` | From an agent, switch to the next one waiting on you, oldest first |
+| tmux prefix, then `N` | The same queue (tmux-native fallback) |
 | `n` | Add a workspace in Workspaces; create an agent in the selected workspace elsewhere |
 | `o` | Create an agent with an explicit directory picker |
 | `i` / `s` | Write a reply in Spanreed |
@@ -407,6 +420,7 @@ mode     = "edits"         # ask | edits | auto
 [tmux]
 socket      = "stormlight"
 return_keys = ["C-6", "C-^"]
+next_keys   = ["M-n"]      # cycle the agents waiting on you
 
 [workspaces."~/repos/trusted-project"]
 mode = "auto"              # per-directory dispatch defaults (matches subdirs)

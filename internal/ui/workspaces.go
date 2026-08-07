@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -122,7 +123,7 @@ func (m Model) renderWorkspaceRow(
 	width int,
 	danger bool,
 ) string {
-	active, urgent, waiting := workspaceStats(group.agents)
+	stats := agent.Count(group.agents)
 	contentWidth := max(1, width-1)
 	// What the name actually asks for, floored so a long one still yields
 	// ground to the chips rather than shouldering them off the row.
@@ -131,7 +132,7 @@ func (m Model) renderWorkspaceRow(
 		min(10, max(1, contentWidth/2)),
 	)
 	chips := fitCountChips(
-		workspaceCountChips(active, urgent, waiting, len(group.agents)),
+		workspaceCountChips(stats, len(group.agents)),
 		max(1, contentWidth-lipgloss.Width("  ")-1),
 		nameNeed,
 	)
@@ -159,7 +160,7 @@ func (m Model) renderWorkspaceRow(
 	// selected row's marker column supplies the other, and the quiet path
 	// adds its own, so the subtitle never shifts with selection.
 	bottomContent := " " + workspaceDetail(group.context, max(1, contentWidth-2))
-	tier := attentionTierOf(urgent, waiting)
+	tier := attentionTierOf(stats)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
 			" ",
@@ -170,7 +171,7 @@ func (m Model) renderWorkspaceRow(
 			width,
 			focused,
 			m.expandedRows(),
-			active > 0,
+			stats.Working > 0,
 			tier,
 			m.shimmerPhaseOrRest(),
 			rowThemeFor(danger),
@@ -186,7 +187,7 @@ func (m Model) renderWorkspaceRow(
 			Foreground(colorWaiting()).
 			Bold(true).
 			Render(name)
-	case active > 0:
+	case stats.Working > 0:
 		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
 	top := gutter +
@@ -215,22 +216,22 @@ type countChip struct {
 // workspaceCountChips orders the tiers loudest first. A workspace with
 // nothing pending reports its population instead, in the muted dot the agent
 // rows use for a state worth no alarm — including the honest "· 0".
-func workspaceCountChips(active, urgent, waiting, total int) []countChip {
+func workspaceCountChips(stats agent.Stats, total int) []countChip {
 	chips := make([]countChip, 0, 3)
-	if urgent > 0 {
+	if stats.Urgent > 0 {
 		chips = append(chips, countChip{
-			"!", urgent,
+			"!", stats.Urgent,
 			lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true),
 		})
 	}
-	if waiting > 0 {
+	if stats.Waiting > 0 {
 		chips = append(chips, countChip{
-			"○", waiting, lipgloss.NewStyle().Foreground(colorWaiting()),
+			"○", stats.Waiting, lipgloss.NewStyle().Foreground(colorWaiting()),
 		})
 	}
-	if active > 0 {
+	if stats.Working > 0 {
 		chips = append(chips, countChip{
-			"●", active, lipgloss.NewStyle().Foreground(colorWorking()),
+			"●", stats.Working, lipgloss.NewStyle().Foreground(colorWorking()),
 		})
 	}
 	if len(chips) == 0 {

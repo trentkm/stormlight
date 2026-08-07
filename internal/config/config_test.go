@@ -44,6 +44,7 @@ mode = "auto"
 [tmux]
 socket = ""
 return_keys = ["F12"]
+next_keys = ["F11"]
 
 [ui]
 rows = "sideways"
@@ -67,6 +68,9 @@ provider = "codex"
 	}
 	if len(cfg.Tmux.ReturnKeys) != 1 || cfg.Tmux.ReturnKeys[0] != "F12" {
 		t.Fatalf("return keys = %#v", cfg.Tmux.ReturnKeys)
+	}
+	if len(cfg.Tmux.NextKeys) != 1 || cfg.Tmux.NextKeys[0] != "F11" {
+		t.Fatalf("next keys = %#v", cfg.Tmux.NextKeys)
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "ui.rows") {
 		t.Fatalf("warnings = %#v", warnings)
@@ -134,6 +138,7 @@ func TestEffectiveTOMLFillsBuiltinDefaults(t *testing.T) {
 		`session = 'stormlight-agents'`,
 		`socket = 'stormlight-sock'`,
 		`return_keys = ['C-6', 'C-^']`,
+		`next_keys = ['M-n']`,
 		`rows = 'compact'`,
 		`level = 'info'`,
 	} {
@@ -147,9 +152,13 @@ func TestEffectiveTOMLKeepsFileValuesOverDefaults(t *testing.T) {
 	socket := ""
 	cfg := Config{
 		Defaults: Defaults{Provider: "claude", Mode: "ask", Session: "mine"},
-		Tmux:     Tmux{Socket: &socket, ReturnKeys: []string{"F12"}},
-		UI:       UI{Rows: "sideways"},
-		Log:      Log{Level: "debug"},
+		Tmux: Tmux{
+			Socket:     &socket,
+			ReturnKeys: []string{"F12"},
+			NextKeys:   []string{"F11"},
+		},
+		UI:  UI{Rows: "sideways"},
+		Log: Log{Level: "debug"},
 	}
 
 	rendered, err := cfg.EffectiveTOML("stormlight-sock", "stormlight-agents")
@@ -163,6 +172,7 @@ func TestEffectiveTOMLKeepsFileValuesOverDefaults(t *testing.T) {
 		`session = 'mine'`,
 		`socket = ''`,
 		`return_keys = ['F12']`,
+		`next_keys = ['F11']`,
 		`rows = 'sideways'`,
 		`level = 'debug'`,
 	} {

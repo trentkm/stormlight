@@ -39,6 +39,10 @@ type Tmux struct {
 	// tmux server) is distinguishable from an unset key.
 	Socket     *string  `toml:"socket"`
 	ReturnKeys []string `toml:"return_keys"`
+	// NextKeys cycle the attention queue from inside an agent. They live in
+	// tmux's root table alongside ReturnKeys, so a key an agent's own TUI
+	// needs is one this list takes away from it.
+	NextKeys []string `toml:"next_keys"`
 }
 
 type UI struct {
@@ -241,6 +245,9 @@ func (c Config) EffectiveTOML(builtinSocket, builtinSession string) (string, err
 	}
 	if len(merged.Tmux.ReturnKeys) == 0 {
 		merged.Tmux.ReturnKeys = []string{"C-6", "C-^"}
+	}
+	if len(merged.Tmux.NextKeys) == 0 {
+		merged.Tmux.NextKeys = []string{"M-n"}
 	}
 	merged.UI.Rows = valueOr(merged.UI.Rows, "compact")
 	merged.Log.Level = valueOr(merged.Log.Level, "info")

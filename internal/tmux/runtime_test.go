@@ -45,6 +45,7 @@ func TestParseAgent(t *testing.T) {
 		"auto",
 		"/tmp/claude/session.jsonl",
 		"attention",
+		"1700000600",
 	}
 	line := strings.Join(parts, fieldSeparator)
 
@@ -76,6 +77,9 @@ func TestParseAgent(t *testing.T) {
 	}
 	if managedAgent.Mark != agent.MarkAttention {
 		t.Fatalf("mark = %q", managedAgent.Mark)
+	}
+	if managedAgent.AttentionAt.Unix() != 1700000600 {
+		t.Fatalf("attention stamp = %v", managedAgent.AttentionAt)
 	}
 }
 
@@ -289,8 +293,9 @@ func TestAttachOutsideTmuxReturnsInteractiveCommand(t *testing.T) {
 		{"list-keys", "-T", "prefix"},
 		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
+		nextPrefixCall(runtime),
 	}
-	wantCalls = append(wantCalls, rootReturnCalls()...)
+	wantCalls = append(wantCalls, rootReturnCalls(runtime)...)
 	wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
@@ -341,8 +346,9 @@ func TestAttachInsideTmuxSwitchesCurrentClient(t *testing.T) {
 				{"list-keys", "-T", "prefix"},
 				{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 					"run-shell", "-C", returnBindingFormat},
+				nextPrefixCall(runtime),
 			}
-			wantCalls = append(wantCalls, rootReturnCalls()...)
+			wantCalls = append(wantCalls, rootReturnCalls(runtime)...)
 			wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 			wantCalls = append(wantCalls,
 				[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", "$7"},
@@ -407,8 +413,9 @@ func TestAttachRefreshesStormlightOwnedReturnBinding(t *testing.T) {
 		{"list-keys", "-T", "prefix"},
 		{"bind-key", "-T", "prefix", "-N", "Return from Stormlight", "Q",
 			"run-shell", "-C", returnBindingFormat},
+		nextPrefixCall(runtime),
 	}
-	wantCalls = append(wantCalls, rootReturnCalls()...)
+	wantCalls = append(wantCalls, rootReturnCalls(runtime)...)
 	wantCalls = append(wantCalls, statusBarCalls("stormlight-agents")...)
 	wantCalls = append(wantCalls,
 		[]string{"set-option", "-w", "-t", "@1", "@stormlight_return_target", ""},
@@ -438,7 +445,7 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 			boundKeys = append(boundKeys, call[5])
 		}
 	}
-	want := []string{"C-^", returnMouseKey}
+	want := []string{"C-^", returnMouseKey, "M-n"}
 	if !slices.Equal(boundKeys, want) {
 		t.Fatalf("root keys bound = %#v, want %#v", boundKeys, want)
 	}
@@ -530,6 +537,62 @@ func TestUpdateRestoresMissingStormlightWindowMetadata(t *testing.T) {
 	if written["@stormlight_attention"] != "" {
 		t.Fatalf("attention was not cleared: %q", written["@stormlight_attention"])
 	}
+}
+
+// The queue's order is when each agent started waiting, so the stamp is
+// written on the way into the amber inbox and cleared on the way out — and
+// left alone by everything in between, or a summary arriving mid-wait would
+// send the agent to the back of a line it never left.
+func TestUpdateStampsEntryAndExitFromTheAttentionQueue(t *testing.T) {
+	stamped := func(pane string, update session.Update) (string, bool) {
+		runner := &captureRunner{
+			agentLine:    pane,
+			stormlightID: "capture-id",
+		}
+		runtime := &Runtime{runner: runner}
+		if err := runtime.Update(context.Background(), "capture-id", update); err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range runner.calls {
+			if len(call) == 6 && call[0] == "set-option" &&
+				call[4] == "@stormlight_attention_at" {
+				return call[5], true
+			}
+		}
+		return "", false
+	}
+
+	value, written := stamped(captureAgentLine(false), session.Update{
+		Attention: agent.AttentionWaiting,
+	})
+	if !written || value == "" {
+		t.Fatalf("entry was not stamped: %q (%v)", value, written)
+	}
+
+	waiting := waitingAgentLine("1700000600")
+	if value, written := stamped(waiting, session.Update{
+		Summary: "still going",
+	}); written {
+		t.Fatalf("a summary restamped a waiting agent: %q", value)
+	}
+	if value, written := stamped(waiting, session.Update{
+		Attention: agent.AttentionQuestion,
+	}); written {
+		t.Fatalf("an escalation restamped a waiting agent: %q", value)
+	}
+	if value, written := stamped(waiting, session.Update{
+		ClearAttention: true,
+	}); !written || value != "" {
+		t.Fatalf("exit stamp = %q (%v)", value, written)
+	}
+}
+
+// waitingAgentLine is the capture agent already in the amber inbox.
+func waitingAgentLine(attentionAt string) string {
+	parts := strings.Split(captureAgentLine(false), fieldSeparator)
+	parts[17] = string(agent.AttentionWaiting)
+	parts[30] = attentionAt
+	return strings.Join(parts, fieldSeparator)
 }
 
 func TestSetWorkspaceResolvesRuntimeHandleFromAgentID(t *testing.T) {
@@ -761,20 +824,20 @@ func statusBarCalls(sessionName string) [][]string {
 		{"set-option", "-t", sessionName, "@stormlight_status_style_prefix",
 			"bg=#e5c07b,fg=#1f2328,bold"},
 		{"set-option", "-t", sessionName, "@stormlight_status_left_prefix",
-			" PREFIX  [Q] return  [?] all keys "},
+			prefixStatusLeft},
 		{"set-option", "-t", sessionName, statusVersionOption, statusVersion},
 		{"set-option", "-t", sessionName, "status-style", dynamicStatusStyle},
 		{"set-option", "-t", sessionName, "status-left", dynamicStatusLeft},
 		{"set-option", "-t", sessionName, "status-left-length",
 			strconv.Itoa(baseStatusLeftLength)},
-		{"set-option", "-t", sessionName, "status-right", (&Runtime{}).statusRightHint()},
+		{"set-option", "-t", sessionName, "status-right", (&Runtime{}).statusRight()},
 		{"set-option", "-t", sessionName, "status-right-length",
-			strconv.Itoa(len((&Runtime{}).statusRightHint()))},
+			strconv.Itoa((&Runtime{}).statusRightHintWidth())},
 		{"set-option", "-t", sessionName, "status-format[0]", statusFormat},
 	}
 }
 
-func rootReturnCalls() [][]string {
+func rootReturnCalls(runtime *Runtime) [][]string {
 	calls := [][]string{{"list-keys", "-T", "root"}}
 	for _, binding := range []struct{ key, passthrough string }{
 		{"C-6", "send-keys C-6"},
@@ -788,7 +851,26 @@ func rootReturnCalls() [][]string {
 			binding.key, "run-shell", "-C", format,
 		})
 	}
-	return calls
+	return append(calls, rootNextCalls(runtime)...)
+}
+
+// rootNextCalls is the single-press queue key, installed alongside the
+// return keys off the same root-table listing.
+func rootNextCalls(runtime *Runtime) [][]string {
+	return [][]string{{
+		"bind-key", "-T", "root", "-N", nextBindingNote, "M-n",
+		"if-shell", "-F", `#{==:#{@stormlight_id},}`,
+		"send-keys M-n", runtime.nextTmuxCommand(),
+	}}
+}
+
+// nextPrefixCall is the prefix-table queue key, installed off the same
+// prefix listing the return key is checked against.
+func nextPrefixCall(runtime *Runtime) []string {
+	return []string{
+		"bind-key", "-T", "prefix", "-N", nextBindingNote, nextPrefixKey,
+		"run-shell", "-b", runtime.nextShellCommand(),
+	}
 }
 
 func assertCalls(t *testing.T, got, want [][]string) {
