@@ -8,67 +8,112 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
-func TestParseCodexCompletion(t *testing.T) {
-	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
-		`{"type":"agent-turn-complete","last-assistant-message":"Tests pass."}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !handled || event.Activity != agent.ActivityIdle || event.Summary != "Tests pass." {
-		t.Fatalf("event = %#v, handled = %v", event, handled)
-	}
-}
-
-func TestParseClaudeLifecycle(t *testing.T) {
+// Codex reports through the same hook schema Claude does, including a
+// turn start — the signal its old `notify` callback never carried, and
+// without which an agent prompted in its own pane stayed `idle` (#66).
+func TestParseCodexLifecycle(t *testing.T) {
 	tests := []struct {
 		name      string
 		payload   string
 		activity  agent.Activity
 		attention agent.Attention
 		summary   string
+		turnEnded bool
 	}{
 		{
-			name:     "prompt",
-			payload:  `{"hook_event_name":"UserPromptSubmit","prompt":"Run the tests"}`,
+			name: "prompt",
+			payload: `{"hook_event_name":"UserPromptSubmit",` +
+				`"prompt":"Run the tests","transcript_path":"/tmp/codex.jsonl"}`,
 			activity: agent.ActivityWorking,
 			summary:  "Run the tests",
 		},
 		{
-			name:      "approval",
-			payload:   `{"hook_event_name":"Notification","message":"Permission required"}`,
-			activity:  agent.ActivityIdle,
-			attention: agent.AttentionApproval,
-			summary:   "Permission required",
-		},
-		{
-			name:      "stop",
-			payload:   `{"hook_event_name":"Stop","last_assistant_message":"Implementation complete"}`,
+			name: "stop",
+			payload: `{"hook_event_name":"Stop",` +
+				`"last_assistant_message":"Tests pass.","stop_hook_active":false}`,
 			activity:  agent.ActivityIdle,
 			attention: agent.AttentionWaiting,
-			summary:   "Implementation complete",
+			summary:   "Tests pass.",
+			turnEnded: true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			event, handled, err := ParseEvent(agent.ProviderClaude, []byte(test.payload))
+			event, handled, err := ParseEvent(agent.ProviderCodex, []byte(test.payload))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !handled ||
 				event.Activity != test.activity ||
 				event.Attention != test.attention ||
-				event.Summary != test.summary {
+				event.Summary != test.summary ||
+				event.TurnEnded != test.turnEnded {
 				t.Fatalf("event = %#v, handled = %v", event, handled)
 			}
 		})
 	}
 }
 
+// Codex leaves transcript_path and last_assistant_message nullable, and a
+// JSON null must decode to an absent value rather than fail the hook.
+func TestParseCodexTolerantOfNullFields(t *testing.T) {
+	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"hook_event_name":"Stop","last_assistant_message":null,`+
+			`"transcript_path":null,"stop_hook_active":false}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || event.Activity != agent.ActivityIdle || !event.TurnEnded {
+		t.Fatalf("event = %#v, handled = %v", event, handled)
+	}
+	if event.Summary != "" || event.TranscriptPath != "" {
+		t.Fatalf("null fields leaked: %#v", event)
+	}
+}
+
+// Codex holds injected hooks at "installed, not active" until a human
+// trusts them. `notify` carries no such gate, so it remains the floor
+// beneath the hooks: an agent whose hooks are untrusted still reports the
+// end of a turn instead of sitting at `working` until its process exits.
+func TestParseCodexNotifyReportsTurnEndWithoutHooks(t *testing.T) {
+	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"type":"agent-turn-complete","last-assistant-message":"Tests pass."}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || event.Activity != agent.ActivityIdle ||
+		event.Summary != "Tests pass." || !event.TurnEnded {
+		t.Fatalf("event = %#v, handled = %v", event, handled)
+	}
+}
+
+// With hooks trusted a turn end arrives on both surfaces. The two must
+// agree, because the dashboard applies whichever lands second.
+func TestCodexTurnEndIsIdenticalOnBothSurfaces(t *testing.T) {
+	const message = "Implementation complete"
+	viaNotify, _, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"type":"agent-turn-complete","last-assistant-message":"`+message+`"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaHook, _, err := ParseEvent(agent.ProviderCodex, []byte(
+		`{"hook_event_name":"Stop","last_assistant_message":"`+message+`"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viaNotify != viaHook {
+		t.Fatalf("notify = %#v, hook = %#v", viaNotify, viaHook)
+	}
+}
+
 func TestEventSummaryIsBounded(t *testing.T) {
 	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
-		`{"type":"agent-turn-complete","last-assistant-message":"`+
+		`{"hook_event_name":"Stop","last_assistant_message":"`+
 			strings.Repeat("a", maxEventSummaryRunes+20)+`"}`,
 	))
 	if err != nil {
@@ -134,8 +179,8 @@ func TestIdlePromptNotificationIsIgnored(t *testing.T) {
 }
 
 func TestCodexCompletionClassifiesQuestions(t *testing.T) {
-	payload := []byte(`{"type":"agent-turn-complete",` +
-		`"last-assistant-message":"Should I also update the docs?"}`)
+	payload := []byte(`{"hook_event_name":"Stop",` +
+		`"last_assistant_message":"Should I also update the docs?"}`)
 	event, handled, err := ParseEvent(agent.ProviderCodex, payload)
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)

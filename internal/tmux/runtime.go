@@ -16,6 +16,7 @@ import (
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/selfpath"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -127,9 +128,9 @@ func NewRuntime(runner Runner, sessionName string) (*Runtime, error) {
 	if sessionName == "" {
 		sessionName = defaultSession
 	}
-	executable, err := os.Executable()
+	executable, err := selfpath.Resolve()
 	if err != nil {
-		return nil, fmt.Errorf("resolve Stormlight executable: %w", err)
+		return nil, err
 	}
 	runtime := &Runtime{
 		runner:      runner,

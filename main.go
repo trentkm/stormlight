@@ -20,6 +20,7 @@ import (
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/selfpath"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/tmux"
@@ -286,9 +287,9 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 }
 
 func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
-	executable, err := os.Executable()
+	executable, err := selfpath.Resolve()
 	if err != nil {
-		return fmt.Errorf("find Stormlight executable: %w", err)
+		return err
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -758,13 +759,24 @@ func newEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Comm
 }
 
 func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+	// Every failure here is logged and swallowed. A hook that exits
+	// non-zero is the provider's problem to report, and no dashboard
+	// bookkeeping is worth interrupting an agent mid-turn for — but a hook
+	// that quietly does nothing is exactly what makes broken lifecycle
+	// wiring so hard to spot, so the log always says what happened.
 	return &cobra.Command{
 		Use:    "_provider-event <provider> [payload]",
 		Hidden: true,
-		Args:   cobra.RangeArgs(1, 2),
+		// Hooks deliver the payload on stdin; Codex's `notify` callback
+		// passes it as an argument instead.
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			providerID := agent.Provider(args[0])
 			id := agentIDFromEnv()
 			if id == "" {
+				diagnostic.Logger().Warn("provider event outside a managed agent",
+					"provider", providerID,
+				)
 				return nil
 			}
 
@@ -772,29 +784,60 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 			if len(args) == 2 {
 				payload = []byte(args[1])
 			} else {
-				var err error
-				payload, err = io.ReadAll(cmd.InOrStdin())
+				read, err := io.ReadAll(cmd.InOrStdin())
 				if err != nil {
+					diagnostic.Logger().Warn("read provider event payload",
+						"provider", providerID,
+						"error", err,
+					)
 					return nil
 				}
+				payload = read
 			}
-			event, handled, err := provider.ParseEvent(agent.Provider(args[0]), payload)
-			if err != nil || !handled {
+			event, handled, err := provider.ParseEvent(providerID, payload)
+			if err != nil {
+				diagnostic.Logger().Warn("parse provider event",
+					"provider", providerID,
+					"error", err,
+				)
 				return nil
 			}
+			if !handled {
+				diagnostic.Logger().Debug("provider event ignored",
+					"provider", providerID,
+					"agent", id,
+				)
+				return nil
+			}
+			diagnostic.Logger().Debug("provider event",
+				"provider", providerID,
+				"agent", id,
+				"activity", event.Activity,
+				"attention", event.Attention,
+			)
 			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
+				diagnostic.Logger().Warn("provider event service unavailable",
+					"provider", providerID,
+					"error", err,
+				)
 				return nil
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
-			_ = service.Update(ctx, id, session.Update{
+			if err := service.Update(ctx, id, session.Update{
 				Activity:       event.Activity,
 				Attention:      event.Attention,
 				Summary:        event.Summary,
 				TranscriptPath: event.TranscriptPath,
 				TurnEnded:      event.TurnEnded,
-			})
+			}); err != nil {
+				diagnostic.Logger().Warn("apply provider event",
+					"provider", providerID,
+					"agent", id,
+					"error", err,
+				)
+			}
 			return nil
 		},
 	}
@@ -825,6 +868,14 @@ func newRunCommand(socket, sessionName *string, cfg config.Config) *cobra.Comman
 			_ = service.Update(updateCtx, id, session.Update{Activity: agent.ActivityWorking})
 			cancel()
 
+			// Hooks resolve $STORMLIGHT_BIN long after this process
+			// started, so it has to name a binary that survives an
+			// upgrade rather than however this invocation was spelled.
+			stormlightBin, err := selfpath.Resolve()
+			if err != nil {
+				return err
+			}
+
 			child := exec.Command(launch.Path, launch.Args...)
 			child.Dir = cwd
 			child.Stdin = os.Stdin
@@ -833,7 +884,7 @@ func newRunCommand(socket, sessionName *string, cfg config.Config) *cobra.Comman
 			child.Env = append(os.Environ(),
 				"STORMLIGHT_ID="+id,
 				"STORMLIGHT_WINDOW="+window,
-				"STORMLIGHT_BIN="+os.Args[0],
+				"STORMLIGHT_BIN="+stormlightBin,
 				"STORMLIGHT_SESSION="+*sessionName,
 				"STORMLIGHT_TMUX_SOCKET="+*socket,
 			)

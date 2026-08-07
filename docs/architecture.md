@@ -12,12 +12,31 @@ Adapters deliberately do not own tmux behavior.
 
 The CLI adapters currently add provider-native lifecycle callbacks:
 
-- Codex: the documented external completion notifier reports idle state and
-  the latest response.
+- Codex: per-launch prompt and stop hooks report state, passed as a `-c`
+  config override, over the external completion notifier. The notifier alone
+  carried only turn ends, so a turn begun in the agent's own pane was
+  invisible; it is retained because Codex holds injected hooks inert behind
+  a one-time trust review, and an agent reporting nothing would sit at
+  `working` until its process exited. The notifier has no trust gate, so it
+  is the floor and the hooks are the ceiling. Both surfaces report a turn
+  end once trusted; the two events carry identical state, so applying both
+  is idempotent.
 - Claude: per-launch prompt, notification, and stop hooks report state.
   Permission prompts raise attention through the notification hook; they
   are answered in the agent's own terminal, never intercepted.
 - Generic agents: PTY state and optional lifecycle hooks.
+
+Both CLIs accept the same hook schema — an event name mapping to matcher
+groups of command handlers, with the payload arriving on the handler's
+stdin — so one set of types describes both and only the encoding differs:
+Claude takes JSON through `--settings`, Codex takes inline TOML through
+`-c`. Codex parses that value as TOML and rejects JSON, so the override has
+to encode to a single inline line.
+
+Hooks that resolve rather than observe are deliberately left unregistered
+for both providers. Claude's `PreToolUse` and Codex's `PermissionRequest`
+answer whether a tool call may proceed, and an approval Stormlight never
+answers is an agent stuck waiting on it.
 
 The next Codex revision should use App Server JSON-RPC for threads, turns,
 approvals, and streamed items. Claude background-agent discovery or the Agent
