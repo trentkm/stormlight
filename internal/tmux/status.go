@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
@@ -31,6 +31,31 @@ const (
 	statusWaitingColor = "#E5C07B"
 	statusIdleColor    = "#8FA6CC"
 	statusLabelColor   = "#8FA6CC"
+	// The keys are chrome, not news: the cap carries the band's full
+	// brightness because it is the thing you press, and the word explaining
+	// it recedes, so the counters stay what the eye lands on.
+	statusKeyColor     = "#C8D6F2"
+	statusDividerColor = "#55698F"
+	// statusDivider closes the tally. Two sections of small text with no
+	// rule between them read as one run, which is how a count of agents
+	// ended up looking like part of a key hint.
+	statusDivider = "  #[fg=" + statusDividerColor + "]│"
+	// statusWidthOption holds the columns the right section will print at
+	// the client's current width, so status-left yields exactly that much
+	// and no more. It is a format rather than a number because the right
+	// section is not one width: see statusSummary.
+	statusWidthOption = "@stormlight_status_width"
+	// statusLineageMinWidth is what the left keeps before the counters may
+	// spell themselves out. The bar's first job is naming where you are, so
+	// the words are what yields: below this much room for the lineage the
+	// counters fall back to glyph and number, which the dashboard header is
+	// the legend for. The key hints have no such fallback and never drop.
+	//
+	// The figure is what a full lineage occupies — the glint, two capped
+	// segments, their separators, and a name — because status-left is
+	// truncated from the right, so anything short comes out of the agent's
+	// own name, which is the one thing on the bar that never drops.
+	statusLineageMinWidth = 48
 )
 
 // statusCount is one counter on the band: the glyph the dashboard paints for
@@ -43,17 +68,45 @@ type statusCount struct {
 	loud  bool
 }
 
-// statusSummary renders the tally for the right of the band, and the columns
-// it occupies.
+// statusSummary renders the tally for the right of the band.
 //
 // The vocabulary is the dashboard header's, down to the glyphs and the
 // order, so the two read as one instrument rather than two reports of the
 // same thing. Empty tiers are left out — a bar that says "0 waiting" spends
 // columns to say nothing — and a session with no agents in it renders
-// nothing at all.
-func statusSummary(stats agent.Stats) (string, int) {
+// nothing at all, divider included, so the keys are not left hanging off a
+// rule with nothing behind it.
+func (r *Runtime) statusSummary(stats agent.Stats) string {
+	return statusByWidth(
+		r.statusWordsMinWidth(stats),
+		statusCounters(stats, true),
+		statusCounters(stats, false),
+	)
+}
+
+// statusWordsMinWidth is the client width at which the counters can afford
+// their words: what the spelled-out right section takes, plus the lineage's
+// floor. It is computed per tally rather than fixed, because a bar carrying
+// one counter has room for words long before a bar carrying four does.
+func (r *Runtime) statusWordsMinWidth(stats agent.Stats) int {
+	return r.statusRightWidth(statusCounters(stats, true)) +
+		statusLineageMinWidth
+}
+
+// statusByWidth picks between two renderings at the client's width. tmux
+// evaluates it per client, which matters: two terminals of different sizes
+// can share a session, and the option is written once for both.
+func statusByWidth(threshold int, wide, narrow string) string {
+	if wide == narrow {
+		return wide
+	}
+	return "#{?#{e|>=:#{client_width}," + strconv.Itoa(threshold) +
+		"}," + wide + "," + narrow + "}"
+}
+
+func statusCounters(stats agent.Stats, words bool) string {
 	if stats.Total() == 0 {
-		return "", 0
+		return ""
 	}
 	counts := []statusCount{{
 		glyph: "●", value: stats.Working,
@@ -83,13 +136,11 @@ func statusSummary(stats agent.Stats) (string, int) {
 	}
 
 	var format strings.Builder
-	width := 0
+	format.WriteString(" ")
 	for index, count := range counts {
 		if index > 0 {
 			format.WriteString("  ")
-			width += 2
 		}
-		text := fmt.Sprintf("%d %s", count.value, count.label)
 		labelColor := statusLabelColor
 		emphasis := ""
 		if count.loud {
@@ -99,21 +150,23 @@ func statusSummary(stats agent.Stats) (string, int) {
 			// string is one edit away from living inside one.
 			emphasis = "#,bold"
 		}
+		text := strconv.Itoa(count.value)
+		if words {
+			text += " " + count.label
+		}
 		format.WriteString("#[fg=" + count.color + emphasis + "]" + count.glyph)
 		format.WriteString("#[fg=" + labelColor + emphasis + "] " + text)
-		width += utf8.RuneCountInString(count.glyph) + 1 + utf8.RuneCountInString(text)
 	}
 	// tmux attributes latch until something clears them; without this the
-	// return hint would inherit whichever tier happened to render last.
-	format.WriteString("#[default]")
-	return " " + format.String(), width + 1
+	// key hints would inherit whichever tier happened to render last.
+	return format.String() + statusDivider + "#[default]"
 }
 
 // PublishStatus writes the agent tally onto the managed session's status
 // bar. It is a no-op when the tally has not moved, so the dashboard can call
 // it on every poll and only the changes reach tmux.
 func (r *Runtime) PublishStatus(ctx context.Context, stats agent.Stats) error {
-	summary, width := statusSummary(stats)
+	summary := r.statusSummary(stats)
 	r.statusMu.Lock()
 	unchanged := summary == r.publishedStatus
 	r.statusMu.Unlock()
@@ -129,7 +182,9 @@ func (r *Runtime) PublishStatus(ctx context.Context, stats agent.Stats) error {
 	}
 	options := [][2]string{
 		{statusSummaryOption, summary},
-		{"status-right-length", strconv.Itoa(width + r.statusRightHintWidth())},
+		{statusWidthOption, r.statusWidth(stats)},
+		{"status-right-length", strconv.Itoa(
+			r.statusRightWidth(statusCounters(stats, true)))},
 	}
 	for _, option := range options {
 		if _, err := r.runner.Run(ctx, nil,
@@ -144,16 +199,54 @@ func (r *Runtime) PublishStatus(ctx context.Context, stats agent.Stats) error {
 	return nil
 }
 
-// statusRight is the whole right section: the tally, then the standing hint
-// for the key that leads back to the dashboard.
+// statusRight is the whole right section: the tally, then the standing hints
+// for the keys that leave this window.
 func (r *Runtime) statusRight() string {
-	return statusSummaryFormat + r.statusRightHint()
+	return statusSummaryFormat + r.statusRightKeys()
 }
 
-func (r *Runtime) statusRightHint() string {
-	return " " + r.effectiveReturnKeys()[0] + " ⏎ dashboard "
+// statusRightKeys names the two ways out of an agent: back to the dashboard,
+// and on to whoever is waiting next.
+func (r *Runtime) statusRightKeys() string {
+	return "  " +
+		statusKeyHint(r.effectiveReturnKeys()[0], "⏎ dashboard") + "  " +
+		statusKeyHint(r.effectiveNextKeys()[0], "↻ next") + " "
 }
 
-func (r *Runtime) statusRightHintWidth() int {
-	return utf8.RuneCountInString(r.statusRightHint())
+func statusKeyHint(key, label string) string {
+	return "#[fg=" + statusKeyColor + "]" + key +
+		"#[fg=" + statusLabelColor + "] " + label + "#[default]"
+}
+
+// statusWidth is the budget status-left yields to the right section, as a
+// format tmux resolves per client. status-right-length cannot serve: it is a
+// cap on the widest form, and reserving that on a narrow client would cut
+// the agent's own name short for space nothing occupies.
+func (r *Runtime) statusWidth(stats agent.Stats) string {
+	return statusByWidth(
+		r.statusWordsMinWidth(stats),
+		strconv.Itoa(r.statusRightWidth(statusCounters(stats, true))),
+		strconv.Itoa(r.statusRightWidth(statusCounters(stats, false))),
+	)
+}
+
+// statusRightWidth is the columns a rendering of the right section prints.
+// It is measured rather than counted: #[...] tags cost bytes and no columns.
+func (r *Runtime) statusRightWidth(counters string) int {
+	return formatWidth(counters) + formatWidth(r.statusRightKeys())
+}
+
+func formatWidth(format string) int {
+	var text strings.Builder
+	for index := 0; index < len(format); index++ {
+		if format[index] == '#' && index+1 < len(format) &&
+			format[index+1] == '[' {
+			if end := strings.IndexByte(format[index:], ']'); end >= 0 {
+				index += end
+				continue
+			}
+		}
+		text.WriteByte(format[index])
+	}
+	return ansi.StringWidth(text.String())
 }

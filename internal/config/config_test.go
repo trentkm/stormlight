@@ -138,7 +138,7 @@ func TestEffectiveTOMLFillsBuiltinDefaults(t *testing.T) {
 		`session = 'stormlight-agents'`,
 		`socket = 'stormlight-sock'`,
 		`return_keys = ['C-6', 'C-^']`,
-		`next_keys = ['M-n']`,
+		`next_keys = ['C-]']`,
 		`rows = 'compact'`,
 		`level = 'info'`,
 	} {

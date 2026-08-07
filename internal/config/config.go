@@ -247,7 +247,7 @@ func (c Config) EffectiveTOML(builtinSocket, builtinSession string) (string, err
 		merged.Tmux.ReturnKeys = []string{"C-6", "C-^"}
 	}
 	if len(merged.Tmux.NextKeys) == 0 {
-		merged.Tmux.NextKeys = []string{"M-n"}
+		merged.Tmux.NextKeys = []string{"C-]"}
 	}
 	merged.UI.Rows = valueOr(merged.UI.Rows, "compact")
 	merged.Log.Level = valueOr(merged.Log.Level, "info")

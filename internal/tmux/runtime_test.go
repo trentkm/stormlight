@@ -445,7 +445,7 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 			boundKeys = append(boundKeys, call[5])
 		}
 	}
-	want := []string{"C-^", returnMouseKey, "M-n"}
+	want := []string{"C-^", returnMouseKey, "C-]"}
 	if !slices.Equal(boundKeys, want) {
 		t.Fatalf("root keys bound = %#v, want %#v", boundKeys, want)
 	}
@@ -458,6 +458,13 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 // here instead of being discovered on someone's screen.
 func TestStatusFormatsEscapeStyleCommas(t *testing.T) {
 	for name, format := range map[string]string{
+		// The summary is a conditional now, so an unescaped comma in a
+		// style tag inside it ends the branch and takes the rest of the bar
+		// with it — the loud tier's #,bold is exactly that shape.
+		"statusSummary": (&Runtime{}).statusSummary(agent.Stats{
+			Working: 1, Waiting: 1, Urgent: 1, Idle: 1,
+		}),
+		"statusRight":            (&Runtime{}).statusRight(),
 		"agentStatusLineage":     agentStatusLineage,
 		"statusWorkspaceSegment": statusWorkspaceSegment,
 		"statusTailSegment":      statusTailSegment,
@@ -830,9 +837,11 @@ func statusBarCalls(sessionName string) [][]string {
 		{"set-option", "-t", sessionName, "status-left", dynamicStatusLeft},
 		{"set-option", "-t", sessionName, "status-left-length",
 			strconv.Itoa(baseStatusLeftLength)},
+		{"set-option", "-t", sessionName, statusWidthOption,
+			strconv.Itoa((&Runtime{}).statusRightWidth(""))},
 		{"set-option", "-t", sessionName, "status-right", (&Runtime{}).statusRight()},
 		{"set-option", "-t", sessionName, "status-right-length",
-			strconv.Itoa((&Runtime{}).statusRightHintWidth())},
+			strconv.Itoa((&Runtime{}).statusRightWidth(""))},
 		{"set-option", "-t", sessionName, "status-format[0]", statusFormat},
 	}
 }
@@ -858,9 +867,9 @@ func rootReturnCalls(runtime *Runtime) [][]string {
 // return keys off the same root-table listing.
 func rootNextCalls(runtime *Runtime) [][]string {
 	return [][]string{{
-		"bind-key", "-T", "root", "-N", nextBindingNote, "M-n",
+		"bind-key", "-T", "root", "-N", nextBindingNote, "C-]",
 		"if-shell", "-F", `#{==:#{@stormlight_id},}`,
-		"send-keys M-n", runtime.nextTmuxCommand(),
+		"send-keys C-]", runtime.nextTmuxCommand(),
 	}}
 }
 
