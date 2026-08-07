@@ -28,13 +28,27 @@ func ParseEvent(providerID agent.Provider, payload []byte) (Event, bool, error) 
 	case agent.ProviderCodex:
 		return parseCodexEvent(payload)
 	case agent.ProviderClaude:
-		return parseClaudeEvent(payload)
+		return parseHookEvent(providerID, payload)
 	default:
 		return Event{}, false, fmt.Errorf("unsupported provider event %q", providerID)
 	}
 }
 
+// parseCodexEvent accepts either of the two lifecycle surfaces a Codex
+// agent is launched with. Its hooks report turn starts and turn ends but
+// only once a human has trusted them; `notify` reports turn ends
+// unconditionally and is what keeps an agent with untrusted hooks from
+// sitting at `working` forever. A notify payload carries no
+// hook_event_name, so the hook parser passes on it and it falls through.
 func parseCodexEvent(payload []byte) (Event, bool, error) {
+	event, handled, err := parseHookEvent(agent.ProviderCodex, payload)
+	if err != nil || handled {
+		return event, handled, err
+	}
+	return parseCodexNotification(payload)
+}
+
+func parseCodexNotification(payload []byte) (Event, bool, error) {
 	var notification struct {
 		Type                 string `json:"type"`
 		LastAssistantMessage string `json:"last-assistant-message"`
@@ -53,45 +67,29 @@ func parseCodexEvent(payload []byte) (Event, bool, error) {
 	}, true, nil
 }
 
-// turnEndAttention classifies why a turn ended from its final message: a
-// message that reads as a question needs an answer (urgent); any other
-// finished turn is an unseen result (soft waiting) until the human views
-// it, replies, or marks it seen. Providers have no "asked a question"
-// event — completion and question arrive as the same signal — so the
-// content is the only instant discriminator.
-func turnEndAttention(message string) agent.Attention {
-	if asksQuestion(message) {
-		return agent.AttentionQuestion
-	}
-	return agent.AttentionWaiting
+// hookPayload is the JSON a provider writes to a hook's stdin. Claude and
+// Codex agree on the shape down to the field names, so one struct decodes
+// both and the events they share need no per-provider branch. Only Claude
+// sends Notification, and its fields are simply absent from a Codex
+// payload. Codex leaves last_assistant_message and transcript_path
+// nullable, which decodes to the zero value rather than failing.
+type hookPayload struct {
+	Name string `json:"hook_event_name"`
+	// UserPromptSubmit.
+	Prompt string `json:"prompt"`
+	// Claude's Notification.
+	Message          string `json:"message"`
+	NotificationType string `json:"notification_type"`
+	// Stop.
+	LastAssistantMessage string `json:"last_assistant_message"`
+
+	TranscriptPath string `json:"transcript_path"`
 }
 
-// asksQuestion reports whether the final non-empty line of a message ends
-// with a question mark, tolerating markdown emphasis and quote trailers.
-func asksQuestion(message string) bool {
-	lines := strings.Split(message, "\n")
-	for index := len(lines) - 1; index >= 0; index-- {
-		line := strings.TrimSpace(lines[index])
-		if line == "" {
-			continue
-		}
-		line = strings.TrimRight(line, " \t*_`\"')")
-		return strings.HasSuffix(line, "?")
-	}
-	return false
-}
-
-func parseClaudeEvent(payload []byte) (Event, bool, error) {
-	var hook struct {
-		Name                 string `json:"hook_event_name"`
-		Prompt               string `json:"prompt"`
-		Message              string `json:"message"`
-		NotificationType     string `json:"notification_type"`
-		LastAssistantMessage string `json:"last_assistant_message"`
-		TranscriptPath       string `json:"transcript_path"`
-	}
+func parseHookEvent(providerID agent.Provider, payload []byte) (Event, bool, error) {
+	var hook hookPayload
 	if err := json.Unmarshal(payload, &hook); err != nil {
-		return Event{}, false, fmt.Errorf("decode Claude hook event: %w", err)
+		return Event{}, false, fmt.Errorf("decode %s hook event: %w", providerID, err)
 	}
 
 	switch hook.Name {
@@ -129,6 +127,34 @@ func parseClaudeEvent(payload []byte) (Event, bool, error) {
 	default:
 		return Event{}, false, nil
 	}
+}
+
+// turnEndAttention classifies why a turn ended from its final message: a
+// message that reads as a question needs an answer (urgent); any other
+// finished turn is an unseen result (soft waiting) until the human views
+// it, replies, or marks it seen. Providers have no "asked a question"
+// event — completion and question arrive as the same signal — so the
+// content is the only instant discriminator.
+func turnEndAttention(message string) agent.Attention {
+	if asksQuestion(message) {
+		return agent.AttentionQuestion
+	}
+	return agent.AttentionWaiting
+}
+
+// asksQuestion reports whether the final non-empty line of a message ends
+// with a question mark, tolerating markdown emphasis and quote trailers.
+func asksQuestion(message string) bool {
+	lines := strings.Split(message, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		if line == "" {
+			continue
+		}
+		line = strings.TrimRight(line, " \t*_`\"')")
+		return strings.HasSuffix(line, "?")
+	}
+	return false
 }
 
 func eventSummary(value string) string {

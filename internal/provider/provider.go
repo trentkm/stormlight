@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"slices"
@@ -213,16 +212,53 @@ func (r *Registry) IDs() []agent.Provider {
 	return slices.Clone(r.order)
 }
 
+// codexArgs wires both of Codex's lifecycle surfaces, because neither one
+// is sufficient alone.
+//
+// The hooks are what Stormlight actually wants: `notify` fires on exactly
+// one event — agent-turn-complete — so a turn started in the agent's own
+// pane never reached Stormlight and the row went on claiming `idle` while
+// Codex worked. UserPromptSubmit is that missing turn-start signal.
+//
+// But hooks injected this way are inert until a human trusts them. Codex
+// hashes each handler and holds it at "installed, not active" behind a
+// startup review prompt, so a first-run agent reports nothing at all.
+// `notify` carries no such gate, and an agent that only reports turn ends
+// is the behavior Stormlight had all along — where an agent that reports
+// nothing would sit at `working` until its process exited. So `notify`
+// stays as the floor, and the hooks raise the ceiling once trusted. When
+// both are live a turn end arrives twice, which is harmless: the two
+// events carry the same state and applying it twice is idempotent.
+//
+// Codex's PermissionRequest hook is deliberately not registered. It is an
+// approval resolver rather than an observer — its reply decides whether the
+// tool call proceeds — and Stormlight answers prompts in the agent's own
+// terminal, exactly as it declines to intercept Claude's.
 func codexArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
-	notify, err := json.Marshal([]string{
-		"/bin/sh",
-		"-c",
-		`exec "$STORMLIGHT_BIN" _provider-event codex "$0"`,
+	notify, err := tomlOverride(struct {
+		Notify []string `toml:"notify"`
+	}{
+		// notify hands the payload to the command as an argument rather
+		// than on stdin, which is why it is spelled as a shell command.
+		Notify: []string{
+			"/bin/sh",
+			"-c",
+			`exec "$STORMLIGHT_BIN" _provider-event codex "$0"`,
+		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Codex notification command: %w", err)
+		return nil, err
 	}
-	args := []string{"-c", "notify=" + string(notify)}
+	hooks, err := tomlOverride(hookSettings{
+		Hooks: map[string][]hookGroup{
+			"UserPromptSubmit": reportGroup(agent.ProviderCodex),
+			"Stop":             reportGroup(agent.ProviderCodex),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"-c", notify, "-c", hooks}
 	args = append(args, codexModeArgs(mode)...)
 	return append(args, prompt), nil
 }
@@ -250,32 +286,27 @@ func codexModeArgs(mode agent.PermissionMode) []string {
 }
 
 func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
-	const eventCommand = `exec "$STORMLIGHT_BIN" _provider-event claude`
 	// Prompts are answered in the agent's own terminal, not re-implemented
 	// in the dashboard: the Notification hook raises attention so the
 	// dashboard can point at the pane, and nothing intercepts the request
 	// itself. Auto mode is the recommended way to run agents anyway.
-	settings := claudeSettings{
-		Hooks: map[string][]claudeHookGroup{
-			"UserPromptSubmit": {
-				{Hooks: []claudeHook{{Type: "command", Command: eventCommand, Timeout: 5}}},
-			},
+	settings := hookSettings{
+		Hooks: map[string][]hookGroup{
+			"UserPromptSubmit": reportGroup(agent.ProviderClaude),
 			"Notification": {
 				{
 					Matcher: "permission_prompt",
-					Hooks:   []claudeHook{{Type: "command", Command: eventCommand, Timeout: 5}},
+					Hooks:   []hookCommand{reportEvent(agent.ProviderClaude)},
 				},
 			},
-			"Stop": {
-				{Hooks: []claudeHook{{Type: "command", Command: eventCommand, Timeout: 5}}},
-			},
+			"Stop": reportGroup(agent.ProviderClaude),
 		},
 	}
-	encoded, err := json.Marshal(settings)
+	encoded, err := settings.json()
 	if err != nil {
-		return nil, fmt.Errorf("encode Claude hook settings: %w", err)
+		return nil, err
 	}
-	args := []string{"--settings", string(encoded)}
+	args := []string{"--settings", encoded}
 	switch mode {
 	case agent.ModeEdits:
 		args = append(args, "--permission-mode", "acceptEdits")
@@ -283,20 +314,4 @@ func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
 		args = append(args, "--permission-mode", "bypassPermissions")
 	}
 	return append(args, prompt), nil
-}
-
-type claudeSettings struct {
-	Hooks map[string][]claudeHookGroup `json:"hooks"`
-}
-
-type claudeHookGroup struct {
-	Matcher string       `json:"matcher,omitempty"`
-	Hooks   []claudeHook `json:"hooks"`
-}
-
-type claudeHook struct {
-	Type          string `json:"type"`
-	Command       string `json:"command"`
-	Timeout       int    `json:"timeout"`
-	StatusMessage string `json:"statusMessage,omitempty"`
 }

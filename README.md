@@ -328,12 +328,51 @@ Stormlight-specific code. See [workspace resolvers](docs/workspace-resolvers.md)
 
 Stormlight injects agent-scoped lifecycle integration for managed providers:
 
-- Codex uses its external `agent-turn-complete` notification to become idle and
-  publish the latest response summary.
+- Codex uses `UserPromptSubmit` and `Stop` hooks to report state, with its
+  `agent-turn-complete` notifier kept underneath them. Both providers speak
+  the same hook schema, so a Codex agent prompted in its own terminal turns
+  blue like a Claude one; the notifier alone only fired at the end of a
+  turn, which left a manually prompted agent claiming `idle` for the whole
+  time it was working.
 - Claude uses `UserPromptSubmit`, `Notification`, and `Stop` hooks to report
   state; the permission notification raises attention on the agent whose
   terminal is holding the prompt.
 - Replies sent from the dashboard mark any provider working immediately.
+
+Stormlight registers observers, never resolvers. Neither Claude's `PreToolUse`
+nor Codex's `PermissionRequest` hook is installed: their replies decide whether
+a tool call proceeds, and approvals belong to the agent's own terminal.
+
+Hooks are wired per launch, so nothing is written to `~/.claude` or
+`~/.codex` — an agent Stormlight did not start behaves exactly as it always
+did. The hook command reads `$STORMLIGHT_BIN`, which names Stormlight by its
+launcher on `PATH` rather than the version-stamped path behind it, so hooks
+keep working across an upgrade instead of pointing at a binary the new
+release deleted.
+
+### Trusting Codex hooks, once
+
+Codex will not run an injected hook until a human has approved it. The first
+Codex agent you dispatch opens a **Hooks need review** prompt in its own
+terminal listing two hooks; answer **Trust all and continue** and Codex
+records the approval in `~/.codex/config.toml`. Until then the hooks are
+installed but inert.
+
+The approval is a hash of the hook commands, and Stormlight's are identical
+for every agent — they name Stormlight through `$STORMLIGHT_BIN` rather than
+a path — so trusting once covers every future agent on that machine, across
+upgrades. It only asks again if these hooks change.
+
+An agent whose hooks are untrusted still reports the end of each turn,
+because `agent-turn-complete` carries no such gate. That is why it is kept:
+it is the floor that stops an untrusted agent from sitting at `working`
+until its process exits. What you lose until you trust the hooks is the
+turn-*start* signal — exactly the old behavior.
+
+Stormlight will not pass Codex's `--dangerously-bypass-hook-trust`. That flag
+lifts review from every enabled hook, including any a project's own
+`.codex/config.toml` installs, which is a much wider grant than Stormlight
+needs for its own two.
 
 The runtime also exposes an `event` command so other provider hooks can report
 semantic state without screen scraping:
