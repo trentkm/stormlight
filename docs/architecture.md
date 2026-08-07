@@ -102,6 +102,7 @@ the durable metadata:
 | `@stormlight_created_at` | Unix creation timestamp |
 | `@stormlight_activity` | Normalized activity state |
 | `@stormlight_attention` | Pending human-attention type |
+| `@stormlight_attention_at` | When the agent joined the attention queue |
 | `@stormlight_mark` | Human's manual override of the derived state |
 | `@stormlight_pane` | Original agent pane |
 | `@stormlight_workspace_id` | Stable workspace group identifier |
@@ -147,6 +148,37 @@ managed session preserves the global tmux status formats and uses
 `client_prefix` to temporarily switch to a high-contrast status style with the
 available return and help keys.
 
+The same attach reserves the queue keys — `C-]` and `C-\` in the root table,
+`N` and `P` under the prefix — which step the client through the agents
+waiting on a human. Unlike the return key these are not essential to escaping
+an agent, so a foreign binding is left in place with a warning rather than
+failing the attach. The binding re-invokes Stormlight rather than expressing
+the choice as a tmux format: the order depends on marks and on when each
+agent entered the queue, which is inference no format language carries. The
+window arrived in inherits the return target of the one left behind.
+
+Arriving deliberately does not clear attention. Landing in a window answers
+nothing the agent is asking, and a cycle that marked rows seen on the way
+past would empty the inbox with nothing done about it. So the queue holds
+still and only the human's place in it moves — which is why a step is
+relative and reversible rather than a repeated pop of the head, and why the
+ring is circular.
+
+The right of the managed session's status bar carries the dashboard's own
+tally, written into a session option the bar expands, then a divider and the
+hints for the two keys that leave the window. It is published from the
+application service's listing rather than from each state change, because a
+listing is the only thing that notices a pane dying — whatever the dashboard
+knows, the bar knows a poll later — and a tally that has not moved is not
+rewritten.
+
+The tally is published as a width conditional: spelled out where the lineage
+still has room for its own, glyph and number below that. Both renderings are
+built in Go, and so is the column budget `status-left` yields to them, which
+is published alongside as a second conditional. `status-right-length` cannot
+serve as that budget — it is a cap on the widest form, and reserving it on a
+narrow client cuts the agent's name for space nothing occupies.
+
 ## State model
 
 The public agent record keeps process lifetime, activity, and attention
@@ -176,6 +208,13 @@ their exit status is the story.
 This prevents a resumable completed conversation from being conflated with a
 currently running process, and keeps "needs me now" distinct from "idle on
 me" and from "just idle".
+
+Entry into the amber inbox is stamped, by either route, and the stamp is
+what orders the queue the tmux keys cycle: first in, first out. It records
+entry rather than the latest signal, so a summary or an escalation arriving
+mid-wait does not send an agent to the back of a line it never left. Cycling
+reads that order and nothing else — it never writes attention, so an agent
+leaves the queue only the way it always has.
 
 A mark is the one signal nothing derives. Everything above is inference, and
 inference is sometimes wrong, so a human can say otherwise (`m` in the

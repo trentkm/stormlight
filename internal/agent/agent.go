@@ -151,15 +151,22 @@ func ParseMode(value string) (PermissionMode, error) {
 }
 
 type Agent struct {
-	ID          string         `json:"id"`
-	Provider    Provider       `json:"provider"`
-	Name        string         `json:"name"`
-	Task        string         `json:"task"`
-	Summary     string         `json:"summary,omitempty"`
-	Cwd         string         `json:"cwd"`
-	CreatedAt   time.Time      `json:"created_at"`
-	Activity    Activity       `json:"activity"`
-	Attention   Attention      `json:"attention,omitempty"`
+	ID        string    `json:"id"`
+	Provider  Provider  `json:"provider"`
+	Name      string    `json:"name"`
+	Task      string    `json:"task"`
+	Summary   string    `json:"summary,omitempty"`
+	Cwd       string    `json:"cwd"`
+	CreatedAt time.Time `json:"created_at"`
+	Activity  Activity  `json:"activity"`
+	Attention Attention `json:"attention,omitempty"`
+	// AttentionAt is when the agent joined the amber inbox — the moment it
+	// started pending on a human, by either route (a provider signal or the
+	// human's own mark). It is the queue's ordering key, so it records
+	// entry into the state rather than the latest signal: a question that
+	// escalates or a summary that arrives later must not send an agent to
+	// the back of a line it has been in the whole time.
+	AttentionAt time.Time      `json:"attention_at,omitempty"`
 	Mark        Mark           `json:"mark,omitempty"`
 	TmuxSession string         `json:"tmux_session"`
 	WindowID    string         `json:"window_id"`

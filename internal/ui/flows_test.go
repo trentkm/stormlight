@@ -655,9 +655,9 @@ func TestMarkedRowsReportTheMarkAndClearWhenSeen(t *testing.T) {
 		t.Fatalf("attention row = %q", row)
 	}
 
-	active, urgent, waiting := workspaceStats([]agent.Agent{working, attention})
-	if active != 1 || urgent != 0 || waiting != 1 {
-		t.Fatalf("stats: active=%d urgent=%d waiting=%d", active, urgent, waiting)
+	stats := agent.Count([]agent.Agent{working, attention})
+	if stats.Working != 1 || stats.Urgent != 0 || stats.Waiting != 1 {
+		t.Fatalf("stats = %+v", stats)
 	}
 
 	ws := workspace.DirectoryContext("/workspace/marks")

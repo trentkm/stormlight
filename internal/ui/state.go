@@ -117,12 +117,12 @@ func (m *Model) applySort() {
 		})
 	case sortByAttention:
 		slices.SortStableFunc(m.groups, func(a, b workspaceGroup) int {
-			_, urgentA, waitingA := workspaceStats(a.agents)
-			_, urgentB, waitingB := workspaceStats(b.agents)
-			if d := urgentB - urgentA; d != 0 {
+			statsA := agent.Count(a.agents)
+			statsB := agent.Count(b.agents)
+			if d := statsB.Urgent - statsA.Urgent; d != 0 {
 				return d
 			}
-			return waitingB - waitingA
+			return statsB.Waiting - statsA.Waiting
 		})
 	}
 }
