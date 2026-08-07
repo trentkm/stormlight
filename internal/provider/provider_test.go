@@ -2,11 +2,13 @@ package provider
 
 import (
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
@@ -26,7 +28,7 @@ func TestRegistryRejectsEmptyTask(t *testing.T) {
 	}
 }
 
-func TestCodexArgsConfigureCompletionNotification(t *testing.T) {
+func TestCodexArgsConfigureLifecycleHooks(t *testing.T) {
 	args, err := codexArgs("do work", agent.ModeEdits)
 	if err != nil {
 		t.Fatal(err)
@@ -34,16 +36,51 @@ func TestCodexArgsConfigureCompletionNotification(t *testing.T) {
 	if len(args) != 7 || args[0] != "-c" || args[len(args)-1] != "do work" {
 		t.Fatalf("unexpected args: %#v", args)
 	}
-	var command []string
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(args[1], "notify=")), &command); err != nil {
-		t.Fatalf("decode notify override: %v", err)
+	// Codex reads the override from a single argument and parses the value
+	// as TOML, rejecting JSON outright, so the encoding has to stay an
+	// inline single-line assignment.
+	override := args[1]
+	if strings.ContainsAny(override, "\r\n") {
+		t.Fatalf("override spans lines: %q", override)
 	}
-	if len(command) != 3 ||
-		!strings.Contains(command[2], "_provider-event codex") {
-		t.Fatalf("unexpected notification command: %#v", command)
+	var settings struct {
+		Hooks map[string][]hookGroup `toml:"hooks"`
 	}
-	if !strings.Contains(command[2], "STORMLIGHT_BIN") {
-		t.Fatalf("notification command lacks Stormlight executable: %q", command[2])
+	if err := toml.Unmarshal([]byte(override), &settings); err != nil {
+		t.Fatalf("decode hooks override: %v", err)
+	}
+
+	names := slices.Sorted(maps.Keys(settings.Hooks))
+	// A turn start is the signal `notify` never carried; without
+	// UserPromptSubmit a Codex agent prompted in its own pane stays `idle`
+	// on the dashboard for the whole turn.
+	if !slices.Equal(names, []string{"Stop", "UserPromptSubmit"}) {
+		t.Fatalf("hook events = %#v", names)
+	}
+	for _, name := range names {
+		for _, group := range settings.Hooks[name] {
+			if len(group.Hooks) != 1 {
+				t.Fatalf("%s hooks = %#v", name, group)
+			}
+			command := group.Hooks[0].Command
+			if !strings.Contains(command, "_provider-event codex") {
+				t.Fatalf("%s command = %q", name, command)
+			}
+			if !strings.Contains(command, "STORMLIGHT_BIN") {
+				t.Fatalf("%s command lacks Stormlight executable: %q", name, command)
+			}
+		}
+	}
+	// Codex's PermissionRequest hook decides whether a tool call proceeds
+	// rather than merely observing it. Prompts are answered in the agent's
+	// own terminal, so registering it would put Stormlight in the path of
+	// an approval it never answers.
+	if groups := settings.Hooks["PermissionRequest"]; len(groups) != 0 {
+		t.Fatalf("PermissionRequest hook resurfaced: %#v", groups)
+	}
+	// `notify` only ever fired at turn end; the hooks replace it outright.
+	if strings.Contains(override, "notify") {
+		t.Fatalf("legacy notify override survived: %q", override)
 	}
 }
 
@@ -183,7 +220,7 @@ func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 	if len(args) != 3 || args[0] != "--settings" || args[2] != "do work" {
 		t.Fatalf("unexpected args: %#v", args)
 	}
-	var settings claudeSettings
+	var settings hookSettings
 	if err := json.Unmarshal([]byte(args[1]), &settings); err != nil {
 		t.Fatalf("decode settings: %v", err)
 	}
