@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -799,14 +800,56 @@ func (r *Runtime) ApplyServerOptions(ctx context.Context) error {
 		if _, err := r.runner.Run(ctx, nil,
 			"set-option", "-g", option[0], option[1],
 		); err != nil {
-			if strings.Contains(err.Error(), "no server running") ||
-				strings.Contains(err.Error(), "failed to connect to server") {
+			if isNoServerError(err) {
 				return nil
 			}
 			return fmt.Errorf("apply server option %s: %w", option[0], err)
 		}
 	}
+	return r.applyServerFeatures(ctx)
+}
+
+// applyServerFeatures appends serverFeatures to a running server's
+// terminal-features, skipping any the server already carries.
+func (r *Runtime) applyServerFeatures(ctx context.Context) error {
+	current, err := r.runner.Run(ctx, nil, "show-options", "-s", "terminal-features")
+	if err != nil {
+		if isNoServerError(err) {
+			return nil
+		}
+		return fmt.Errorf("read terminal features: %w", err)
+	}
+	declared := declaredFeatures(current)
+	for _, feature := range serverFeatures {
+		if slices.Contains(declared, feature) {
+			continue
+		}
+		// The leading comma is the separator tmux splits the appended value
+		// on; without it the entry reads as one more feature of the previous
+		// terminal pattern.
+		if _, err := r.runner.Run(ctx, nil,
+			"set-option", "-sa", "terminal-features", ","+feature,
+		); err != nil {
+			return fmt.Errorf("apply terminal feature %s: %w", feature, err)
+		}
+	}
 	return nil
+}
+
+// declaredFeatures reads the values out of `show-options -s
+// terminal-features`, whose lines look like `terminal-features[0] xterm*:RGB`.
+// Whole entries are compared, never substrings: "xterm*:sync" contains
+// "*:sync" while promising it to nothing but xterm.
+func declaredFeatures(listing string) []string {
+	var values []string
+	for _, line := range strings.Split(listing, "\n") {
+		_, value, found := strings.Cut(strings.TrimSpace(line), " ")
+		if !found {
+			continue
+		}
+		values = append(values, strings.Trim(strings.TrimSpace(value), `"'`))
+	}
+	return values
 }
 
 type windowTarget struct {

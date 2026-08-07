@@ -23,6 +23,16 @@ set -s escape-time 10
 set -s focus-events on
 set -s extended-keys on
 set -as terminal-features 'xterm*:extkeys'
+# Draw whole frames, not the strokes that make them. Without synchronized
+# output tmux hands a redraw to the terminal as it produces it, so a full
+# repaint is rendered mid-flight and the cursor is seen walking the screen
+# before it lands. tmux uses it whenever the client's terminfo carries Sync,
+# which real terminals do — but a Stormlight client attached from inside
+# another tmux sees TERM=tmux-256color, whose terminfo has no Sync and whose
+# built-in feature list omits it, so exactly that arrangement lost the
+# guarantee. Claiming it for every terminal is safe: a terminal that does not
+# implement DECSET 2026 ignores the sequence, which is today's behavior.
+set -as terminal-features ',*:sync'
 set -g history-limit 50000
 set -g mouse on
 # Yazi and other overlays probe the real terminal through tmux passthrough
@@ -31,7 +41,12 @@ set -g mouse on
 # that lands mid-probe on whichever pane the popup sits over; enabling it
 # server-wide from boot removes the race and also lets image protocols
 # through.
-set -g allow-passthrough all
+#
+# "on" and not "all": "all" extends the bypass to panes the client is not
+# showing, and a bypass is a write straight to the terminal — an agent in a
+# background window can then move the cursor or paint over the agent being
+# read. Popups, which is what this exists for, pass through under "on".
+set -g allow-passthrough on
 `
 
 // serverOptions mirrors the option lines in serverConfig that must also
@@ -39,8 +54,16 @@ set -g allow-passthrough all
 // server start, and the appliance server outlives Stormlight upgrades as
 // long as any agent keeps it alive.
 var serverOptions = [][2]string{
-	{"allow-passthrough", "all"},
+	{"allow-passthrough", "on"},
 }
+
+// serverFeatures mirrors serverConfig's terminal-features lines, which the
+// same upgrade problem reaches. They append rather than assign, so asserting
+// them on a live server has to be idempotent — every dashboard launch would
+// otherwise grow the array by one entry for as long as the server lives. A
+// client already attached keeps the features it opened with; the next one to
+// attach, which is the client that walks into an agent, gets these.
+var serverFeatures = []string{"*:sync"}
 
 // EnsureServerConfig writes Stormlight's tmux configuration into the given
 // directory and returns its path. The file is rewritten every time so

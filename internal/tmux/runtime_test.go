@@ -568,7 +568,9 @@ func TestApplyServerOptionsAssertsPassthroughOnLiveServer(t *testing.T) {
 	if err := runtime.ApplyServerOptions(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"set-option", "-g", "allow-passthrough", "all"}
+	// "on" and not "all": under "all" a pane the client is not showing may
+	// write straight to the terminal.
+	want := []string{"set-option", "-g", "allow-passthrough", "on"}
 	found := false
 	for _, call := range runner.calls {
 		if slices.Equal(call, want) {
@@ -577,6 +579,79 @@ func TestApplyServerOptionsAssertsPassthroughOnLiveServer(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("allow-passthrough was not asserted: %#v", runner.calls)
+	}
+}
+
+func TestApplyServerOptionsAppendsSyncOnLiveServer(t *testing.T) {
+	runner := &captureRunner{
+		terminalFeatures: "terminal-features[0] xterm*:clipboard:cstyle\n" +
+			"terminal-features[1] *:RGB\n",
+	}
+	runtime, err := NewRuntime(runner, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.ApplyServerOptions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"set-option", "-sa", "terminal-features", ",*:sync"}
+	found := false
+	for _, call := range runner.calls {
+		if slices.Equal(call, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sync feature was not appended: %#v", runner.calls)
+	}
+}
+
+// A server that already carries the feature is left alone: the option
+// appends, so re-asserting it on every dashboard launch would grow the array
+// for as long as the server lives.
+func TestApplyServerOptionsLeavesDeclaredFeaturesAlone(t *testing.T) {
+	runner := &captureRunner{
+		terminalFeatures: "terminal-features[0] xterm*:clipboard\n" +
+			"terminal-features[1] *:sync\n",
+	}
+	runtime, err := NewRuntime(runner, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.ApplyServerOptions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call, "terminal-features") &&
+			slices.Contains(call, "set-option") {
+			t.Fatalf("terminal-features was appended twice: %#v", call)
+		}
+	}
+}
+
+// A pattern that ends in the feature is not the feature: "xterm*:sync"
+// promises synchronized output to xterm and nothing else, so a client on
+// tmux-256color still needs the entry Stormlight declares.
+func TestApplyServerOptionsMatchesWholeFeatureEntries(t *testing.T) {
+	runner := &captureRunner{
+		terminalFeatures: "terminal-features[0] xterm*:sync\n",
+	}
+	runtime, err := NewRuntime(runner, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.ApplyServerOptions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"set-option", "-sa", "terminal-features", ",*:sync"}
+	found := false
+	for _, call := range runner.calls {
+		if slices.Equal(call, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("xterm*:sync was read as *:sync: %#v", runner.calls)
 	}
 }
 
@@ -628,7 +703,10 @@ type captureRunner struct {
 	rootBinding     string
 	feedbackVersion string
 	clientLine      string
-	calls           [][]string
+	// terminalFeatures is what show-options reports for the server's
+	// terminal-features array, one `terminal-features[N] value` per line.
+	terminalFeatures string
+	calls            [][]string
 }
 
 func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string, error) {
@@ -665,6 +743,8 @@ func (r *captureRunner) Run(_ context.Context, _ []byte, args ...string) (string
 			return r.feedbackVersion, nil
 		case "@stormlight_id":
 			return r.stormlightID, nil
+		case "terminal-features":
+			return r.terminalFeatures, nil
 		}
 		return "", nil
 	}
