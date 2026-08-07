@@ -445,7 +445,7 @@ func TestAttachSkipsForeignRootBindingsWithoutFailing(t *testing.T) {
 			boundKeys = append(boundKeys, call[5])
 		}
 	}
-	want := []string{"C-^", returnMouseKey, "C-]", `C-\`}
+	want := []string{"C-^", returnMouseKey, "C-]", `C-\`, queueMouseKey}
 	if !slices.Equal(boundKeys, want) {
 		t.Fatalf("root keys bound = %#v, want %#v", boundKeys, want)
 	}
@@ -860,7 +860,11 @@ func rootReturnCalls(runtime *Runtime) [][]string {
 			binding.key, "run-shell", "-C", format,
 		})
 	}
-	return append(calls, rootNextCalls(runtime)...)
+	calls = append(calls, rootNextCalls(runtime)...)
+	return append(calls, []string{
+		"bind-key", "-T", "root", "-N", nextBindingNote,
+		queueMouseKey, "run-shell", "-C", runtime.queueMouseFormat(),
+	})
 }
 
 // rootNextCalls is the single-press queue key, installed alongside the
