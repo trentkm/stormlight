@@ -148,16 +148,21 @@ managed session preserves the global tmux status formats and uses
 `client_prefix` to temporarily switch to a high-contrast status style with the
 available return and help keys.
 
-The same attach reserves the queue keys — `C-]` in the root table, `N` under
-the prefix — which hand the client the next agent waiting on a human. Unlike
-the return key these are not essential to escaping an agent, so a foreign
-binding is left in place with a warning rather than failing the attach. The
-binding re-invokes Stormlight rather than expressing the choice as a tmux
-format: the order depends on marks and on when each agent entered the queue,
-which is inference no format language carries. Arriving clears soft attention
-exactly as opening a terminal from the dashboard does, so the queue drains as
-it is worked, and the window arrived in inherits the return target of the one
-left behind.
+The same attach reserves the queue keys — `C-]` and `C-\` in the root table,
+`N` and `P` under the prefix — which step the client through the agents
+waiting on a human. Unlike the return key these are not essential to escaping
+an agent, so a foreign binding is left in place with a warning rather than
+failing the attach. The binding re-invokes Stormlight rather than expressing
+the choice as a tmux format: the order depends on marks and on when each
+agent entered the queue, which is inference no format language carries. The
+window arrived in inherits the return target of the one left behind.
+
+Arriving deliberately does not clear attention. Landing in a window answers
+nothing the agent is asking, and a cycle that marked rows seen on the way
+past would empty the inbox with nothing done about it. So the queue holds
+still and only the human's place in it moves — which is why a step is
+relative and reversible rather than a repeated pop of the head, and why the
+ring is circular.
 
 The right of the managed session's status bar carries the dashboard's own
 tally, written into a session option the bar expands, then a divider and the
@@ -207,7 +212,9 @@ me" and from "just idle".
 Entry into the amber inbox is stamped, by either route, and the stamp is
 what orders the queue the tmux keys cycle: first in, first out. It records
 entry rather than the latest signal, so a summary or an escalation arriving
-mid-wait does not send an agent to the back of a line it never left.
+mid-wait does not send an agent to the back of a line it never left. Cycling
+reads that order and nothing else — it never writes attention, so an agent
+leaves the queue only the way it always has.
 
 A mark is the one signal nothing derives. Everything above is inference, and
 inference is sometimes wrong, so a human can say otherwise (`m` in the

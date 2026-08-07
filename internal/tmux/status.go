@@ -205,12 +205,17 @@ func (r *Runtime) statusRight() string {
 	return statusSummaryFormat + r.statusRightKeys()
 }
 
-// statusRightKeys names the two ways out of an agent: back to the dashboard,
-// and on to whoever is waiting next.
+// statusRightKeys names the ways out of an agent: back to the dashboard, and
+// either way along the queue. The two queue keys share one label — spelling
+// both out costs more of the band than the direction is worth, and they sit
+// in the order they move, back on the left.
 func (r *Runtime) statusRightKeys() string {
+	queue := "#[fg=" + statusKeyColor + "]" +
+		r.effectivePreviousKeys()[0] + " " + r.effectiveNextKeys()[0] +
+		"#[fg=" + statusLabelColor + "] ↻ queue#[default]"
 	return "  " +
 		statusKeyHint(r.effectiveReturnKeys()[0], "⏎ dashboard") + "  " +
-		statusKeyHint(r.effectiveNextKeys()[0], "↻ next") + " "
+		queue + " "
 }
 
 func statusKeyHint(key, label string) string {

@@ -475,6 +475,9 @@ func newService(socket, sessionName string, cfg config.Config) (*app.Service, er
 	if len(cfg.Tmux.NextKeys) > 0 {
 		runtime.SetNextKeys(cfg.Tmux.NextKeys)
 	}
+	if len(cfg.Tmux.PreviousKeys) > 0 {
+		runtime.SetPreviousKeys(cfg.Tmux.PreviousKeys)
+	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
 	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
 }
@@ -728,13 +731,15 @@ func newNextCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 	var client string
 	var window string
 	var agentID string
+	var previous bool
 
 	command := &cobra.Command{
 		Use:   "next",
 		Short: "Switch to the next agent waiting on you",
 		Long: "Hand the terminal the next agent in the attention queue, " +
-			"oldest first. From inside an agent the queue advances past it; " +
-			"from anywhere else it starts at the head.",
+			"oldest first. From inside an agent the queue steps past it; " +
+			"from anywhere else it starts at the end it came from. Visiting " +
+			"an agent leaves its attention exactly as it was.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service, err := newService(*socket, *sessionName, cfg)
 			if err != nil {
@@ -744,10 +749,15 @@ func newNextCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 			if !ok {
 				return fmt.Errorf("the queue needs a tmux runtime")
 			}
+			step := agent.QueueForward
+			if previous {
+				step = agent.QueueBack
+			}
 			return runtime.NextWaiting(cmd.Context(), tmux.NextRequest{
 				Client: client,
 				Window: window,
 				Agent:  agentID,
+				Step:   step,
 			})
 		},
 	}
@@ -756,7 +766,9 @@ func newNextCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 	command.Flags().StringVar(&window, "window", "",
 		"tmux window the request came from")
 	command.Flags().StringVar(&agentID, "agent", "",
-		"agent the request came from; the queue advances past it")
+		"agent the request came from; the queue steps past it")
+	command.Flags().BoolVar(&previous, "previous", false,
+		"step back through the queue instead of forward")
 	return command
 }
 
