@@ -40,10 +40,13 @@ are — `workspace › worktree › agent` — rather than listing the session's
 agents, which the dashboard is already for. A narrow terminal drops the outer
 segments first; the agent's own name always stays. The right of that bar
 carries the dashboard's own counters — working, waiting, needing input, and
-idle — so the question that would otherwise send you back to the dashboard
-is answered where you already are.
+idle — behind a divider that separates them from the key hints, so the
+question that would otherwise send you back to the dashboard is answered
+where you already are. The counters keep their words while the lineage still
+has room for its own; below that they fall back to the glyph and the number,
+which the dashboard header is the legend for.
 
-When something is waiting, `Alt-n` hands you the next one directly, oldest
+When something is waiting, `Ctrl-]` hands you the next one directly, oldest
 first: agents queue in the order they started waiting, and arriving marks a
 result seen the same way opening its terminal from the dashboard does, so
 pressing it again moves on. An agent blocked on a question or an approval
@@ -166,7 +169,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `Enter` | Enter Agents from Workspaces, or open the selected agent terminal |
 | `Ctrl-6` | Return from an agent to the dashboard (vim's alternate-buffer toggle; also shown in the agent status bar, which is clickable) |
 | tmux prefix, then `Q` | Return from an agent to the dashboard (tmux-native fallback) |
-| `Alt-n` | From an agent, switch to the next one waiting on you, oldest first |
+| `Ctrl-]` | From an agent, switch to the next one waiting on you, oldest first |
 | tmux prefix, then `N` | The same queue (tmux-native fallback) |
 | `n` | Add a workspace in Workspaces; create an agent in the selected workspace elsewhere |
 | `o` | Create an agent with an explicit directory picker |
@@ -420,7 +423,7 @@ mode     = "edits"         # ask | edits | auto
 [tmux]
 socket      = "stormlight"
 return_keys = ["C-6", "C-^"]
-next_keys   = ["M-n"]      # cycle the agents waiting on you
+next_keys   = ["C-]"]      # cycle the agents waiting on you
 
 [workspaces."~/repos/trusted-project"]
 mode = "auto"              # per-directory dispatch defaults (matches subdirs)

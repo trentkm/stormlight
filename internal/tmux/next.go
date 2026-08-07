@@ -24,7 +24,7 @@ const (
 )
 
 // SetNextKeys overrides the single-press keys that cycle the attention queue
-// (default M-n).
+// (default C-] ).
 func (r *Runtime) SetNextKeys(keys []string) {
 	r.nextKeys = keys
 }
@@ -33,7 +33,7 @@ func (r *Runtime) effectiveNextKeys() []string {
 	if len(r.nextKeys) > 0 {
 		return r.nextKeys
 	}
-	return []string{"M-n"}
+	return []string{"C-]"}
 }
 
 // nextShellCommand re-invokes Stormlight to do the picking. The queue's order

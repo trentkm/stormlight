@@ -70,12 +70,16 @@ const (
 	baseStatusLeft = ` #[fg=#7DCFFF#,bold]✦#[default] #{?#{@stormlight_id},` +
 		agentStatusLineage + `,#[fg=#E8EEF9#,bold]#{session_name}} `
 	// status-left is the whole bar now, so its own length cap stays out of the
-	// way; what keeps it off the return hint is the render-time truncation in
-	// dynamicStatusLeft, which subtracts the hint's width from the client's.
+	// way; what keeps it off the key hints is the render-time truncation in
+	// dynamicStatusLeft, which subtracts the right section's own width from
+	// the client's. That width is a published format rather than
+	// status-right-length, because the right section renders narrower on a
+	// narrow client and reserving its widest form would cut the agent's name
+	// short for space nothing occupies.
 	baseStatusLeftLength = 400
 	dynamicStatusStyle   = `#{?client_prefix,#{E:@stormlight_status_style_prefix},#{E:@stormlight_status_style_base}}`
 	dynamicStatusLeft    = `#{?client_prefix,#{E:@stormlight_status_left_prefix},` +
-		`#{T;=/#{e|-:#{client_width},#{status-right-length}}:@stormlight_status_left_base}}`
+		`#{T;=/#{e|-:#{client_width},#{E:@stormlight_status_width}}:@stormlight_status_left_base}}`
 	// Stormlight's windows are its agents, and the dashboard is where you
 	// choose between them — listing them again on every agent's status bar
 	// only pushes the lineage of the one you are actually in off the band. So
@@ -531,8 +535,11 @@ func (r *Runtime) configureStatusBar(ctx context.Context, sessionName string) er
 		{"status-left", dynamicStatusLeft},
 		{"status-left-length", strconv.Itoa(
 			max(baseStatusLeftLength, len(prefixStatusLeft)))},
+		// Seeded so the bar is coherent before the first tally lands: with
+		// no counters the right section is just the key hints.
+		{statusWidthOption, strconv.Itoa(r.statusRightWidth(""))},
 		{"status-right", r.statusRight()},
-		{"status-right-length", strconv.Itoa(r.statusRightHintWidth())},
+		{"status-right-length", strconv.Itoa(r.statusRightWidth(""))},
 		{"status-format[0]", statusFormat},
 	}
 	for _, option := range options {

@@ -148,7 +148,7 @@ managed session preserves the global tmux status formats and uses
 `client_prefix` to temporarily switch to a high-contrast status style with the
 available return and help keys.
 
-The same attach reserves the queue keys — `M-n` in the root table, `N` under
+The same attach reserves the queue keys — `C-]` in the root table, `N` under
 the prefix — which hand the client the next agent waiting on a human. Unlike
 the return key these are not essential to escaping an agent, so a foreign
 binding is left in place with a warning rather than failing the attach. The
@@ -160,11 +160,19 @@ it is worked, and the window arrived in inherits the return target of the one
 left behind.
 
 The right of the managed session's status bar carries the dashboard's own
-tally, written into a session option the bar expands. It is published from
-the application service's listing rather than from each state change, because
-a listing is the only thing that notices a pane dying — whatever the
-dashboard knows, the bar knows a poll later — and a tally that has not moved
-is not rewritten.
+tally, written into a session option the bar expands, then a divider and the
+hints for the two keys that leave the window. It is published from the
+application service's listing rather than from each state change, because a
+listing is the only thing that notices a pane dying — whatever the dashboard
+knows, the bar knows a poll later — and a tally that has not moved is not
+rewritten.
+
+The tally is published as a width conditional: spelled out where the lineage
+still has room for its own, glyph and number below that. Both renderings are
+built in Go, and so is the column budget `status-left` yields to them, which
+is published alongside as a second conditional. `status-right-length` cannot
+serve as that budget — it is a cap on the widest form, and reserving it on a
+narrow client cuts the agent's name for space nothing occupies.
 
 ## State model
 

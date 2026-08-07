@@ -18,7 +18,7 @@ const template = `# Stormlight configuration.
 [tmux]
 # socket      = "stormlight"    # tmux -L <socket>; "" targets the default server
 # return_keys = ["C-6", "C-^"]  # single-press return-to-dashboard keys
-# next_keys   = ["M-n"]         # single-press next-agent-waiting keys
+# next_keys   = ["C-]"]         # single-press next-agent-waiting keys
 
 [ui]
 # rows = "compact"              # compact | expanded
