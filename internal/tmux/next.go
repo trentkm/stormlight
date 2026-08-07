@@ -160,6 +160,73 @@ func (r *Runtime) configureNextRoot(ctx context.Context, listing string) {
 			}
 		}
 	}
+	r.configureNextMouse(ctx, listing)
+}
+
+// queueMouseKey is the click tmux reports for a user range on the status
+// line. It is a different key from MouseDown1StatusRight, which is what the
+// rest of the right section still answers to, so the two coexist: the return
+// region keeps its meaning and only the hints that claim a range of their own
+// are peeled off it.
+const queueMouseKey = "MouseDown1Status"
+
+// statusClickPassthrough is what a click means when it is not on one of
+// Stormlight's hints: select the window it landed on, which is what a click
+// on a window range has always meant.
+const statusClickPassthrough = "select-window -t="
+
+// tmuxStatusClickDefaults are tmux's own bindings for this key. Unlike every
+// other key Stormlight claims, this one is bound out of the box — so "already
+// bound" cannot stand for "somebody owns this", and a guard that reads it
+// that way declines to install and leaves the hints inert.
+var tmuxStatusClickDefaults = []string{"select-window -t=", "switch-client -t ="}
+
+// queueMouseFormat dispatches a status-line click on the range it landed in.
+// Anything that is not one of Stormlight's hints — including every click in a
+// window Stormlight does not own — keeps the meaning tmux gives it.
+func (r *Runtime) queueMouseFormat() string {
+	return `#{?#{==:#{@stormlight_id},},` + statusClickPassthrough +
+		`,#{?#{==:#{mouse_status_range},` + queueForwardRange + `},` +
+		r.nextTmuxCommand(agent.QueueForward) +
+		`,#{?#{==:#{mouse_status_range},` + queueBackRange + `},` +
+		r.nextTmuxCommand(agent.QueueBack) +
+		`,` + statusClickPassthrough + `}}}`
+}
+
+// replaceableStatusClick reports whether the current binding is one
+// Stormlight may take over: its own, or the default tmux ships.
+func replaceableStatusClick(binding string) bool {
+	if strings.Contains(binding, "@stormlight_") {
+		return true
+	}
+	compact := strings.Join(strings.Fields(binding), "")
+	for _, standard := range tmuxStatusClickDefaults {
+		if strings.HasSuffix(compact, strings.ReplaceAll(standard, " ", "")) {
+			return true
+		}
+	}
+	return false
+}
+
+// configureNextMouse makes the queue hints clickable.
+func (r *Runtime) configureNextMouse(ctx context.Context, listing string) {
+	if current, bound := tableBinding(listing, "root", queueMouseKey); bound &&
+		!replaceableStatusClick(current) {
+		diagnostic.Logger().Warn("foreign tmux root binding left in place",
+			"key", queueMouseKey,
+			"binding", current,
+		)
+		return
+	}
+	if _, err := r.runner.Run(ctx, nil,
+		"bind-key", "-T", "root", "-N", nextBindingNote,
+		queueMouseKey, "run-shell", "-C", r.queueMouseFormat(),
+	); err != nil {
+		diagnostic.Logger().Warn("cannot install tmux queue binding",
+			"key", queueMouseKey,
+			"error", err,
+		)
+	}
 }
 
 // NextRequest names where a cycle was asked for: the tmux client that will

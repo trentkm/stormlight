@@ -157,6 +157,16 @@ the choice as a tmux format: the order depends on marks and on when each
 agent entered the queue, which is inference no format language carries. The
 window arrived in inherits the return target of the one left behind.
 
+Each queue hint on the bar carries a tmux user range, so a click on it does
+what it says rather than inheriting the return region that surrounds it. A
+click is dispatched on `#{mouse_status_range}`, which is a different key
+(`MouseDown1Status`) from the one the return region answers to
+(`MouseDown1StatusRight`), so the two coexist. Two tmux details are load
+bearing: a range name is stored in a fixed 16-byte field and silently cut, so
+two names sharing a long prefix arrive identical and match neither branch;
+and a range is recorded one column right of where its text is drawn, so each
+range opens on the space before its hint to land on the glyphs.
+
 Arriving deliberately does not clear attention. Landing in a window answers
 nothing the agent is asking, and a cycle that marked rows seen on the way
 past would empty the inbox with nothing done about it. So the queue holds

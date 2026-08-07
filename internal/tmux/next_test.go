@@ -299,3 +299,45 @@ func TestNextShellCommandCarriesItsOwnServer(t *testing.T) {
 		t.Fatalf("tmux command = %s", quoted)
 	}
 }
+
+// A click on the bar has to be told apart by the range it landed in: the
+// return region and the queue hints share one status line, and dispatching
+// on the key alone is what made a hint reading "queue" go to the dashboard.
+func TestQueueMouseFormatDispatchesOnTheRange(t *testing.T) {
+	runtime := &Runtime{
+		executable:  "/usr/local/bin/stormlight",
+		sessionName: "stormlight-agents",
+	}
+	format := runtime.queueMouseFormat()
+	for _, want := range []string{
+		"#{==:#{mouse_status_range}," + queueForwardRange + "}",
+		"#{==:#{mouse_status_range}," + queueBackRange + "}",
+		"'--previous'",
+		// A click anywhere else on the bar keeps tmux's own meaning.
+		"select-window -t=",
+	} {
+		if !strings.Contains(format, want) {
+			t.Fatalf("mouse format missing %q: %s", want, format)
+		}
+	}
+}
+
+// MouseDown1Status is the one key Stormlight claims that tmux already binds,
+// so "already bound" cannot mean "somebody owns this" — reading it that way
+// declines to install and leaves the hints inert.
+func TestStatusClickReplacesTmuxOwnDefault(t *testing.T) {
+	for _, standard := range []string{
+		"bind-key  -T root MouseDown1Status  switch-client -t =",
+		"bind-key  -T root MouseDown1Status  select-window -t=",
+	} {
+		if !replaceableStatusClick(standard) {
+			t.Fatalf("tmux's own default was treated as foreign: %q", standard)
+		}
+	}
+	if !replaceableStatusClick(`run-shell -C "#{?#{==:#{@stormlight_id},}..."`) {
+		t.Fatal("Stormlight's own binding was treated as foreign")
+	}
+	if replaceableStatusClick("bind-key -T root MouseDown1Status display-panes") {
+		t.Fatal("a binding somebody chose was overwritten")
+	}
+}
