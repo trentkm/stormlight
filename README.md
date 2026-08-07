@@ -38,12 +38,28 @@ current pane directly and reaches agents through a nested client. Selecting an
 agent switches to its window, and that window's status bar names where you
 are — `workspace › worktree › agent` — rather than listing the session's other
 agents, which the dashboard is already for. A narrow terminal drops the outer
-segments first; the agent's own name always stays. Press the tmux prefix
-followed by `Q` to return to the dashboard. Stormlight installs this binding
-only when `Q` is unbound or already owned by Stormlight. While the prefix is
+segments first; the agent's own name always stays. The right of that bar
+carries the dashboard's own counters — working, waiting, needing input, and
+idle — behind a divider that separates them from the key hints, so the
+question that would otherwise send you back to the dashboard is answered
+where you already are. The counters keep their words while the lineage still
+has room for its own; below that they fall back to the glyph and the number,
+which the dashboard header is the legend for.
+
+When something is waiting, `Ctrl-]` hands you the next one directly and
+`Ctrl-\` steps back: agents queue in the order they started waiting, and the
+ring is circular, so pressing forward walks the whole inbox and comes round
+again. Visiting an agent deliberately does not clear its amber — landing in
+a window is not an answer to what the agent is asking — so the queue holds
+still and your place in it is what moves. Attention comes down where it
+always has: from the dashboard, from `M`, or from the agent's own next
+report. Press the tmux prefix followed by `Q` to return to the dashboard, or
+`N` and `P` for the same queue. Stormlight installs these bindings only when
+the keys are unbound or already owned by Stormlight. While the prefix is
 active, the managed session highlights the tmux status bar and shows `Q` for
-return and `?` for the full tmux key list. Closing the dashboard removes only
-its temporary session; agents keep running on the Stormlight server.
+return, `N` and `P` for the queue, and `?` for the full tmux key list.
+Closing the dashboard removes only its temporary session; agents keep
+running on the Stormlight server.
 
 ## Requirements
 
@@ -155,6 +171,8 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `Enter` | Enter Agents from Workspaces, or open the selected agent terminal |
 | `Ctrl-6` | Return from an agent to the dashboard (vim's alternate-buffer toggle; also shown in the agent status bar, which is clickable) |
 | tmux prefix, then `Q` | Return from an agent to the dashboard (tmux-native fallback) |
+| `Ctrl-]` / `Ctrl-\` | From an agent, step forward or back through the agents waiting on you, oldest first |
+| tmux prefix, then `N` / `P` | The same queue (tmux-native fallback) |
 | `n` | Add a workspace in Workspaces; create an agent in the selected workspace elsewhere |
 | `o` | Create an agent with an explicit directory picker |
 | `i` / `s` | Write a reply in Spanreed |
@@ -407,6 +425,8 @@ mode     = "edits"         # ask | edits | auto
 [tmux]
 socket      = "stormlight"
 return_keys = ["C-6", "C-^"]
+next_keys     = ["C-]"]    # step forward through the agents waiting on you
+previous_keys = ['C-\\']    # and back
 
 [workspaces."~/repos/trusted-project"]
 mode = "auto"              # per-directory dispatch defaults (matches subdirs)

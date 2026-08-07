@@ -1675,7 +1675,8 @@ func TestWorkspaceShimmerSweepsWithStableWidth(t *testing.T) {
 	group := workspaceGroup{
 		context: value,
 		agents: []agent.Agent{{
-			Activity: agent.ActivityWorking,
+			Activity:    agent.ActivityWorking,
+			ProcessLive: true,
 		}},
 	}
 

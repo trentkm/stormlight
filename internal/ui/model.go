@@ -859,12 +859,7 @@ func marksResultSeen(key string, active pane) bool {
 }
 
 func (m Model) anyAgentsActive() bool {
-	for _, managedAgent := range m.agents {
-		if agentCountsActive(managedAgent) {
-			return true
-		}
-	}
-	return false
+	return agent.Count(m.agents).Working > 0
 }
 
 // shimmerPhaseOrRest returns the sweep phase while the shimmer is running

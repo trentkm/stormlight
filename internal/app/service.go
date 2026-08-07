@@ -120,7 +120,24 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	for index := range agents {
 		agents[index].Workspace = contexts[index]
 	}
+	s.publishStatus(ctx, agents)
 	return agents, nil
+}
+
+// publishStatus hands the runtime's own chrome the tally the dashboard is
+// about to draw. It rides on the listing rather than on state changes
+// because a listing is the only thing that notices a pane dying, and the
+// dashboard polls it — so whatever the dashboard knows, the status bar
+// knows a moment later. Best-effort: a bar that cannot be written is not a
+// reason to fail the listing behind it.
+func (s *Service) publishStatus(ctx context.Context, agents []agent.Agent) {
+	publisher, ok := s.runtime.(session.StatusPublisher)
+	if !ok {
+		return
+	}
+	if err := publisher.PublishStatus(ctx, agent.Count(agents)); err != nil {
+		diagnostic.Logger().Debug("status bar tally not published", "error", err)
+	}
 }
 
 func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agent, error) {
