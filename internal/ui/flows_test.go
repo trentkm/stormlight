@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -732,5 +733,88 @@ func TestSpanreedHeadingHonorsMarksOverDerivedState(t *testing.T) {
 				t.Fatalf("heading still claims %q:\n%s", testCase.absent, rendered)
 			}
 		})
+	}
+}
+
+type historyBackend struct {
+	stubBackend
+	records   []history.Record
+	resumedID string
+}
+
+func (b *historyBackend) SessionHistory(
+	context.Context,
+) ([]history.Record, error) {
+	return b.records, nil
+}
+
+func (b *historyBackend) Resume(
+	_ context.Context,
+	record history.Record,
+) (agent.Agent, error) {
+	b.resumedID = record.SessionID
+	return agent.Agent{Name: record.Name, Task: record.Task}, nil
+}
+
+func TestHistoryFlowBrowsesAndResumes(t *testing.T) {
+	backend := &historyBackend{records: []history.Record{
+		{SessionID: "session-new", Provider: agent.ProviderClaude,
+			Name: "cl-newer", Task: "newer work"},
+		{SessionID: "session-old", Provider: agent.ProviderCodex,
+			Name: "cx-older", Task: "older work"},
+	}}
+	model := flowModelFixture(t, backend)
+
+	updated, cmd := model.updateNormal(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	model = updated.(Model)
+	if model.mode != modeHistory || cmd == nil {
+		t.Fatalf("H did not open history: mode=%d", model.mode)
+	}
+	// The load command's message carries the records into the model.
+	next, _ := model.Update(cmd())
+	model = next.(Model)
+	if len(model.historyRecords) != 2 || model.historyLoading {
+		t.Fatalf("history not loaded: %#v", model.historyRecords)
+	}
+
+	rendered := ansi.Strip(model.renderHistoryModal(100, 28))
+	for _, want := range []string{"cl-newer", "cx-older", "codex"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("history modal hides %q:\n%s", want, rendered)
+		}
+	}
+
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	model = next.(Model)
+	next, resumeCmd := model.updateHistory(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = next.(Model)
+	if model.mode != modeNormal || resumeCmd == nil {
+		t.Fatalf("enter did not leave the modal resuming: mode=%d", model.mode)
+	}
+	drainCmd(t, resumeCmd)
+	if backend.resumedID != "session-old" {
+		t.Fatalf("resumed %q, want the cursor's session", backend.resumedID)
+	}
+
+	// Esc closes without resuming.
+	updated, _ = model.updateNormal(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	model = updated.(Model)
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = next.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("esc left mode=%d", model.mode)
+	}
+}
+
+// drainCmd executes a command tree far enough to run its side effects.
+func drainCmd(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, item := range batch {
+			drainCmd(t, item)
+		}
 	}
 }

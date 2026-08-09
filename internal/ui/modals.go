@@ -166,6 +166,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"m", "mark agent in progress / needs attention"},
 			{"M", "mark agent or workspace seen"},
 			{"K", "workspace info"},
+			{"H", "session history; Enter resumes one"},
 		}},
 		{"View", [][2]string{
 			{", then a/n/c", "sort: attention, name, newest"},
