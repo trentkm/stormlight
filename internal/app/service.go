@@ -182,6 +182,42 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 	return managedAgent, nil
 }
 
+// Resume reopens a recorded provider session as a new managed agent: same
+// conversation, fresh window. The record supplies everything a dispatch
+// asks for — task, cwd, mode — so the resumed agent lands in the workspace
+// it left, and its hooks re-report whatever session id the provider
+// assigns the continuation.
+func (s *Service) Resume(
+	ctx context.Context,
+	record history.Record,
+) (agent.Agent, error) {
+	mode := record.Mode
+	if mode == "" {
+		mode = agent.DefaultMode
+	}
+	launch, err := s.providers.Resume(record.Provider, record.SessionID, mode)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	task := strings.TrimSpace(record.Task)
+	if task == "" {
+		task = "Resume session " + record.SessionID
+	}
+	workspaceContext, err := s.workspaces.Resolve(ctx, record.Cwd)
+	if err != nil {
+		return agent.Agent{}, fmt.Errorf("resolve workspace: %w", err)
+	}
+	return s.runtime.Dispatch(ctx, session.DispatchRequest{
+		Provider:  record.Provider,
+		Name:      record.Name,
+		Task:      task,
+		Cwd:       record.Cwd,
+		Mode:      mode,
+		Launch:    launch,
+		Workspace: workspaceContext,
+	})
+}
+
 func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, error) {
 	paths, err := s.catalog.Paths()
 	if err != nil {
