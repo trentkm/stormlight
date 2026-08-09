@@ -2,6 +2,8 @@ package tmux
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -266,14 +268,20 @@ func TestNextWaitingIncludesMarkedAgents(t *testing.T) {
 // The binding fires with whatever environment the tmux server was started
 // with, so the socket and session have to travel in the command line itself.
 func TestNextShellCommandCarriesItsOwnServer(t *testing.T) {
+	// A real file, because the binding re-resolves a path that has stopped
+	// naming one rather than writing it into a key binding.
+	installed := filepath.Join(t.TempDir(), "stormlight")
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	runtime := &Runtime{
-		executable:  "/usr/local/bin/stormlight",
+		executable:  installed,
 		socket:      "stormlight",
 		sessionName: "stormlight-agents",
 	}
 	command := runtime.nextShellCommand(agent.QueueForward)
 	for _, want := range []string{
-		"'/usr/local/bin/stormlight'",
+		"'" + installed + "'",
 		"'--tmux-socket' 'stormlight'",
 		"'--session' 'stormlight-agents'",
 		"'next'",
