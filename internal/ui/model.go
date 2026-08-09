@@ -172,6 +172,8 @@ type Model struct {
 	historyRecords          []history.Record
 	historyCursor           int
 	historyLoading          bool
+	historyFilter           lineInput
+	historyFiltering        bool
 	pathNav                 pathNav
 	pickerStart             string
 	chooseDispatchDirectory bool
