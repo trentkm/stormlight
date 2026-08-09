@@ -47,6 +47,7 @@ func TestParseAgent(t *testing.T) {
 		"/tmp/claude/session.jsonl",
 		"attention",
 		"1700000600",
+		"019b9a7e-9846-7da2-9041-d4cec65d4d1d",
 	}
 	line := strings.Join(parts, fieldSeparator)
 
@@ -65,6 +66,9 @@ func TestParseAgent(t *testing.T) {
 	}
 	if managedAgent.Attention != agent.AttentionApproval {
 		t.Fatalf("attention = %q", managedAgent.Attention)
+	}
+	if managedAgent.SessionID != "019b9a7e-9846-7da2-9041-d4cec65d4d1d" {
+		t.Fatalf("session id = %q", managedAgent.SessionID)
 	}
 	if managedAgent.Workspace.ID != "git:/tmp/project/.git" ||
 		managedAgent.Workspace.Metadata["branch"] != "main" {

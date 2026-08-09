@@ -55,6 +55,9 @@ type Update struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// SessionID records the provider's own conversation id when an event
+	// carries it; empty means "leave as is".
+	SessionID string
 	// TranscriptPath records the provider's own transcript file when a
 	// hook reports it; empty means "leave as is".
 	TranscriptPath string
