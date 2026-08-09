@@ -124,11 +124,17 @@ var agentMetadataFields = [metadataFieldCount]string{
 type Runtime struct {
 	runner       Runner
 	sessionName  string
-	executable   string
 	socket       string
 	returnKeys   []string
 	nextKeys     []string
 	previousKeys []string
+
+	// executableMu guards the path Stormlight re-invokes itself by, which
+	// launchPath re-resolves when the file behind it disappears. Dispatch
+	// runs off the dashboard's command goroutines while key bindings are
+	// installed on attach, so both can reach it at once.
+	executableMu sync.Mutex
+	executable   string
 
 	// statusMu guards the last tally written to the band. The dashboard
 	// publishes from its polling command, which runs off the render loop.
@@ -155,6 +161,45 @@ func NewRuntime(runner Runner, sessionName string) (*Runtime, error) {
 		runtime.socket = source.Socket()
 	}
 	return runtime, nil
+}
+
+// launchPath returns the path to write into a tmux command line. The value
+// resolved at startup names a file that can die while the dashboard is still
+// running — a Homebrew upgrade deletes the versioned binary, and removing a
+// finished worktree deletes a development build — and tmux would then hand
+// the dead path to a shell, which reports an unknown command into a pane
+// nobody is watching. Re-checking at the moment of use keeps that window
+// down to nothing.
+//
+// The current path comes back even on failure, so callers that have no way
+// to report an error still have the best answer available rather than an
+// empty string.
+func (r *Runtime) launchPath() (string, error) {
+	r.executableMu.Lock()
+	defer r.executableMu.Unlock()
+	if _, err := os.Stat(r.executable); err == nil {
+		return r.executable, nil
+	}
+	resolved, err := selfpath.Resolve()
+	if err != nil {
+		return r.executable, err
+	}
+	r.executable = resolved
+	return resolved, nil
+}
+
+// bindingPath is launchPath for the tmux key bindings, which are installed
+// best-effort and have nowhere to surface an error. A binding naming a
+// missing binary is no worse than the binding being dropped, so the stale
+// path stays and the warning carries the news.
+func (r *Runtime) bindingPath() string {
+	path, err := r.launchPath()
+	if err != nil {
+		diagnostic.Logger().Warn("cannot resolve the Stormlight binary for a tmux binding",
+			"error", err,
+		)
+	}
+	return path
 }
 
 // SetReturnKeys overrides the single-press return-to-dashboard keys
@@ -234,6 +279,15 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("create agent id: %w", err)
 	}
+
+	// Resolved before anything is created: an agent whose window exists but
+	// whose pane died on a shell error is worse than no agent at all, since
+	// the dashboard lists it as though it had started.
+	executable, err := r.launchPath()
+	if err != nil {
+		return agent.Agent{}, err
+	}
+
 	// A user-chosen name becomes the tmux window name verbatim, so it goes
 	// through the same whitespace collapse as Rename — a newline or tab in
 	// a window name confuses every tmux format string that prints it.
@@ -286,7 +340,7 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 		return agent.Agent{}, err
 	}
 	commandArgs := []string{
-		r.executable,
+		executable,
 	}
 	if r.socket != "" {
 		commandArgs = append(commandArgs, "--tmux-socket", r.socket)

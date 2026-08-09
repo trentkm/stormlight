@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -155,10 +156,46 @@ func TestDispatchNamesTheWindow(t *testing.T) {
 	}
 }
 
+// The path resolved when the dashboard started names a file that can be
+// deleted while it is still running — tearing down a finished worktree does
+// exactly that to a development build. Writing it into the window command
+// anyway leaves the pane holding a shell error and no agent (#90).
+func TestDispatchReresolvesADeletedExecutable(t *testing.T) {
+	deleted := filepath.Join(t.TempDir(), "worktree", "stormlight")
+	runner := &dispatchRunner{}
+	runtime := &Runtime{
+		runner:      runner,
+		sessionName: "stormlight",
+		executable:  deleted,
+	}
+
+	if _, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.ProviderClaude,
+		Task:     "Fix the OAuth callback",
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Path: "/usr/bin/claude"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if runner.paneCommand == "" {
+		t.Fatal("no command was given to the pane")
+	}
+	if strings.Contains(runner.paneCommand, deleted) {
+		t.Fatalf("pane command still names the deleted binary: %q", runner.paneCommand)
+	}
+	// The re-resolution is cached, so a second dispatch does not pay for it
+	// and the runtime no longer holds a path nothing can start.
+	if runtime.executable == deleted {
+		t.Fatal("runtime kept the deleted path")
+	}
+}
+
 // dispatchRunner answers just enough tmux for Dispatch and records the name
-// the new window was created with.
+// the new window was created with and the command its pane was given.
 type dispatchRunner struct {
-	windowName string
+	windowName  string
+	paneCommand string
 }
 
 func (r *dispatchRunner) Run(_ context.Context, _ []byte, args ...string) (string, error) {
@@ -173,6 +210,8 @@ func (r *dispatchRunner) Run(_ context.Context, _ []byte, args ...string) (strin
 			r.windowName = args[index+1]
 		}
 		return "@7" + fieldSeparator + "%7", nil
+	case "respawn-pane":
+		r.paneCommand = args[len(args)-1]
 	}
 	return "", nil
 }
