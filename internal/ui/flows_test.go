@@ -809,6 +809,87 @@ func TestHistoryFlowBrowsesAndResumes(t *testing.T) {
 	}
 }
 
+func TestHistoryFilterNarrowsAndResumesTheMatch(t *testing.T) {
+	backend := &historyBackend{records: []history.Record{
+		{SessionID: "session-parser", Provider: agent.ProviderClaude,
+			Name: "cl-parser", Task: "fix the parser"},
+		{SessionID: "session-docs", Provider: agent.ProviderClaude,
+			Name: "cl-docs", Task: "write the docs"},
+		{SessionID: "session-tests", Provider: agent.ProviderCodex,
+			Name: "cx-tests", Task: "extend parser tests"},
+	}}
+	model := flowModelFixture(t, backend)
+
+	updated, cmd := model.updateNormal(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	model = updated.(Model)
+	next, _ := model.Update(cmd())
+	model = next.(Model)
+
+	// / opens the filter; typed terms match anywhere in the record, and
+	// every term must match.
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: '/', Text: "/"})
+	model = next.(Model)
+	if !model.historyFiltering {
+		t.Fatal("/ did not start filtering")
+	}
+	for _, key := range []rune("parser") {
+		next, _ = model.updateHistory(tea.KeyPressMsg{Code: key, Text: string(key)})
+		model = next.(Model)
+	}
+	if visible := model.visibleHistory(); len(visible) != 2 {
+		t.Fatalf("filter kept %#v", visible)
+	}
+	rendered := ansi.Strip(model.renderHistoryModal(100, 28))
+	if !strings.Contains(rendered, "cl-parser") ||
+		strings.Contains(rendered, "cl-docs") {
+		t.Fatalf("filtered modal shows the wrong rows:\n%s", rendered)
+	}
+
+	// Arrows move within the narrowed list, and Enter resumes the match
+	// the cursor is on — the pathnav contract.
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: tea.KeyDown})
+	model = next.(Model)
+	next, resumeCmd := model.updateHistory(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = next.(Model)
+	if model.mode != modeNormal || resumeCmd == nil {
+		t.Fatalf("enter did not resume from the filter: mode=%d", model.mode)
+	}
+	drainCmd(resumeCmd)
+	if backend.resumedID != "session-tests" {
+		t.Fatalf("resumed %q, want the filtered cursor's session", backend.resumedID)
+	}
+}
+
+func TestHistoryFilterEscClearsBeforeClosing(t *testing.T) {
+	backend := &historyBackend{records: []history.Record{
+		{SessionID: "session-a", Provider: agent.ProviderClaude, Name: "cl-a"},
+	}}
+	model := flowModelFixture(t, backend)
+	updated, cmd := model.updateNormal(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	model = updated.(Model)
+	next, _ := model.Update(cmd())
+	model = next.(Model)
+
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: '/', Text: "/"})
+	model = next.(Model)
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: 'z', Text: "z"})
+	model = next.(Model)
+
+	// First esc abandons the filter but keeps the modal open; the second
+	// closes it.
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = next.(Model)
+	if model.mode != modeHistory || model.historyFilterActive() {
+		t.Fatalf("esc state: mode=%d filter=%q",
+			model.mode, model.historyFilter.Value())
+	}
+	next, _ = model.updateHistory(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = next.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("second esc left mode=%d", model.mode)
+	}
+}
+
 // restoreBackend answers the restore screen with a fixed snapshot and
 // records what it is asked to bring back.
 type restoreBackend struct {
