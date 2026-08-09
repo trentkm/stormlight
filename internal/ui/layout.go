@@ -111,6 +111,13 @@ func (m Model) renderBody() string {
 			width,
 			contentHeight,
 		)
+	case modeHistory:
+		return overlayCentered(
+			dashboard,
+			m.renderHistoryModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
 	}
 	return dashboard
 }
