@@ -226,6 +226,73 @@ func TestBuiltinSpecOverridesBinaryAndAppendsExtraArgs(t *testing.T) {
 	}
 }
 
+// Resume launches must carry the same lifecycle wiring a fresh dispatch
+// gets — a resumed agent that reports nothing would sit on the dashboard
+// exactly like the broken-hooks failure mode the wiring exists to prevent.
+func TestResumeArgsReopenSessionWithLifecycleWiring(t *testing.T) {
+	const sessionID = "019b9a7e-9846-7da2-9041-d4cec65d4d1d"
+
+	claude, err := claudeResumeArgs(sessionID, agent.ModeAuto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := len(claude)
+	if count < 2 || claude[count-2] != "--resume" || claude[count-1] != sessionID {
+		t.Fatalf("claude resume args = %#v", claude)
+	}
+	if claude[0] != "--settings" ||
+		!slices.Contains(claude, "bypassPermissions") {
+		t.Fatalf("claude lifecycle wiring lost: %#v", claude)
+	}
+	if slices.Contains(claude, "") {
+		t.Fatalf("claude resume carries an empty prompt: %#v", claude)
+	}
+
+	codex, err := codexResumeArgs(sessionID, agent.ModeAuto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codex[0] != "resume" || codex[len(codex)-1] != sessionID {
+		t.Fatalf("codex resume args = %#v", codex)
+	}
+	if codex[1] != "-c" || codex[3] != "-c" ||
+		!slices.Contains(codex, "--ask-for-approval") {
+		t.Fatalf("codex lifecycle wiring lost: %#v", codex)
+	}
+}
+
+func TestRegistryResumeRejectsCustomProvidersAndEmptyIDs(t *testing.T) {
+	registry := NewRegistryWithSpecs([]Spec{{
+		ID:     agent.Provider("echoer"),
+		Binary: "echo",
+	}})
+	if _, err := registry.Resume(agent.Provider("echoer"), "some-id", agent.ModeAsk); err == nil {
+		t.Fatal("custom provider resumed without a resume verb")
+	}
+	if _, err := registry.Resume(agent.ProviderClaude, "  ", agent.ModeAsk); err == nil {
+		t.Fatal("blank session id accepted")
+	}
+}
+
+func TestBuiltinSpecExtraArgsRideResumeLaunches(t *testing.T) {
+	registry := NewRegistryWithSpecs([]Spec{{
+		ID:        agent.ProviderClaude,
+		Binary:    "echo",
+		ExtraArgs: []string{"--model", "opus"},
+	}})
+	launch, err := registry.Resume(agent.ProviderClaude, "some-id", agent.ModeAsk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := len(launch.Args)
+	if launch.Args[count-1] != "opus" || launch.Args[count-2] != "--model" {
+		t.Fatalf("extra args lost on resume: %#v", launch.Args)
+	}
+	if !slices.Contains(launch.Args, "--resume") {
+		t.Fatalf("resume flag lost: %#v", launch.Args)
+	}
+}
+
 func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 	args, err := claudeArgs("do work", agent.ModeAsk)
 	if err != nil {
