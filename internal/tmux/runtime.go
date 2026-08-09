@@ -143,7 +143,10 @@ type Runtime struct {
 	publishedStatus string
 }
 
-var _ session.Runtime = (*Runtime)(nil)
+var (
+	_ session.Runtime  = (*Runtime)(nil)
+	_ session.Restorer = (*Runtime)(nil)
+)
 
 func NewRuntime(runner Runner, sessionName string) (*Runtime, error) {
 	if sessionName == "" {
@@ -302,28 +305,91 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 		return agent.Agent{}, err
 	}
 
-	createdAt := time.Now().UTC()
-	options := map[string]string{
-		"@stormlight_id":           id,
-		"@stormlight_provider":     string(req.Provider),
-		"@stormlight_task":         metadataValue(req.Task),
-		"@stormlight_summary":      metadataValue(req.Task),
-		"@stormlight_cwd":          cwd,
-		"@stormlight_created_at":   strconv.FormatInt(createdAt.Unix(), 10),
-		"@stormlight_activity":     string(agent.ActivityStarting),
-		"@stormlight_attention":    "",
-		"@stormlight_attention_at": "",
-		"@stormlight_mark":         "",
-		"@stormlight_pane":         target.paneID,
-		"@stormlight_mode":         string(req.Mode),
+	return r.start(ctx, target, executable, agent.Agent{
+		ID:        id,
+		Provider:  req.Provider,
+		Name:      name,
+		Task:      req.Task,
+		Summary:   req.Task,
+		Cwd:       cwd,
+		CreatedAt: time.Now().UTC(),
+		Activity:  agent.ActivityStarting,
+		Mode:      req.Mode,
+		Workspace: req.Workspace,
+	}, req.Launch)
+}
+
+// Restore builds an agent back from a record that outlived the server it ran
+// on. It is a dispatch that invents nothing: the id, the creation time, the
+// place in the amber inbox, and the transcript all come from the record, so
+// the restored row is the same agent rather than a new one wearing its name.
+//
+// The launch is the caller's business, and by contract carries no prompt —
+// the provider reopens its conversation and idles at the composer. Restoring
+// an agent is not resuming its work.
+func (r *Runtime) Restore(
+	ctx context.Context,
+	req session.RestoreRequest,
+) (agent.Agent, error) {
+	restored := req.Agent
+	if strings.TrimSpace(restored.ID) == "" {
+		return agent.Agent{}, fmt.Errorf("restored agent has no id")
 	}
-	workspaceOptions, err := encodeWorkspaceOptions(req.Workspace)
+	if req.Launch.Path == "" {
+		return agent.Agent{}, fmt.Errorf("provider launch command is empty")
+	}
+	cwd, err := normalizeCwd(restored.Cwd)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	restored.Cwd = cwd
+	if restored.Name = metadataValue(restored.Name); restored.Name == "" {
+		restored.Name = windowName(restored.Provider, restored.Task)
+	}
+	if restored.CreatedAt.IsZero() {
+		restored.CreatedAt = time.Now().UTC()
+	}
+	// A restored agent is starting, whatever it was doing when the server
+	// died. What it was *waiting on* is a different question, and that the
+	// record keeps: a question left unanswered overnight is still unanswered.
+	restored.Activity = agent.ActivityStarting
+
+	// Resolved before the window exists, exactly as a dispatch does: a
+	// restored agent whose pane dies on a bad launcher path is worse than one
+	// that never came back, because the dashboard lists it as though it had.
+	executable, err := r.launchPath()
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	target, err := r.createWindow(ctx, restored.Name, cwd)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	return r.start(ctx, target, executable, restored, req.Launch)
+}
+
+// start writes an agent's metadata onto a freshly created window and respawns
+// its pane on the provider. It is the half of dispatch that restore shares:
+// everything from "there is a window" to "there is an agent in it".
+// The executable is passed in rather than resolved here because both callers
+// resolve it before creating a window: a launcher path that names nothing
+// must fail where the caller can report it, not as shell noise in a pane.
+func (r *Runtime) start(
+	ctx context.Context,
+	target windowTarget,
+	executable string,
+	managedAgent agent.Agent,
+	launch session.Launch,
+) (agent.Agent, error) {
+	managedAgent.TmuxSession = r.sessionName
+	managedAgent.WindowID = target.windowID
+	managedAgent.PaneID = target.paneID
+	managedAgent.ProcessLive = true
+
+	options, err := encodeAgentOptions(managedAgent)
 	if err != nil {
 		r.cleanupWindow(target.windowID)
 		return agent.Agent{}, err
-	}
-	for key, value := range workspaceOptions {
-		options[key] = value
 	}
 	for key, value := range options {
 		if _, err := r.runner.Run(ctx, nil, "set-option", "-w", "-t", target.windowID, key, value); err != nil {
@@ -335,7 +401,7 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 		r.cleanupWindow(target.windowID)
 		return agent.Agent{}, fmt.Errorf("enable pane persistence: %w", err)
 	}
-	payload, err := encodeLaunch(req.Launch)
+	payload, err := encodeLaunch(launch)
 	if err != nil {
 		r.cleanupWindow(target.windowID)
 		return agent.Agent{}, err
@@ -349,32 +415,31 @@ func (r *Runtime) Dispatch(ctx context.Context, req session.DispatchRequest) (ag
 	commandArgs = append(commandArgs,
 		"--session", r.sessionName,
 		"_run",
-		"--id", id,
+		"--id", managedAgent.ID,
 		"--window", target.windowID,
-		"--cwd", cwd,
+		"--cwd", managedAgent.Cwd,
 		"--launch", payload,
 	)
 	command := shellJoin(commandArgs)
-	if _, err := r.runner.Run(ctx, nil, "respawn-pane", "-k", "-t", target.paneID, "-c", cwd, command); err != nil {
+	if _, err := r.runner.Run(ctx, nil, "respawn-pane", "-k", "-t", target.paneID, "-c", managedAgent.Cwd, command); err != nil {
 		r.cleanupWindow(target.windowID)
 		return agent.Agent{}, fmt.Errorf("start provider: %w", err)
 	}
+	return managedAgent, nil
+}
 
-	return agent.Agent{
-		ID:          id,
-		Provider:    req.Provider,
-		Name:        name,
-		Task:        req.Task,
-		Summary:     req.Task,
-		Cwd:         cwd,
-		CreatedAt:   createdAt,
-		Activity:    agent.ActivityStarting,
-		TmuxSession: r.sessionName,
-		WindowID:    target.windowID,
-		PaneID:      target.paneID,
-		ProcessLive: true,
-		Workspace:   req.Workspace,
-	}, nil
+// RosterLive reports whether the managed session exists, which is the only
+// honest way to read an empty agent listing. With no session there is nothing
+// to enumerate, and "no agents" means the roster was lost rather than emptied
+// — the difference between a snapshot worth keeping and one worth erasing.
+func (r *Runtime) RosterLive(ctx context.Context) (bool, error) {
+	if _, err := r.runner.Run(ctx, nil, "has-session", "-t", r.sessionName); err != nil {
+		if isNoServerError(err) || isNoSessionError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect managed tmux session: %w", err)
+	}
+	return true, nil
 }
 
 func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, error) {
@@ -1297,6 +1362,15 @@ func isNoServerError(err error) bool {
 		strings.Contains(text, "failed to connect to server") ||
 		strings.Contains(text, "error connecting to") ||
 		strings.Contains(text, "no sessions")
+}
+
+// isNoSessionError recognises a live server that has never heard of the
+// session — the case where the appliance is up (the dashboard's own host
+// session keeps it up) but every agent went down with the one that held them.
+func isNoSessionError(err error) bool {
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "can't find session") ||
+		strings.Contains(text, "session not found")
 }
 
 // tableBinding finds the bind-key line for a key in `list-keys -T <table>`

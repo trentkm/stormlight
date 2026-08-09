@@ -236,8 +236,7 @@ func TestResumeArgsReopenSessionWithLifecycleWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	count := len(claude)
-	if count < 2 || claude[count-2] != "--resume" || claude[count-1] != sessionID {
+	if claude[len(claude)-1] != "--resume="+sessionID {
 		t.Fatalf("claude resume args = %#v", claude)
 	}
 	if claude[0] != "--settings" ||
@@ -274,22 +273,22 @@ func TestRegistryResumeRejectsCustomProvidersAndEmptyIDs(t *testing.T) {
 	}
 }
 
-func TestBuiltinSpecExtraArgsRideResumeLaunches(t *testing.T) {
-	registry := NewRegistryWithSpecs([]Spec{{
-		ID:        agent.ProviderClaude,
-		Binary:    "echo",
-		ExtraArgs: []string{"--model", "opus"},
-	}})
-	launch, err := registry.Resume(agent.ProviderClaude, "some-id", agent.ModeAsk)
-	if err != nil {
-		t.Fatal(err)
+// Codex derives the session id from its rollout naming —
+// `rollout-<timestamp>-<uuid>.jsonl` — the fallback handle for records
+// written before hook payloads carried session_id.
+func TestCodexSessionIDReadsTheRolloutBasename(t *testing.T) {
+	cases := map[string]string{
+		"/Users/u/.codex/sessions/2026/08/09/rollout-2026-08-09T10-19-00-019fe71b-1a86-7400-b39d-74bf1c5f903d.jsonl": "019fe71b-1a86-7400-b39d-74bf1c5f903d",
+		"rollout-2026-08-09T10-19-00-019fe71b-1a86-7400-b39d-74bf1c5f903d.jsonl":                                     "019fe71b-1a86-7400-b39d-74bf1c5f903d",
+		"/Users/u/.codex/history.jsonl":              "",
+		"rollout-short.jsonl":                        "",
+		"019fe71b-1a86-7400-b39d-74bf1c5f903d.jsonl": "",
+		"": "",
 	}
-	count := len(launch.Args)
-	if launch.Args[count-1] != "opus" || launch.Args[count-2] != "--model" {
-		t.Fatalf("extra args lost on resume: %#v", launch.Args)
-	}
-	if !slices.Contains(launch.Args, "--resume") {
-		t.Fatalf("resume flag lost: %#v", launch.Args)
+	for path, want := range cases {
+		if got := codexSessionID(path); got != want {
+			t.Errorf("codexSessionID(%q) = %q, want %q", path, got, want)
+		}
 	}
 }
 
@@ -339,5 +338,84 @@ func TestClaudeArgsConfigureLifecycleHooks(t *testing.T) {
 	// no longer exists.
 	if groups := settings.Hooks["PermissionRequest"]; len(groups) != 0 {
 		t.Fatalf("PermissionRequest hook resurfaced: %#v", groups)
+	}
+}
+
+func TestClaudeResumeArgsCarryTheHooksAndNoPrompt(t *testing.T) {
+	args, err := claudeResumeArgs("5f2b8c14-0000-4000-8000-000000000001", agent.ModeAuto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reopening a conversation is not resuming its work: the launch ends at
+	// --resume, with nothing after it that Claude would read as a prompt.
+	last := args[len(args)-1]
+	if last != "--resume=5f2b8c14-0000-4000-8000-000000000001" {
+		t.Fatalf("resume args end with %q: %#v", last, args)
+	}
+	if !slices.Contains(args, "--settings") {
+		t.Fatalf("a restored agent lost its lifecycle hooks: %#v", args)
+	}
+	// The permission mode has to survive too, or an auto agent comes back
+	// asking about every edit it was cleared to make before the reboot.
+	if !slices.Contains(args, "bypassPermissions") {
+		t.Fatalf("permission mode lost on resume: %#v", args)
+	}
+}
+
+// The session id has to stay one argument, because that is what lets a
+// user's extra_args slot in ahead of it the way they do ahead of a prompt.
+func TestResumeKeepsExtraArgsOffTheSessionID(t *testing.T) {
+	registry := NewRegistryWithSpecs([]Spec{{
+		ID:        agent.ProviderClaude,
+		Binary:    "echo",
+		ExtraArgs: []string{"--model", "opus"},
+	}})
+	launch, err := registry.Resume(
+		agent.ProviderClaude,
+		"5f2b8c14-0000-4000-8000-000000000001",
+		agent.ModeAuto,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := len(launch.Args)
+	if launch.Args[count-1] != "--resume=5f2b8c14-0000-4000-8000-000000000001" ||
+		launch.Args[count-2] != "opus" || launch.Args[count-3] != "--model" {
+		t.Fatalf("extra args misplaced on resume: %#v", launch.Args)
+	}
+}
+
+func TestClaudeSessionIDReadsTheTranscriptBasename(t *testing.T) {
+	cases := map[string]string{
+		"/home/u/.claude/projects/slug/abc-123.jsonl": "abc-123",
+		"abc-123.jsonl": "abc-123",
+		"/home/u/.claude/projects/slug/abc-123.json": "",
+		"/home/u/.claude/projects/slug/":             "",
+		"":                                           "",
+	}
+	for path, want := range cases {
+		if got := claudeSessionID(path); got != want {
+			t.Errorf("claudeSessionID(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// Both built-in providers can reopen their own conversations — verified
+// against `claude --resume` and `codex resume` (codex-cli 0.147.0) — and a
+// provider that cannot has to say so: a restore screen that silently
+// offered one would spawn a command nobody verified.
+func TestProvidersDeclareWhetherTheyCanResume(t *testing.T) {
+	registry := NewRegistry()
+	if !registry.CanResume(agent.ProviderClaude) {
+		t.Error("Claude should be resumable")
+	}
+	if !registry.CanResume(agent.ProviderCodex) {
+		t.Error("Codex should be resumable")
+	}
+	if registry.CanResume(agent.Provider("nope")) {
+		t.Error("an unknown provider claims a resume path")
+	}
+	if _, err := registry.Resume(agent.ProviderClaude, "  ", agent.ModeAuto); err == nil {
+		t.Error("resuming with no session id reported success")
 	}
 }

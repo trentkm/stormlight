@@ -25,6 +25,8 @@ preserving the checkout or worktree each agent is using.
 - Each agent is one tagged tmux window in the `stormlight-agents` session.
 - The dashboard can exit without stopping any agent.
 - Metadata is stored as tmux window options, not inferred from window names.
+- A record of the roster is kept on disk so agents outlive the tmux server,
+  and restoring one reopens its conversation without resuming its work.
 - Provider adapters construct commands; tmux lifecycle is provider-neutral.
 - Agent runtimes and dashboard presentation surfaces are separate interfaces.
 - Workspace resolvers are provider-neutral and external resolvers are supported.
@@ -157,6 +159,7 @@ stormlight rename <id> "focused test fixer"
 stormlight mark <id> attention
 stormlight stop <id>
 stormlight delete <id>
+stormlight restore
 stormlight logs
 ```
 
@@ -195,6 +198,7 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `m` | Mark the selected agent in progress or needs-attention (your own reading, overriding Stormlight's) |
 | `M` | Mark the selected agent — or workspace — seen |
 | `K` | Workspace info popup (resolver, roots, metadata) |
+| `Ctrl-r` | Restore agents remembered from before the tmux server was lost |
 | `?` | Full keybinding reference |
 | `r` / `Ctrl-l` | Refresh |
 | `q` | Close the dashboard |
@@ -265,6 +269,56 @@ chooses the directory you are in.
 The Spanreed pane retains provider terminal colors while removing startup
 chrome and the inactive prompt/status area for Claude and Codex. Shell agent
 output remains unfiltered.
+
+## Resurrect
+
+Everything Stormlight knows about an agent lives in tmux window options, next
+to the process it describes. That is the right home while the server is up and
+the wrong one the moment it is not: a reboot, a `kill-server`, or an OOM takes
+the roster with it — not only the processes, which were always going to die,
+but the record of which workspace each agent was in, what it was asked to do,
+and which of them was waiting on an answer.
+
+The providers keep their side. A Claude conversation is still sitting in its
+transcript file. So Stormlight keeps a record of its own, in
+`~/.local/state/stormlight/session.json` beside the workspace catalog, written
+whenever the roster changes. After the server is gone:
+
+```bash
+stormlight restore          # what is remembered, and what can come back
+stormlight restore --all    # bring all of it back
+stormlight restore <id>...  # or name them
+stormlight restore --forget <id>...
+```
+
+The dashboard offers the same thing on `Ctrl-r`, and offers it unprompted when
+it starts to an empty roster and a record that is not.
+
+**Restore brings the agent back, not the turn.** Each restored agent reopens
+its own conversation and idles at its composer — same id, same workspace, same
+task, and still holding its place in the amber inbox if it was waiting on you
+when the server died. Nothing starts working. A machine that reboots overnight
+must not wake up to a dozen agents spending tokens unattended, so restoring is
+always a deliberate act and never resumes work by itself.
+
+Not everything can come back, and the listing says which and why rather than
+dropping the row:
+
+- **An agent that never reported a turn** has no session id and no
+  transcript, so there is no conversation to reopen. Re-running its original
+  task from scratch is a different and far more dangerous act than the one
+  restore promises.
+- **Custom provider specs** cannot be reopened — reopening a conversation is
+  a capability a provider adapter declares, and a spec declares how to start
+  a conversation, not how to reopen one. Claude and Codex both declare it.
+- **An agent whose working directory is gone** — the worktree was torn down
+  while the agent was still in it — has nowhere to come back to.
+
+An empty agent list is never taken as "there are no agents" on its own. The
+managed tmux session is the arbiter: while it exists its windows are the
+truth and the record follows them, and while it does not the record is
+authoritative and nothing may overwrite it. That is what keeps a listing taken
+one second after the server died from erasing the very thing it is for.
 
 ## Workspaces
 

@@ -13,6 +13,7 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -32,7 +33,14 @@ type Service struct {
 	providers  *provider.Registry
 	workspaces *workspace.Registry
 	catalog    *workspace.Catalog
-	sessions   *history.Log
+	// sessions is the permanent conversation log: every session id the
+	// providers ever reported, kept so a conversation can be reopened long
+	// after its window is gone.
+	sessions *history.Log
+	// store keeps the roster on disk so it outlives the runtime hosting it.
+	// A nil store is a service that does not remember, which is what tests
+	// and one-shot commands want.
+	store *resurrect.Store
 
 	// resolved caches catalog-path resolution (one git spawn per path per
 	// call otherwise); the dashboard polls fast, directories change slowly.
@@ -90,6 +98,15 @@ func NewServiceWithCatalog(
 	}
 }
 
+// Remembering gives the service a snapshot store, which is what turns a
+// roster into something that survives its runtime. It is opt-in because
+// remembering means writing to the user's state directory, and a service
+// built for a test or a single query has no business doing that.
+func (s *Service) Remembering(store *resurrect.Store) *Service {
+	s.store = store
+	return s
+}
+
 func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	agents, err := s.runtime.ListAgents(ctx)
 	if err != nil {
@@ -129,6 +146,7 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 		agents[index].Workspace = contexts[index]
 	}
 	s.publishStatus(ctx, agents)
+	s.snapshot(ctx, agents)
 	return agents, nil
 }
 
@@ -179,6 +197,7 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 			"error", err,
 		)
 	}
+	s.resnapshot(ctx)
 	return managedAgent, nil
 }
 
@@ -372,20 +391,38 @@ func (s *Service) Interrupt(ctx context.Context, id string) error {
 // ClearAttention marks an agent's notification as seen, taking down a
 // manual attention mark with it — both mean the same thing to the human.
 func (s *Service) ClearAttention(ctx context.Context, id string) error {
-	return s.runtime.Update(ctx, id, session.Update{ClearAttention: true})
+	return s.Update(ctx, id, session.Update{ClearAttention: true})
 }
 
 // SetMark records the human's own reading of an agent's state, overriding
 // what Stormlight inferred. agent.MarkNone removes an existing mark.
 func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error {
-	return s.runtime.Update(ctx, id, session.Update{
+	return s.Update(ctx, id, session.Update{
 		Mark:      mark,
 		ClearMark: mark == agent.MarkNone,
 	})
 }
 
+// Delete removes an agent and forgets it. Deleting is the human saying they
+// are done with this one, and that has to be recorded here — a later listing
+// cannot tell an agent someone dismissed from one whose window went down with
+// its server, and guessing wrong either resurrects the dead or buries the
+// living.
 func (s *Service) Delete(ctx context.Context, id string) error {
-	return s.runtime.Delete(ctx, id)
+	managedAgent, findErr := s.find(ctx, id)
+	if err := s.runtime.Delete(ctx, id); err != nil {
+		return err
+	}
+	if s.store != nil && findErr == nil {
+		if err := s.store.Forget(managedAgent.ID); err != nil {
+			diagnostic.Logger().Warn("agent not forgotten",
+				"agent_id", managedAgent.ID,
+				"error", err,
+			)
+		}
+	}
+	s.resnapshot(ctx)
+	return nil
 }
 
 func (s *Service) Update(ctx context.Context, id string, update session.Update) error {
@@ -393,6 +430,7 @@ func (s *Service) Update(ctx context.Context, id string, update session.Update) 
 		return err
 	}
 	s.recordHistory(ctx, id)
+	s.resnapshot(ctx)
 	return nil
 }
 
@@ -402,7 +440,7 @@ func (s *Service) Update(ctx context.Context, id string, update session.Update) 
 // id, the one field that makes a record worth keeping. Best-effort by
 // design: history is a byproduct of the update, never a reason to fail it.
 func (s *Service) recordHistory(ctx context.Context, id string) {
-	agents, err := s.runtime.ListAgents(ctx)
+	managedAgent, err := s.find(ctx, id)
 	if err != nil {
 		diagnostic.Logger().Warn("session history listing failed",
 			"agent_id", id,
@@ -410,33 +448,27 @@ func (s *Service) recordHistory(ctx context.Context, id string) {
 		)
 		return
 	}
-	for _, managedAgent := range agents {
-		if managedAgent.ID != id && !strings.HasPrefix(managedAgent.ID, id) {
-			continue
-		}
-		if managedAgent.SessionID == "" {
-			return
-		}
-		if err := s.sessions.Append(history.Record{
-			SessionID:      managedAgent.SessionID,
-			Provider:       managedAgent.Provider,
-			AgentID:        managedAgent.ID,
-			Name:           managedAgent.Name,
-			Task:           managedAgent.Task,
-			Summary:        managedAgent.Summary,
-			Cwd:            managedAgent.Cwd,
-			Mode:           managedAgent.Mode,
-			TranscriptPath: managedAgent.TranscriptPath,
-			Workspace:      managedAgent.Workspace,
-			CreatedAt:      managedAgent.CreatedAt,
-			UpdatedAt:      time.Now().UTC(),
-		}); err != nil {
-			diagnostic.Logger().Warn("session history append failed",
-				"agent_id", id,
-				"error", err,
-			)
-		}
+	if managedAgent.SessionID == "" {
 		return
+	}
+	if err := s.sessions.Append(history.Record{
+		SessionID:      managedAgent.SessionID,
+		Provider:       managedAgent.Provider,
+		AgentID:        managedAgent.ID,
+		Name:           managedAgent.Name,
+		Task:           managedAgent.Task,
+		Summary:        managedAgent.Summary,
+		Cwd:            managedAgent.Cwd,
+		Mode:           managedAgent.Mode,
+		TranscriptPath: managedAgent.TranscriptPath,
+		Workspace:      managedAgent.Workspace,
+		CreatedAt:      managedAgent.CreatedAt,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		diagnostic.Logger().Warn("session history append failed",
+			"agent_id", id,
+			"error", err,
+		)
 	}
 }
 
@@ -472,6 +504,20 @@ func (s *Service) SessionHistory(ctx context.Context) ([]history.Record, error) 
 // to one line per session. Meant for startup, off the event path.
 func (s *Service) CompactSessionHistory() error {
 	return s.sessions.Compact()
+}
+
+// find resolves an id — possibly shortened — against the live roster.
+func (s *Service) find(ctx context.Context, id string) (agent.Agent, error) {
+	agents, err := s.runtime.ListAgents(ctx)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	for _, managedAgent := range agents {
+		if managedAgent.ID == id || strings.HasPrefix(managedAgent.ID, id) {
+			return managedAgent, nil
+		}
+	}
+	return agent.Agent{}, fmt.Errorf("agent %q not found", id)
 }
 
 func (s *Service) Providers() []provider.Info {

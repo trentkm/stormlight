@@ -3,11 +3,13 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/session"
@@ -1235,5 +1237,134 @@ func TestClearAttentionTakesDownTheAttentionMarkOnly(t *testing.T) {
 	}
 	if got := markWrites(runner.calls); len(got) != 0 {
 		t.Fatalf("mark writes = %v, want the in-progress mark kept", got)
+	}
+}
+
+// restoreRunner records the tmux commands a restore issues, and can be told
+// whether the managed session exists.
+type restoreRunner struct {
+	sessionExists bool
+	options       map[string]string
+	respawned     string
+	calls         [][]string
+}
+
+func (r *restoreRunner) Run(_ context.Context, _ []byte, args ...string) (string, error) {
+	r.calls = append(r.calls, slices.Clone(args))
+	if len(args) == 0 {
+		return "", nil
+	}
+	switch args[0] {
+	case "has-session":
+		if r.sessionExists {
+			return "", nil
+		}
+		return "", fmt.Errorf("can't find session: stormlight-agents")
+	case "new-window", "new-session":
+		return "@7" + fieldSeparator + "%7", nil
+	case "show-options":
+		return "1", nil
+	case "set-option":
+		if len(args) >= 6 && args[1] == "-w" {
+			if r.options == nil {
+				r.options = map[string]string{}
+			}
+			r.options[args[4]] = args[5]
+		}
+	case "respawn-pane":
+		r.respawned = args[len(args)-1]
+	}
+	return "", nil
+}
+
+func TestRosterLiveDistinguishesALostSessionFromAnEmptyOne(t *testing.T) {
+	runner := &restoreRunner{}
+	runtime, err := NewRuntime(runner, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A session tmux has never heard of is not an empty roster — it is a
+	// roster that was lost, and nothing may overwrite the record from it.
+	live, err := runtime.RosterLive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live {
+		t.Fatal("a missing session reported a live roster")
+	}
+	runner.sessionExists = true
+	live, err = runtime.RosterLive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !live {
+		t.Fatal("an existing session reported a dead roster")
+	}
+}
+
+func TestRestoreWritesTheRememberedMetadataOntoTheNewWindow(t *testing.T) {
+	runner := &restoreRunner{sessionExists: true}
+	runtime, err := NewRuntime(runner, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Unix(1700000000, 0).UTC()
+	attentionAt := time.Unix(1700000100, 0).UTC()
+	restored, err := runtime.Restore(context.Background(), session.RestoreRequest{
+		Agent: agent.Agent{
+			ID:             "a1b2c3d4",
+			Provider:       agent.ProviderClaude,
+			Name:           "cl-old-name",
+			Task:           "the original task",
+			Summary:        "where it left off",
+			Cwd:            t.TempDir(),
+			CreatedAt:      createdAt,
+			Attention:      agent.AttentionQuestion,
+			AttentionAt:    attentionAt,
+			Mode:           agent.ModeAuto,
+			TranscriptPath: "/transcripts/a1.jsonl",
+		},
+		Launch: session.Launch{Path: "/usr/bin/claude", Args: []string{"--resume=a1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != "a1b2c3d4" {
+		t.Fatalf("restore invented an id: %q", restored.ID)
+	}
+	// Continuity is the whole promise: the same agent, not a new one wearing
+	// its name. Everything the dashboard keys off has to come from the record.
+	want := map[string]string{
+		"@stormlight_id":              "a1b2c3d4",
+		"@stormlight_created_at":      "1700000000",
+		"@stormlight_attention":       "question",
+		"@stormlight_attention_at":    "1700000100",
+		"@stormlight_summary":         "where it left off",
+		"@stormlight_transcript_path": "/transcripts/a1.jsonl",
+		"@stormlight_mode":            "auto",
+		// A restored agent is starting, whatever it was doing when the
+		// server died.
+		"@stormlight_activity": string(agent.ActivityStarting),
+	}
+	for key, value := range want {
+		if runner.options[key] != value {
+			t.Errorf("%s = %q, want %q", key, runner.options[key], value)
+		}
+	}
+	if !strings.Contains(runner.respawned, "'--id' 'a1b2c3d4'") {
+		t.Fatalf("the supervisor was not told the restored id: %q", runner.respawned)
+	}
+}
+
+func TestRestoreRefusesARecordWithNoIdentity(t *testing.T) {
+	runtime, err := NewRuntime(&restoreRunner{sessionExists: true}, "stormlight-agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Restore(context.Background(), session.RestoreRequest{
+		Agent:  agent.Agent{Cwd: t.TempDir()},
+		Launch: session.Launch{Path: "/usr/bin/claude"},
+	}); err == nil {
+		t.Fatal("an idless record restored")
 	}
 }
