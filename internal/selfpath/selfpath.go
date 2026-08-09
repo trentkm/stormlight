@@ -4,7 +4,9 @@ package selfpath
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Resolve returns a path to the running executable that will still start
@@ -23,15 +25,62 @@ import (
 // build run out of a worktree must keep its own path even though an
 // installed `stormlight` shadows it on PATH, or end-to-end runs would
 // silently exercise the installed binary instead of the one under test.
+//
+// Once the running binary has actually been deleted that preference has
+// nothing left to protect, and the identity check cannot run at all — there
+// is no file to compare a candidate against. Rather than hand back a path
+// that starts nothing, fall back to whatever PATH offers under the same name.
 func Resolve() (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve Stormlight executable: %w", err)
 	}
+	return resolve(executable)
+}
+
+// resolve is Resolve with the running executable supplied, so the answer for
+// a binary that no longer exists can be exercised without deleting the test
+// binary out from under the test.
+func resolve(executable string) (string, error) {
 	if alias, ok := stableAlias(executable); ok {
 		return alias, nil
 	}
-	return executable, nil
+	if _, err := os.Stat(executable); err == nil {
+		return executable, nil
+	}
+	name := filepath.Base(strings.TrimSuffix(executable, deletedSuffix))
+	if launcher, ok := launcherOnPath(name); ok {
+		return launcher, nil
+	}
+	return "", fmt.Errorf(
+		"the Stormlight binary this process was started from no longer exists (%s) and no %s is on PATH",
+		executable, name,
+	)
+}
+
+// deletedSuffix is what Linux appends when os.Executable reads
+// /proc/self/exe for a binary that has since been unlinked. Left in place it
+// turns the PATH lookup into a search for a program nobody has installed.
+const deletedSuffix = " (deleted)"
+
+// launcherOnPath finds a same-named executable on PATH to stand in for a
+// binary that is gone. The name and the executable bit are the whole test:
+// os.SameFile cannot decide this one, since the file it would compare
+// against is exactly what has been deleted. That is weaker than stableAlias
+// and is reached only when the alternative is a path that cannot start
+// anything at all.
+func launcherOnPath(name string) (string, bool) {
+	found, err := exec.LookPath(name)
+	if err != nil {
+		return "", false
+	}
+	// A relative PATH entry resolves against this process's directory, and
+	// the answer is written into tmux commands that run from somewhere else.
+	absolute, err := filepath.Abs(found)
+	if err != nil {
+		return "", false
+	}
+	return absolute, true
 }
 
 // stableAlias finds the first entry on PATH naming the same file as

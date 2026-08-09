@@ -64,7 +64,7 @@ func (r *Runtime) effectivePreviousKeys() []string {
 // environment the tmux server was started with, which is not necessarily the
 // one the dashboard was launched from.
 func (r *Runtime) nextShellCommand(step agent.QueueStep) string {
-	args := []string{r.executable}
+	args := []string{r.bindingPath()}
 	if r.socket != "" {
 		args = append(args, "--tmux-socket", r.socket)
 	}
