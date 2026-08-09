@@ -11,6 +11,7 @@ import (
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -31,6 +32,7 @@ type Service struct {
 	providers  *provider.Registry
 	workspaces *workspace.Registry
 	catalog    *workspace.Catalog
+	sessions   *history.Log
 
 	// resolved caches catalog-path resolution (one git spawn per path per
 	// call otherwise); the dashboard polls fast, directories change slowly.
@@ -59,6 +61,7 @@ func NewService(
 		providers,
 		workspaces,
 		workspace.NewCatalog(),
+		history.NewLog(),
 	)
 }
 
@@ -67,6 +70,7 @@ func NewServiceWithCatalog(
 	providers *provider.Registry,
 	workspaces *workspace.Registry,
 	catalog *workspace.Catalog,
+	sessions *history.Log,
 ) *Service {
 	if workspaces == nil {
 		workspaces = workspace.NewRegistry()
@@ -74,11 +78,15 @@ func NewServiceWithCatalog(
 	if catalog == nil {
 		catalog = workspace.NewCatalog()
 	}
+	if sessions == nil {
+		sessions = history.NewLog()
+	}
 	return &Service{
 		runtime:    runtime,
 		providers:  providers,
 		workspaces: workspaces,
 		catalog:    catalog,
+		sessions:   sessions,
 	}
 }
 
@@ -345,7 +353,89 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 func (s *Service) Update(ctx context.Context, id string, update session.Update) error {
-	return s.runtime.Update(ctx, id, update)
+	if err := s.runtime.Update(ctx, id, update); err != nil {
+		return err
+	}
+	s.recordHistory(ctx, id)
+	return nil
+}
+
+// recordHistory mirrors the agent's current state into the session history
+// log. It rides on Update because provider events are the only moments the
+// record changes — and because the events are also what carry the session
+// id, the one field that makes a record worth keeping. Best-effort by
+// design: history is a byproduct of the update, never a reason to fail it.
+func (s *Service) recordHistory(ctx context.Context, id string) {
+	agents, err := s.runtime.ListAgents(ctx)
+	if err != nil {
+		diagnostic.Logger().Warn("session history listing failed",
+			"agent_id", id,
+			"error", err,
+		)
+		return
+	}
+	for _, managedAgent := range agents {
+		if managedAgent.ID != id && !strings.HasPrefix(managedAgent.ID, id) {
+			continue
+		}
+		if managedAgent.SessionID == "" {
+			return
+		}
+		if err := s.sessions.Append(history.Record{
+			SessionID:      managedAgent.SessionID,
+			Provider:       managedAgent.Provider,
+			AgentID:        managedAgent.ID,
+			Name:           managedAgent.Name,
+			Task:           managedAgent.Task,
+			Summary:        managedAgent.Summary,
+			Cwd:            managedAgent.Cwd,
+			Mode:           managedAgent.Mode,
+			TranscriptPath: managedAgent.TranscriptPath,
+			Workspace:      managedAgent.Workspace,
+			CreatedAt:      managedAgent.CreatedAt,
+			UpdatedAt:      time.Now().UTC(),
+		}); err != nil {
+			diagnostic.Logger().Warn("session history append failed",
+				"agent_id", id,
+				"error", err,
+			)
+		}
+		return
+	}
+}
+
+// SessionHistory returns past conversations: every session the log knows
+// that no current window claims. A dead pane still on the board is not
+// history yet — its window is the live record, and deleting it is what
+// hands the session over to the log.
+func (s *Service) SessionHistory(ctx context.Context) ([]history.Record, error) {
+	records, err := s.sessions.Records()
+	if err != nil {
+		return nil, err
+	}
+	agents, err := s.runtime.ListAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[string]bool, len(agents))
+	for _, managedAgent := range agents {
+		if managedAgent.SessionID != "" {
+			live[managedAgent.SessionID] = true
+		}
+	}
+	past := records[:0]
+	for _, record := range records {
+		if !live[record.SessionID] {
+			past = append(past, record)
+		}
+	}
+	return past, nil
+}
+
+// CompactSessionHistory folds the log's accumulated per-event records down
+// to one line per session. Meant for startup, off the event path.
+func (s *Service) CompactSessionHistory() error {
+	return s.sessions.Compact()
 }
 
 func (s *Service) Providers() []provider.Info {

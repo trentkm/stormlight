@@ -245,6 +245,15 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 			diagnostic.Logger().Warn("apply server options failed", "error", err)
 		}
 	}
+	// The session history log accretes one line per provider event, and
+	// dashboard launch is the natural moment to fold it down: off every
+	// event path, once per run. Best-effort — a log that cannot compact
+	// still appends and reads.
+	go func() {
+		if err := service.CompactSessionHistory(); err != nil {
+			diagnostic.Logger().Warn("session history compaction failed", "error", err)
+		}
+	}()
 	options := ui.Options{
 		YaziPath:        cfg.Tools.Yazi,
 		NvimPath:        cfg.Tools.Nvim,
