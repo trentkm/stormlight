@@ -97,6 +97,13 @@ func (m Model) renderBody() string {
 			width,
 			contentHeight,
 		)
+	case modeRestore:
+		return overlayCentered(
+			dashboard,
+			m.renderRestoreModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
 	case modeInfo:
 		return overlayCentered(
 			dashboard,
