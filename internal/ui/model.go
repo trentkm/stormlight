@@ -14,6 +14,7 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/theme"
@@ -37,6 +38,8 @@ type Backend interface {
 	RenameWorkspace(context.Context, workspace.Context, string) error
 	SyncAgentWindows(context.Context, int, int) error
 	Providers() []provider.Info
+	SessionHistory(context.Context) ([]history.Record, error)
+	Resume(context.Context, history.Record) (agent.Agent, error)
 }
 
 type mode int
@@ -52,6 +55,7 @@ const (
 	modeMark
 	modeInfo
 	modeHelp
+	modeHistory
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -158,6 +162,9 @@ type Model struct {
 	renameWorkspace         workspace.Context
 	markAgentID             string
 	markIndex               int
+	historyRecords          []history.Record
+	historyCursor           int
+	historyLoading          bool
 	pathNav                 pathNav
 	pickerStart             string
 	chooseDispatchDirectory bool
@@ -211,6 +218,11 @@ type taskEditedMsg struct {
 type workspaceAddedMsg struct {
 	value workspace.Context
 	err   error
+}
+
+type historyMsg struct {
+	records []history.Record
+	err     error
 }
 
 type tickMsg time.Time
@@ -406,6 +418,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case historyMsg:
+		m.historyLoading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.historyRecords = msg.records
+		m.historyCursor = clamp(m.historyCursor, 0, max(0, len(msg.records)-1))
+		return m, nil
+
 	case interactionMsg:
 		if msg.id == m.selectedAgentID() {
 			if m.interactionID != msg.id {
@@ -557,6 +579,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRename(msg)
 		case modeMark:
 			return m.updateMark(msg)
+		case modeHistory:
+			return m.updateHistory(msg)
 		case modeInfo, modeHelp:
 			// Any key dismisses an informational overlay.
 			m.mode = modeNormal
@@ -813,6 +837,8 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case "H":
+		return m.beginHistory()
 	case "?":
 		m.mode = modeHelp
 		m.status = "Keys"

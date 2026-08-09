@@ -177,6 +177,10 @@ type Agent struct {
 	ProcessLive bool           `json:"process_live"`
 	ExitCode    *int           `json:"exit_code,omitempty"`
 	Mode        PermissionMode `json:"mode,omitempty"`
+	// SessionID is the provider's own id for this conversation — the value
+	// `claude --resume` and `codex resume` take — reported by its hooks and
+	// notify surface. It is what lets a conversation outlive its window.
+	SessionID string `json:"session_id,omitempty"`
 	// TranscriptPath is the provider's own transcript file for this
 	// conversation (Claude Code session JSONL), reported by its hooks.
 	TranscriptPath string            `json:"transcript_path,omitempty"`

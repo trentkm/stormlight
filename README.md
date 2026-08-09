@@ -63,6 +63,14 @@ bar returns to the dashboard.
 Closing the dashboard removes only its temporary session; agents keep
 running on the Stormlight server.
 
+Conversations outlive their windows. Both providers name every session with
+an id their own `resume` command accepts, and Stormlight records it — with
+the task, workspace, and transcript path — in an append-only log at
+`$XDG_STATE_HOME/stormlight/sessions.jsonl`. Deleting an agent's window
+hands its session to that log rather than erasing it: `H` opens the history
+browser, and Enter reopens the selected conversation as a new managed agent
+in the workspace it left, with everything it had already said and done.
+
 ## Requirements
 
 - tmux 3.3 or newer. tmux 3.7+ is strongly recommended: Yazi and Neovim

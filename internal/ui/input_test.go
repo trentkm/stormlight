@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -2403,6 +2404,14 @@ func (stubBackend) SyncAgentWindows(context.Context, int, int) error {
 
 func (stubBackend) Providers() []provider.Info {
 	return nil
+}
+
+func (stubBackend) SessionHistory(context.Context) ([]history.Record, error) {
+	return nil, nil
+}
+
+func (stubBackend) Resume(context.Context, history.Record) (agent.Agent, error) {
+	return agent.Agent{}, nil
 }
 
 type recordingBackend struct {

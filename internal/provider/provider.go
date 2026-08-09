@@ -23,6 +23,9 @@ type Adapter interface {
 	ID() agent.Provider
 	Label() string
 	Resolve(prompt string, mode agent.PermissionMode) (Launch, error)
+	// Resume builds the launch that reopens an existing provider session
+	// by its id, with the same lifecycle wiring a fresh dispatch gets.
+	Resume(sessionID string, mode agent.PermissionMode) (Launch, error)
 }
 
 type commandAdapter struct {
@@ -30,6 +33,10 @@ type commandAdapter struct {
 	label   string
 	binary  string
 	argsFor func(prompt string, mode agent.PermissionMode) ([]string, error)
+	// resumeArgsFor is nil for providers without a known resume verb —
+	// custom specs declare how to start a conversation, not how to reopen
+	// one — and nil is what makes Resume answer "cannot resume".
+	resumeArgsFor func(sessionID string, mode agent.PermissionMode) ([]string, error)
 }
 
 func (a commandAdapter) ID() agent.Provider {
@@ -46,6 +53,21 @@ func (a commandAdapter) Resolve(prompt string, mode agent.PermissionMode) (Launc
 		return Launch{}, fmt.Errorf("%s is not installed or not on PATH", a.binary)
 	}
 	args, err := a.argsFor(prompt, mode)
+	if err != nil {
+		return Launch{}, err
+	}
+	return Launch{Path: path, Args: args}, nil
+}
+
+func (a commandAdapter) Resume(sessionID string, mode agent.PermissionMode) (Launch, error) {
+	if a.resumeArgsFor == nil {
+		return Launch{}, fmt.Errorf("%s sessions cannot be resumed", a.label)
+	}
+	path, err := exec.LookPath(a.binary)
+	if err != nil {
+		return Launch{}, fmt.Errorf("%s is not installed or not on PATH", a.binary)
+	}
+	args, err := a.resumeArgsFor(sessionID, mode)
 	if err != nil {
 		return Launch{}, err
 	}
@@ -81,16 +103,18 @@ func NewRegistry() *Registry {
 func NewRegistryWithSpecs(specs []Spec) *Registry {
 	adapters := []Adapter{
 		commandAdapter{
-			id:      agent.ProviderCodex,
-			label:   "Codex",
-			binary:  "codex",
-			argsFor: codexArgs,
+			id:            agent.ProviderCodex,
+			label:         "Codex",
+			binary:        "codex",
+			argsFor:       codexArgs,
+			resumeArgsFor: codexResumeArgs,
 		},
 		commandAdapter{
-			id:      agent.ProviderClaude,
-			label:   "Claude",
-			binary:  "claude",
-			argsFor: claudeArgs,
+			id:            agent.ProviderClaude,
+			label:         "Claude",
+			binary:        "claude",
+			argsFor:       claudeArgs,
+			resumeArgsFor: claudeResumeArgs,
 		},
 	}
 
@@ -135,6 +159,16 @@ func customizeBuiltin(builtin commandAdapter, spec Spec) commandAdapter {
 		prefix := slices.Clone(args[:len(args)-1])
 		prefix = append(prefix, extra...)
 		return append(prefix, args[len(args)-1]), nil
+	}
+	baseResume := builtin.resumeArgsFor
+	builtin.resumeArgsFor = func(sessionID string, mode agent.PermissionMode) ([]string, error) {
+		args, err := baseResume(sessionID, mode)
+		if err != nil {
+			return nil, err
+		}
+		// A resume launch has no trailing prompt to protect, and both
+		// providers parse flags after the session id, so extra args append.
+		return append(args, extra...), nil
 	}
 	return builtin
 }
@@ -193,6 +227,25 @@ func (r *Registry) Resolve(
 	return adapter.Resolve(prompt, mode)
 }
 
+// Resume builds the launch that reopens a provider's recorded session.
+func (r *Registry) Resume(
+	id agent.Provider,
+	sessionID string,
+	mode agent.PermissionMode,
+) (Launch, error) {
+	adapter, ok := r.adapters[id]
+	if !ok {
+		return Launch{}, fmt.Errorf("unsupported provider %q", id)
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return Launch{}, fmt.Errorf("session id cannot be empty")
+	}
+	if mode == "" {
+		mode = agent.DefaultMode
+	}
+	return adapter.Resume(sessionID, mode)
+}
+
 func (r *Registry) Infos() []Info {
 	infos := make([]Info, 0, len(r.order))
 	for _, id := range r.order {
@@ -235,6 +288,28 @@ func (r *Registry) IDs() []agent.Provider {
 // tool call proceeds — and Stormlight answers prompts in the agent's own
 // terminal, exactly as it declines to intercept Claude's.
 func codexArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
+	args, err := codexLifecycleArgs(mode)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, prompt), nil
+}
+
+// codexResumeArgs reopens a recorded session in place of starting one:
+// `codex resume <session-id>` continues the conversation the rollout file
+// holds, and the resumed process carries the same lifecycle wiring a fresh
+// dispatch gets, so it reports into the dashboard like any other agent. No
+// prompt rides along — the reopened conversation is handed to the human.
+func codexResumeArgs(sessionID string, mode agent.PermissionMode) ([]string, error) {
+	lifecycle, err := codexLifecycleArgs(mode)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]string{"resume"}, lifecycle...)
+	return append(args, sessionID), nil
+}
+
+func codexLifecycleArgs(mode agent.PermissionMode) ([]string, error) {
 	notify, err := tomlOverride(struct {
 		Notify []string `toml:"notify"`
 	}{
@@ -259,8 +334,7 @@ func codexArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
 		return nil, err
 	}
 	args := []string{"-c", notify, "-c", hooks}
-	args = append(args, codexModeArgs(mode)...)
-	return append(args, prompt), nil
+	return append(args, codexModeArgs(mode)...), nil
 }
 
 // codexModeArgs maps Stormlight permission modes onto Codex's approval and
@@ -286,6 +360,26 @@ func codexModeArgs(mode agent.PermissionMode) []string {
 }
 
 func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
+	args, err := claudeLifecycleArgs(mode)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, prompt), nil
+}
+
+// claudeResumeArgs reopens a recorded session in place of starting one:
+// `claude --resume <session-id>` continues the conversation from its
+// transcript, with the same lifecycle wiring a fresh dispatch gets. No
+// prompt rides along — the reopened conversation is handed to the human.
+func claudeResumeArgs(sessionID string, mode agent.PermissionMode) ([]string, error) {
+	args, err := claudeLifecycleArgs(mode)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, "--resume", sessionID), nil
+}
+
+func claudeLifecycleArgs(mode agent.PermissionMode) ([]string, error) {
 	// Prompts are answered in the agent's own terminal, not re-implemented
 	// in the dashboard: the Notification hook raises attention so the
 	// dashboard can point at the pane, and nothing intercepts the request
@@ -313,5 +407,5 @@ func claudeArgs(prompt string, mode agent.PermissionMode) ([]string, error) {
 	case agent.ModeAuto:
 		args = append(args, "--permission-mode", "bypassPermissions")
 	}
-	return append(args, prompt), nil
+	return args, nil
 }
