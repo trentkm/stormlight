@@ -251,13 +251,17 @@ rather than reconciling against it.
 
 Two rules keep the mirror honest.
 
-The first is when it may be written. An empty listing is ambiguous — it reads
-identically whether the last agent was deleted or the whole session died — so
-the runtime is asked (`session.Restorer.RosterLive`) whether its listing is
-authoritative before any save. A missing managed session means the record
-stands and a listing may not touch it. Deletion is therefore recorded
-explicitly at the point of deletion, rather than inferred later from an
-absence that could mean either thing.
+The first is when it may forget. A listing is never trusted about absence,
+twice over. A listing from a runtime whose managed session is gone is not
+authoritative at all (`session.Restorer.RosterLive`) and may not write. And
+even an authoritative listing only refreshes the entries it contains: a
+save carries forward every stored entry the roster lacks, so dispatching
+new work or restoring a subset right after a server death cannot shrink the
+list restore is about to read. An entry leaves the record by deliberate act
+only — deleted (recorded as a Forget at the point of deletion), explicitly
+forgotten, or restored, at which point it is live and follows the roster
+again. The corollary is embraced: a window killed behind Stormlight's back
+stays remembered as a lost, restorable agent until a human says otherwise.
 
 The second is what restoring may do. A provider adapter's `Resume` maps a
 session id — the one the agent's hooks reported, or failing that the one the

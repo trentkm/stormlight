@@ -155,10 +155,33 @@ func (s *Store) Load() (Snapshot, error) {
 // tmux server" arrive as the same empty slice, and writing the second as the
 // first would erase the snapshot at precisely the moment it is needed; the
 // caller settles that question before calling, because only the runtime can.
+// Save records the roster, carrying forward any stored entry the listing
+// does not contain. An entry leaves the record only by deliberate act —
+// deleted or forgotten (Forget), or restored, at which point it is live and
+// follows the roster again. A listing that merely lacks an entry proves
+// nothing: right after a server death it lacks every agent the record
+// exists to bring back, and a save taken then (a fresh dispatch, a partial
+// restore) must not shrink the very list restore is about to read. The
+// corollary is embraced: a window killed behind Stormlight's back stays
+// remembered as a lost agent until a human says otherwise.
 func (s *Store) Save(sessionName string, agents []agent.Agent) error {
-	entries := make([]Entry, 0, len(agents))
-	for _, live := range agents {
-		entries = append(entries, EntryOf(live))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, err := s.read()
+	if err != nil {
+		return err
+	}
+	live := make(map[string]bool, len(agents))
+	entries := make([]Entry, 0, len(agents)+len(stored.Agents))
+	for _, current := range agents {
+		entries = append(entries, EntryOf(current))
+		live[current.ID] = true
+	}
+	for _, entry := range stored.Agents {
+		if !live[entry.ID] {
+			entries = append(entries, entry)
+		}
 	}
 	// A total order, because tmux stamps creation to the second: two agents
 	// dispatched together would otherwise swap places between saves and make
@@ -169,9 +192,6 @@ func (s *Store) Save(sessionName string, agents []agent.Agent) error {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	print := fingerprint(sessionName, entries)
 	if print == s.fingerprint {
