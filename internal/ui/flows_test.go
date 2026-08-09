@@ -2,13 +2,16 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/history"
+	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -273,7 +276,7 @@ func TestComposerYieldsWhenPromptArrivesMidCompose(t *testing.T) {
 
 func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 	model := flowModelFixture(t, &flowBackend{})
-	resized, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 45})
+	resized, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 50})
 	model = resized.(Model)
 	updated, _ := model.updateNormal(runeKey("?"))
 	model = updated.(Model)
@@ -791,7 +794,7 @@ func TestHistoryFlowBrowsesAndResumes(t *testing.T) {
 	if model.mode != modeNormal || resumeCmd == nil {
 		t.Fatalf("enter did not leave the modal resuming: mode=%d", model.mode)
 	}
-	drainCmd(t, resumeCmd)
+	drainCmd(resumeCmd)
 	if backend.resumedID != "session-old" {
 		t.Fatalf("resumed %q, want the cursor's session", backend.resumedID)
 	}
@@ -806,15 +809,157 @@ func TestHistoryFlowBrowsesAndResumes(t *testing.T) {
 	}
 }
 
-// drainCmd executes a command tree far enough to run its side effects.
-func drainCmd(t *testing.T, cmd tea.Cmd) {
-	t.Helper()
+// restoreBackend answers the restore screen with a fixed snapshot and
+// records what it is asked to bring back.
+type restoreBackend struct {
+	stubBackend
+	candidates   []resurrect.Candidate
+	restoredIDs  []string
+	forgottenIDs []string
+}
+
+func (b *restoreBackend) RestoreCandidates(
+	context.Context,
+) ([]resurrect.Candidate, error) {
+	return b.candidates, nil
+}
+
+func (b *restoreBackend) Restore(
+	_ context.Context,
+	ids ...string,
+) ([]app.RestoreResult, error) {
+	b.restoredIDs = append(b.restoredIDs, ids...)
+	return nil, nil
+}
+
+func (b *restoreBackend) Forget(_ context.Context, ids ...string) error {
+	b.forgottenIDs = append(b.forgottenIDs, ids...)
+	return nil
+}
+
+// drainCmd executes a command tree far enough to run its side effects,
+// following tea.Batch all the way down so a test sees what the batched
+// commands actually did.
+func drainCmd(cmd tea.Cmd) {
 	if cmd == nil {
 		return
 	}
 	if batch, ok := cmd().(tea.BatchMsg); ok {
 		for _, item := range batch {
-			drainCmd(t, item)
+			drainCmd(item)
 		}
+	}
+}
+
+func restoreCandidatesFixture() []resurrect.Candidate {
+	return []resurrect.Candidate{
+		{Entry: resurrect.Entry{ID: "ready-1", Name: "cl-one"}},
+		{Entry: resurrect.Entry{ID: "ready-2", Name: "cl-two"}},
+		{Entry: resurrect.Entry{ID: "blocked", Name: "cx-three"},
+			Reason: "Codex cannot reopen a conversation"},
+		{Entry: resurrect.Entry{ID: "running", Name: "cl-four"}, Live: true},
+	}
+}
+
+func restoreModelFixture(t *testing.T, backend Backend) Model {
+	t.Helper()
+	model := flowModelFixture(t, backend)
+	updated, _ := model.beginRestore()
+	model = updated.(Model)
+	model.applyRestoreCandidates(restoreCandidatesMsg{
+		candidates: restoreCandidatesFixture(),
+	})
+	return model
+}
+
+func TestRestorePickerChoosesEverythingThatCanComeBack(t *testing.T) {
+	backend := &restoreBackend{candidates: restoreCandidatesFixture()}
+	model := restoreModelFixture(t, backend)
+	if model.mode != modeRestore {
+		t.Fatalf("mode = %v, want modeRestore", model.mode)
+	}
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("restoring left the picker open: %v", model.mode)
+	}
+	if cmd != nil {
+		cmd()
+	}
+	// Everything restorable, and only that: a row that cannot come back is
+	// never quietly included, and one already running is not restored twice.
+	if !slices.Equal(backend.restoredIDs, []string{"ready-1", "ready-2"}) {
+		t.Fatalf("restored %#v", backend.restoredIDs)
+	}
+}
+
+func TestRestorePickerWillNotChooseAnUnrestorableRow(t *testing.T) {
+	backend := &restoreBackend{candidates: restoreCandidatesFixture()}
+	model := restoreModelFixture(t, backend)
+	// Move onto the blocked row and try to toggle it on.
+	for range 2 {
+		updated, _ := model.Update(tea.KeyPressMsg{Code: 'j'})
+		model = updated.(Model)
+	}
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	model = updated.(Model)
+	if model.restoreChosen["blocked"] {
+		t.Fatal("a row that cannot be restored was selected")
+	}
+}
+
+func TestRestorePickerTogglesAndForgets(t *testing.T) {
+	backend := &restoreBackend{candidates: restoreCandidatesFixture()}
+	model := restoreModelFixture(t, backend)
+
+	// Space clears the row under the cursor; the rest stay chosen.
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	model = updated.(Model)
+	if model.restoreChosen["ready-1"] || !model.restoreChosen["ready-2"] {
+		t.Fatalf("space toggled the wrong row: %#v", model.restoreChosen)
+	}
+	// `a` reads as select-all until everything is chosen, then as clear.
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'a'})
+	model = updated.(Model)
+	if !model.restoreChosen["ready-1"] || !model.restoreChosen["ready-2"] {
+		t.Fatalf("a did not select all: %#v", model.restoreChosen)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'a'})
+	model = updated.(Model)
+	if model.restoreChosen["ready-1"] || model.restoreChosen["ready-2"] {
+		t.Fatalf("a did not clear a full selection: %#v", model.restoreChosen)
+	}
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: 'x'})
+	model = updated.(Model)
+	drainCmd(cmd)
+	if !slices.Contains(backend.forgottenIDs, "ready-1") {
+		t.Fatalf("forgot %#v", backend.forgottenIDs)
+	}
+}
+
+// The offer is for the dashboard you open after a reboot. An empty roster
+// with nothing recoverable behind it must not put a modal in the way.
+func TestAnEmptyRosterWithNothingToRestoreDoesNotOfferOne(t *testing.T) {
+	model := flowModelFixture(t, &restoreBackend{})
+	model.applyRestoreCandidates(restoreCandidatesMsg{offer: true})
+	if model.mode != modeNormal {
+		t.Fatalf("mode = %v, want the dashboard left alone", model.mode)
+	}
+	model.applyRestoreCandidates(restoreCandidatesMsg{
+		candidates: []resurrect.Candidate{
+			{Entry: resurrect.Entry{ID: "running"}, Live: true},
+		},
+		offer: true,
+	})
+	if model.mode != modeNormal {
+		t.Fatal("an offer opened for agents that are already running")
+	}
+	model.applyRestoreCandidates(restoreCandidatesMsg{
+		candidates: restoreCandidatesFixture(),
+		offer:      true,
+	})
+	if model.mode != modeRestore {
+		t.Fatal("a recoverable roster did not offer to come back")
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/selfpath"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
@@ -136,6 +137,7 @@ func newRootCommand() *cobra.Command {
 		newProviderEventCommand(&socket, &sessionName, cfg),
 		newLogsCommand(&logFile),
 		newRunCommand(&socket, &sessionName, cfg),
+		newRestoreCommand(&socket, &sessionName, cfg),
 		newConfigCommand(&socket, &sessionName, cfg),
 	)
 	return root
@@ -488,7 +490,11 @@ func newService(socket, sessionName string, cfg config.Config) (*app.Service, er
 		runtime.SetPreviousKeys(cfg.Tmux.PreviousKeys)
 	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
-	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
+	// Every command that reaches the runtime keeps the roster on disk. It
+	// has to be every one: a server dies without warning, and the snapshot
+	// is only worth reading if it was current when that happened.
+	return app.NewService(runtime, registry, workspace.NewRegistry()).
+		Remembering(resurrect.NewStore()), nil
 }
 
 // stormlightServerConfig resolves the config for Stormlight-owned tmux
@@ -578,6 +584,111 @@ func dispatchDirectory(cwd string) (string, error) {
 		return os.Getwd()
 	}
 	return filepath.Abs(cwd)
+}
+
+// newRestoreCommand brings agents back from the snapshot after the tmux
+// server that held them is gone. Listing is the default because restoring is
+// not: it opens conversations and costs real windows, so it happens when
+// asked for.
+func newRestoreCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+	var restoreAll bool
+	var forget bool
+	command := &cobra.Command{
+		Use:   "restore [id...]",
+		Short: "Bring remembered agents back after the tmux server is gone",
+		Long: "Restore reopens each agent's conversation where it left off " +
+			"and idles at the composer; it never resumes the agent's work.\n\n" +
+			"With no arguments it lists what is remembered. Name ids to " +
+			"restore them, or pass --all for everything that can come back.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := newService(*socket, *sessionName, cfg)
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+
+			if forget {
+				if len(args) == 0 {
+					return fmt.Errorf("name the agents to forget")
+				}
+				if err := service.Forget(ctx, args...); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Forgot %d agent(s).\n", len(args))
+				return nil
+			}
+
+			candidates, err := service.RestoreCandidates(ctx)
+			if err != nil {
+				return err
+			}
+			if len(candidates) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"Nothing remembered in %s.\n", service.SnapshotPath())
+				return nil
+			}
+			if len(args) == 0 && !restoreAll {
+				printRestoreCandidates(cmd.OutOrStdout(), candidates)
+				return nil
+			}
+			results, err := service.Restore(ctx, args...)
+			if err != nil {
+				return err
+			}
+			return printRestoreResults(cmd.OutOrStdout(), results)
+		},
+	}
+	command.Flags().BoolVar(&restoreAll, "all", false,
+		"restore every agent that can come back")
+	command.Flags().BoolVar(&forget, "forget", false,
+		"drop the named agents from the record instead of restoring them")
+	return command
+}
+
+func printRestoreCandidates(out io.Writer, candidates []resurrect.Candidate) {
+	fmt.Fprintf(out, "%-10s %-8s %-24s %s\n", "ID", "PROVIDER", "NAME", "STATE")
+	for _, candidate := range candidates {
+		state := "restorable"
+		switch {
+		case candidate.Live:
+			state = "running"
+		case candidate.Reason != "":
+			state = candidate.Reason
+		}
+		fmt.Fprintf(out, "%-10s %-8s %-24s %s\n",
+			shortID(candidate.Entry.ID),
+			candidate.Entry.Provider,
+			truncatePlain(candidate.Entry.Name, 24),
+			state,
+		)
+	}
+	if len(resurrect.Restorable(candidates)) > 0 {
+		fmt.Fprintln(out, "\nRestore them with: stormlight restore --all")
+	}
+}
+
+func printRestoreResults(out io.Writer, results []app.RestoreResult) error {
+	if len(results) == 0 {
+		fmt.Fprintln(out, "Nothing to restore.")
+		return nil
+	}
+	failures := 0
+	for _, result := range results {
+		if result.Err != nil {
+			failures++
+			fmt.Fprintf(out, "%-10s %s: %v\n",
+				shortID(result.Entry.ID), result.Entry.Name, result.Err)
+			continue
+		}
+		fmt.Fprintf(out, "%-10s %s restored\n",
+			shortID(result.Agent.ID), result.Agent.Name)
+	}
+	if failures > 0 {
+		return fmt.Errorf("%d of %d agents could not be restored",
+			failures, len(results))
+	}
+	return nil
 }
 
 func newListCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {

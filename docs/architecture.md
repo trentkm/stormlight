@@ -239,11 +239,39 @@ takes it down. Like attention, a mark stops applying once the pane is dead.
 
 ## Persistence
 
-The current implementation uses tmux options as the source of truth because
-managed processes cannot outlive the tmux server. The workspace catalog is an
-atomic JSON file independent of tmux, as are the dashboard's column
-preferences. A future daemon may add an append-only event journal for agents
-that survive tmux restarts or run remotely.
+tmux options are the source of truth for a running roster, because managed
+processes cannot outlive the tmux server. The workspace catalog is an atomic
+JSON file independent of tmux, as are the dashboard's column preferences.
+
+Alongside them, `internal/resurrect` keeps `session.json` — a mirror of the
+roster written on every reconciling listing, so the record outlives the server
+that holds the truth. It is a mirror rather than a second source of truth:
+nothing reads it while tmux is up, and a restore rebuilds windows from it
+rather than reconciling against it.
+
+Two rules keep the mirror honest.
+
+The first is when it may be written. An empty listing is ambiguous — it reads
+identically whether the last agent was deleted or the whole session died — so
+the runtime is asked (`session.Restorer.RosterLive`) whether its listing is
+authoritative before any save. A missing managed session means the record
+stands and a listing may not touch it. Deletion is therefore recorded
+explicitly at the point of deletion, rather than inferred later from an
+absence that could mean either thing.
+
+The second is what restoring may do. A provider adapter's `Resume` maps a
+session id — the one the agent's hooks reported, or failing that the one the
+provider's transcript naming encodes — to a launch that reopens the
+conversation, and that launch carries no prompt: a restored agent idles at
+its composer. An agent with no session id and no transcript is not
+restorable at all, because there is nothing to reopen and re-dispatching its
+original task would be a materially different act performed under the same
+name. The same adapter surface serves the dashboard's session history
+browser, which reopens conversations recorded in the append-only session
+log long after their windows are deleted.
+
+A future daemon may still add an append-only event journal, for agents that
+run remotely rather than merely survive a restart.
 
 ## Workspace boundary
 
