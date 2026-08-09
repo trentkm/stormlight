@@ -318,7 +318,11 @@ An empty agent list is never taken as "there are no agents" on its own. The
 managed tmux session is the arbiter: while it exists its windows are the
 truth and the record follows them, and while it does not the record is
 authoritative and nothing may overwrite it. That is what keeps a listing taken
-one second after the server died from erasing the very thing it is for.
+one second after the server died from erasing the very thing it is for. And
+absence alone never forgets: an agent leaves the record only when you delete
+it, forget it, or restore it — so dispatching new work or restoring only some
+of what was lost leaves the rest waiting under `Ctrl-r`, exactly where the
+crash left them.
 
 ## Workspaces
 

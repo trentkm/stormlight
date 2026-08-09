@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -56,6 +57,9 @@ func (r *restoringRuntime) Restore(
 	restored := req.Agent
 	restored.WindowID = "@restored"
 	restored.ProcessLive = true
+	// A restored agent is a live one: the listing sees it from here on,
+	// exactly as the real runtime's new window would appear in list-panes.
+	r.agents = append(r.agents, restored)
 	return restored, nil
 }
 
@@ -168,7 +172,11 @@ func TestAnEmptyListingFromALostSessionLeavesTheRecordAlone(t *testing.T) {
 // A session that is genuinely there and genuinely empty is the other half:
 // the record has to follow it down, or deleting your last agent would leave
 // it offering to restore forever.
-func TestAnEmptyListingFromALiveSessionEmptiesTheRecord(t *testing.T) {
+// An entry leaves the record by deliberate act only — deleted, forgotten,
+// or restored — never because a listing happened not to contain it. A
+// window that vanishes without a recorded deletion is a lost agent, and
+// lost agents are what the record is for (#98).
+func TestAListingWithoutAnAgentLeavesItsEntryAlone(t *testing.T) {
 	runtime := &restoringRuntime{
 		agents:     []agent.Agent{liveAgent(t, "a1")},
 		rosterLive: true,
@@ -185,8 +193,47 @@ func TestAnEmptyListingFromALiveSessionEmptiesTheRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Agents) != 0 {
-		t.Fatalf("a live empty session left agents behind: %#v", snapshot.Agents)
+	if len(snapshot.Agents) != 1 || snapshot.Agents[0].ID != "a1" {
+		t.Fatalf("an unexplained absence erased the record: %#v", snapshot.Agents)
+	}
+}
+
+// The post-crash trap the merge exists for: dispatching new work before
+// restoring must not shrink the list restore is about to read (#98).
+func TestNewAgentsJoinTheRecordWithoutEvictingTheLost(t *testing.T) {
+	runtime := &restoringRuntime{
+		agents:     []agent.Agent{liveAgent(t, "lost")},
+		rosterLive: true,
+	}
+	service, store := serviceFixture(t, runtime)
+	if _, err := service.ListAgents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The server dies with the agent; a fresh one is dispatched after.
+	runtime.agents = []agent.Agent{liveAgent(t, "fresh")}
+	if _, err := service.ListAgents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(snapshot.Agents))
+	for _, entry := range snapshot.Agents {
+		ids = append(ids, entry.ID)
+	}
+	slices.Sort(ids)
+	if !slices.Equal(ids, []string{"fresh", "lost"}) {
+		t.Fatalf("record = %v, want the lost agent kept beside the fresh one", ids)
+	}
+
+	candidates, err := service.RestoreCandidates(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorable := resurrect.Restorable(candidates)
+	if len(restorable) != 1 || restorable[0].Entry.ID != "lost" {
+		t.Fatalf("restorable = %#v, want exactly the lost agent", restorable)
 	}
 }
 
@@ -338,6 +385,40 @@ func TestRestoreOfEverythingSkipsWhatCannotComeBack(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].Entry.ID != "a1" {
 		t.Fatalf("a bulk restore did not skip the unrestorable one: %#v", results)
+	}
+}
+
+// Restoring one agent must not evict the ones not chosen: the save that
+// follows a partial restore sees only what came back, and the remainder
+// has to survive it to be restorable on the next pass (#98).
+func TestPartialRestoreKeepsTheRemainderRestorable(t *testing.T) {
+	stubClaude(t)
+	runtime := &restoringRuntime{rosterLive: true}
+	service, store := serviceFixture(t, runtime)
+	if err := store.Save("agents", []agent.Agent{
+		liveAgent(t, "a1"), liveAgent(t, "a2"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.Restore(context.Background(), "a1"); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := service.RestoreCandidates(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorable := resurrect.Restorable(candidates)
+	if len(restorable) != 1 || restorable[0].Entry.ID != "a2" {
+		t.Fatalf("restorable after partial restore = %#v, want a2", restorable)
+	}
+	snapshot, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Agents) != 2 {
+		t.Fatalf("partial restore shrank the record: %#v", snapshot.Agents)
 	}
 }
 
