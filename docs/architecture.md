@@ -259,12 +259,16 @@ stands and a listing may not touch it. Deletion is therefore recorded
 explicitly at the point of deletion, rather than inferred later from an
 absence that could mean either thing.
 
-The second is what restoring may do. `provider.Resumer` maps a transcript path
-to a launch that reopens the conversation, and that launch carries no prompt:
-a restored agent idles at its composer. An agent with no transcript is not
+The second is what restoring may do. A provider adapter's `Resume` maps a
+session id — the one the agent's hooks reported, or failing that the one the
+provider's transcript naming encodes — to a launch that reopens the
+conversation, and that launch carries no prompt: a restored agent idles at
+its composer. An agent with no session id and no transcript is not
 restorable at all, because there is nothing to reopen and re-dispatching its
 original task would be a materially different act performed under the same
-name.
+name. The same adapter surface serves the dashboard's session history
+browser, which reopens conversations recorded in the append-only session
+log long after their windows are deleted.
 
 A future daemon may still add an append-only event journal, for agents that
 run remotely rather than merely survive a restart.

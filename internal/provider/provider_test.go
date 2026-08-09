@@ -280,8 +280,8 @@ func TestCodexSessionIDReadsTheRolloutBasename(t *testing.T) {
 	cases := map[string]string{
 		"/Users/u/.codex/sessions/2026/08/09/rollout-2026-08-09T10-19-00-019fe71b-1a86-7400-b39d-74bf1c5f903d.jsonl": "019fe71b-1a86-7400-b39d-74bf1c5f903d",
 		"rollout-2026-08-09T10-19-00-019fe71b-1a86-7400-b39d-74bf1c5f903d.jsonl":                                     "019fe71b-1a86-7400-b39d-74bf1c5f903d",
-		"/Users/u/.codex/history.jsonl": "",
-		"rollout-short.jsonl":           "",
+		"/Users/u/.codex/history.jsonl":              "",
+		"rollout-short.jsonl":                        "",
 		"019fe71b-1a86-7400-b39d-74bf1c5f903d.jsonl": "",
 		"": "",
 	}

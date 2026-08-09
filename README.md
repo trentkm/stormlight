@@ -304,12 +304,13 @@ always a deliberate act and never resumes work by itself.
 Not everything can come back, and the listing says which and why rather than
 dropping the row:
 
-- **An agent that never reported a turn** has no transcript, so there is no
-  conversation to reopen. Re-running its original task from scratch is a
-  different and far more dangerous act than the one restore promises.
-- **Codex agents** cannot be reopened yet ([#92](https://github.com/trentkm/stormlight/issues/92)),
-  and neither can custom provider specs — reopening a conversation is a
-  capability a provider adapter declares, and only Claude declares it today.
+- **An agent that never reported a turn** has no session id and no
+  transcript, so there is no conversation to reopen. Re-running its original
+  task from scratch is a different and far more dangerous act than the one
+  restore promises.
+- **Custom provider specs** cannot be reopened — reopening a conversation is
+  a capability a provider adapter declares, and a spec declares how to start
+  a conversation, not how to reopen one. Claude and Codex both declare it.
 - **An agent whose working directory is gone** — the worktree was torn down
   while the agent was still in it — has nowhere to come back to.
 
