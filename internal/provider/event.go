@@ -14,6 +14,10 @@ type Event struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// SessionID is the provider's own id for the conversation — what
+	// `claude --resume` and `codex resume` take. Hook payloads carry it as
+	// session_id on both providers; Codex's notify carries it as thread-id.
+	SessionID string
 	// TranscriptPath is the provider's transcript file for the session,
 	// when the event carries one (Claude hook payloads always do).
 	TranscriptPath string
@@ -50,7 +54,11 @@ func parseCodexEvent(payload []byte) (Event, bool, error) {
 
 func parseCodexNotification(payload []byte) (Event, bool, error) {
 	var notification struct {
-		Type                 string `json:"type"`
+		Type string `json:"type"`
+		// ThreadID is what Codex calls the session id on this surface; it
+		// is the same UUID the hooks report as session_id and the rollout
+		// file is named after.
+		ThreadID             string `json:"thread-id"`
 		LastAssistantMessage string `json:"last-assistant-message"`
 	}
 	if err := json.Unmarshal(payload, &notification); err != nil {
@@ -63,6 +71,7 @@ func parseCodexNotification(payload []byte) (Event, bool, error) {
 		Activity:  agent.ActivityIdle,
 		Attention: turnEndAttention(notification.LastAssistantMessage),
 		Summary:   eventSummary(notification.LastAssistantMessage),
+		SessionID: notification.ThreadID,
 		TurnEnded: true,
 	}, true, nil
 }
@@ -83,6 +92,7 @@ type hookPayload struct {
 	// Stop.
 	LastAssistantMessage string `json:"last_assistant_message"`
 
+	SessionID      string `json:"session_id"`
 	TranscriptPath string `json:"transcript_path"`
 }
 
@@ -97,6 +107,7 @@ func parseHookEvent(providerID agent.Provider, payload []byte) (Event, bool, err
 		return Event{
 			Activity:       agent.ActivityWorking,
 			Summary:        eventSummary(hook.Prompt),
+			SessionID:      hook.SessionID,
 			TranscriptPath: hook.TranscriptPath,
 		}, true, nil
 	case "Notification":
@@ -114,6 +125,7 @@ func parseHookEvent(providerID agent.Provider, payload []byte) (Event, bool, err
 			Activity:       agent.ActivityIdle,
 			Attention:      agent.AttentionApproval,
 			Summary:        summary,
+			SessionID:      hook.SessionID,
 			TranscriptPath: hook.TranscriptPath,
 		}, true, nil
 	case "Stop":
@@ -121,6 +133,7 @@ func parseHookEvent(providerID agent.Provider, payload []byte) (Event, bool, err
 			Activity:       agent.ActivityIdle,
 			Attention:      turnEndAttention(hook.LastAssistantMessage),
 			Summary:        eventSummary(hook.LastAssistantMessage),
+			SessionID:      hook.SessionID,
 			TranscriptPath: hook.TranscriptPath,
 			TurnEnded:      true,
 		}, true, nil

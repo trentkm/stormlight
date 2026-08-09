@@ -111,6 +111,52 @@ func TestCodexTurnEndIsIdenticalOnBothSurfaces(t *testing.T) {
 	}
 }
 
+// Both providers name the conversation in every payload — hooks as
+// session_id (captured from claude 2.1.226 and codex-cli 0.147.0), Codex's
+// notify as thread-id (codex-rs legacy_notify.rs) — and the id is what
+// `claude --resume` / `codex resume` take, so every surface must deliver it.
+func TestEventsCarrySessionID(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider agent.Provider
+		payload  string
+	}{
+		{
+			name:     "claude hook",
+			provider: agent.ProviderClaude,
+			payload: `{"hook_event_name":"Stop",` +
+				`"session_id":"3308ff3d-2cbc-47ab-81b1-a8fa28940a14",` +
+				`"last_assistant_message":"ok"}`,
+		},
+		{
+			name:     "codex hook",
+			provider: agent.ProviderCodex,
+			payload: `{"hook_event_name":"UserPromptSubmit",` +
+				`"session_id":"3308ff3d-2cbc-47ab-81b1-a8fa28940a14",` +
+				`"prompt":"Run the tests"}`,
+		},
+		{
+			name:     "codex notify",
+			provider: agent.ProviderCodex,
+			payload: `{"type":"agent-turn-complete",` +
+				`"thread-id":"3308ff3d-2cbc-47ab-81b1-a8fa28940a14",` +
+				`"last-assistant-message":"ok"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event, handled, err := ParseEvent(test.provider, []byte(test.payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled || event.SessionID != "3308ff3d-2cbc-47ab-81b1-a8fa28940a14" {
+				t.Fatalf("event = %#v, handled = %v", event, handled)
+			}
+		})
+	}
+}
+
 func TestEventSummaryIsBounded(t *testing.T) {
 	event, handled, err := ParseEvent(agent.ProviderCodex, []byte(
 		`{"hook_event_name":"Stop","last_assistant_message":"`+

@@ -885,6 +885,7 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 				Activity:       event.Activity,
 				Attention:      event.Attention,
 				Summary:        event.Summary,
+				SessionID:      event.SessionID,
 				TranscriptPath: event.TranscriptPath,
 				TurnEnded:      event.TurnEnded,
 			}); err != nil {

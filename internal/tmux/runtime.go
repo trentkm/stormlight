@@ -94,7 +94,7 @@ const (
 		`#{T;=/#{status-right-length}:status-right}` +
 		`#[pop-default]#[norange default]`
 	basePaneFieldCount = 10
-	metadataFieldCount = 21
+	metadataFieldCount = 22
 )
 
 var agentMetadataFields = [metadataFieldCount]string{
@@ -119,6 +119,7 @@ var agentMetadataFields = [metadataFieldCount]string{
 	"transcript_path",
 	"mark",
 	"attention_at",
+	"session_id",
 }
 
 type Runtime struct {
@@ -732,6 +733,9 @@ func (r *Runtime) Update(ctx context.Context, id string, update session.Update) 
 	if update.Activity != "" {
 		values["@stormlight_activity"] = string(update.Activity)
 	}
+	if update.SessionID != "" {
+		values["@stormlight_session_id"] = update.SessionID
+	}
 	if update.TranscriptPath != "" {
 		values["@stormlight_transcript_path"] = update.TranscriptPath
 	}
@@ -1079,6 +1083,7 @@ func parseAgent(line string) (agent.Agent, bool) {
 		Mode:           agent.PermissionMode(core[17]),
 		TranscriptPath: core[18],
 		Mark:           agent.Mark(core[19]),
+		SessionID:      core[21],
 		Workspace: workspace.Context{
 			ID:            core[9],
 			Kind:          core[10],
@@ -1107,6 +1112,7 @@ func encodeAgentOptions(managedAgent agent.Agent) (map[string]string, error) {
 		"@stormlight_mode":            string(managedAgent.Mode),
 		"@stormlight_transcript_path": managedAgent.TranscriptPath,
 		"@stormlight_mark":            string(managedAgent.Mark),
+		"@stormlight_session_id":      managedAgent.SessionID,
 	}
 	workspaceOptions, err := encodeWorkspaceOptions(managedAgent.Workspace)
 	if err != nil {
