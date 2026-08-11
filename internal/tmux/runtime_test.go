@@ -774,7 +774,7 @@ func TestSyncWindowSizesResizesDetachedWindows(t *testing.T) {
 	runner := &captureRunner{}
 	runtime := &Runtime{runner: runner, sessionName: "stormlight-agents"}
 
-	if err := runtime.SyncWindowSizes(context.Background(), 76, 120); err != nil {
+	if err := runtime.SyncWindowSizes(context.Background(), 76, 120, ""); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -789,7 +789,7 @@ func TestSyncWindowSizesLeavesAttachedSessionsAlone(t *testing.T) {
 	runner := &captureRunner{clientLine: "/dev/ttys001"}
 	runtime := &Runtime{runner: runner, sessionName: "stormlight-agents"}
 
-	if err := runtime.SyncWindowSizes(context.Background(), 76, 120); err != nil {
+	if err := runtime.SyncWindowSizes(context.Background(), 76, 120, ""); err != nil {
 		t.Fatal(err)
 	}
 	for _, call := range runner.calls {

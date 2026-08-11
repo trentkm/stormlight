@@ -29,7 +29,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	mouse := msg.Mouse()
-	if mouse.Button == tea.MouseLeft && m.mode == modeNormal {
+	if mouse.Button == tea.MouseLeft && m.mode == modeNormal && !m.ptyEnabled {
+		// Drag-to-copy indexes into the cleaned transcript; the PTY grid
+		// has no such line space, so the spike leaves selection to the
+		// real terminal behind Enter.
 		return m.handleSelectionMouse(msg)
 	}
 	// A wheel tick is its own message type, so asking for one is the whole

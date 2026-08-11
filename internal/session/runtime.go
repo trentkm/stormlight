@@ -20,8 +20,45 @@ type Runtime interface {
 	Update(context.Context, string, Update) error
 	SetWorkspace(context.Context, string, workspace.Context) error
 	// SyncWindowSizes resizes detached agent windows to the given cell
-	// size, so agents render at the width the dashboard displays.
-	SyncWindowSizes(context.Context, int, int) error
+	// size, so agents render at the width the dashboard displays. An agent
+	// named by excludeAgentID keeps its own size — a live PTY view sizes
+	// that window 1:1 itself and must not be fought.
+	SyncWindowSizes(ctx context.Context, width, height int, excludeAgentID string) error
+}
+
+// PaneStreamer is an optional runtime capability: a runtime that can expose
+// an agent's terminal as a raw byte stream and accept raw bytes back, so a
+// dashboard can host a live terminal view instead of sampling captures.
+//
+// It is separate from Runtime because it is about the transport, not agent
+// semantics: a runtime without a streamable pane is complete without it, and
+// callers treat its absence as "this runtime cannot stream".
+type PaneStreamer interface {
+	// PipePaneOpen streams every byte the agent's pane emits, from now on,
+	// into fifoPath. Any pipe a previous run left behind is replaced.
+	PipePaneOpen(ctx context.Context, id, fifoPath string) error
+	// PipePaneClose stops the stream. Closing an unpiped pane is a no-op.
+	PipePaneClose(ctx context.Context, id string) error
+	// CaptureRaw returns the pane's visible screen with escape sequences
+	// intact and lines wrapped exactly as the pane wrapped them — the seed a
+	// terminal emulator replays before the stream takes over.
+	CaptureRaw(ctx context.Context, id string) (string, error)
+	// PaneView reports where the pane's cursor is and whether the
+	// alternate screen is active, completing the seed.
+	PaneView(ctx context.Context, id string) (PaneView, error)
+	// ResizeAgentWindow sizes one agent's window exactly, with the same
+	// attached-client deference SyncWindowSizes applies.
+	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
+	// SendRaw delivers bytes to the agent's terminal input verbatim — no
+	// bracketed paste, no synthesized Enter.
+	SendRaw(ctx context.Context, id string, data []byte) error
+}
+
+// PaneView is the cursor-and-screen state CaptureRaw cannot carry.
+type PaneView struct {
+	CursorX   int
+	CursorY   int
+	AltScreen bool
 }
 
 // Restorer is an optional runtime capability: a runtime whose agent records

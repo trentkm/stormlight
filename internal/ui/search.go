@@ -96,8 +96,12 @@ func highlightSearchLine(line, needle string, current bool) string {
 }
 
 // interactionSearchable reports whether the Spanreed pane is showing a
-// transcript `/` can search: an agent must be selected.
+// transcript `/` can search: an agent must be selected, and the live PTY
+// view has no line-indexed transcript to search.
 func (m Model) interactionSearchable() bool {
+	if m.ptyEnabled {
+		return false
+	}
 	_, ok := m.selectedAgent()
 	return ok
 }

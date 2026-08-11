@@ -524,8 +524,67 @@ func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
 }
 
-func (s *Service) SyncAgentWindows(ctx context.Context, width, height int) error {
-	return s.runtime.SyncWindowSizes(ctx, width, height)
+func (s *Service) SyncAgentWindows(ctx context.Context, width, height int, excludeAgentID string) error {
+	return s.runtime.SyncWindowSizes(ctx, width, height, excludeAgentID)
+}
+
+// paneStreamer exposes the runtime's optional raw-byte transport; the error
+// names the capability so a caller's failure reads as "this runtime cannot
+// stream" rather than a mystery.
+func (s *Service) paneStreamer() (session.PaneStreamer, error) {
+	streamer, ok := s.runtime.(session.PaneStreamer)
+	if !ok {
+		return nil, fmt.Errorf("runtime does not stream panes")
+	}
+	return streamer, nil
+}
+
+func (s *Service) PipePaneOpen(ctx context.Context, id, fifoPath string) error {
+	streamer, err := s.paneStreamer()
+	if err != nil {
+		return err
+	}
+	return streamer.PipePaneOpen(ctx, id, fifoPath)
+}
+
+func (s *Service) PipePaneClose(ctx context.Context, id string) error {
+	streamer, err := s.paneStreamer()
+	if err != nil {
+		return err
+	}
+	return streamer.PipePaneClose(ctx, id)
+}
+
+func (s *Service) CaptureRaw(ctx context.Context, id string) (string, error) {
+	streamer, err := s.paneStreamer()
+	if err != nil {
+		return "", err
+	}
+	return streamer.CaptureRaw(ctx, id)
+}
+
+func (s *Service) PaneView(ctx context.Context, id string) (session.PaneView, error) {
+	streamer, err := s.paneStreamer()
+	if err != nil {
+		return session.PaneView{}, err
+	}
+	return streamer.PaneView(ctx, id)
+}
+
+func (s *Service) ResizeAgentWindow(ctx context.Context, id string, width, height int) error {
+	streamer, err := s.paneStreamer()
+	if err != nil {
+		return err
+	}
+	return streamer.ResizeAgentWindow(ctx, id, width, height)
+}
+
+func (s *Service) SendRaw(ctx context.Context, id string, data []byte) error {
+	streamer, err := s.paneStreamer()
+	if err != nil {
+		return err
+	}
+	return streamer.SendRaw(ctx, id, data)
 }
 
 func (s *Service) Runtime() session.Runtime {

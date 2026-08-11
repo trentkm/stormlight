@@ -16,7 +16,9 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/ptyview"
 	"github.com/trentkm/stormlight/internal/resurrect"
+	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/theme"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -37,7 +39,15 @@ type Backend interface {
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
-	SyncAgentWindows(context.Context, int, int) error
+	SyncAgentWindows(ctx context.Context, width, height int, excludeAgentID string) error
+	// The raw-byte transport behind the experimental PTY Spanreed
+	// (session.PaneStreamer, surfaced through the service).
+	PipePaneOpen(ctx context.Context, id, fifoPath string) error
+	PipePaneClose(ctx context.Context, id string) error
+	CaptureRaw(ctx context.Context, id string) (string, error)
+	PaneView(ctx context.Context, id string) (session.PaneView, error)
+	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
+	SendRaw(ctx context.Context, id string, data []byte) error
 	Providers() []provider.Info
 	SessionHistory(context.Context) ([]history.Record, error)
 	Resume(context.Context, history.Record) (agent.Agent, error)
@@ -63,6 +73,9 @@ const (
 	modeHelp
 	modeHistory
 	modeRestore
+	// modePTYFocus forwards the keyboard to the agent's terminal through
+	// the experimental PTY Spanreed.
+	modePTYFocus
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -194,6 +207,12 @@ type Model struct {
 	sortMode       sortMode
 	dispatchPrefix string
 	columns        ColumnPrefs
+
+	// The experimental PTY Spanreed. The session is a pointer on purpose:
+	// it owns goroutines and file handles that must survive the Model's
+	// value copies.
+	ptyEnabled bool
+	pty        *ptyview.Session
 }
 
 type dashboardMsg struct {
@@ -383,6 +402,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusForm()
 		}
 		m.syncTaskComposerSize()
+		if m.ptyEnabled && m.pty != nil {
+			gridWidth, gridHeight := m.ptyGridDimensions()
+			return m, tea.Batch(
+				resizePTYCmd(m.pty, gridWidth, gridHeight),
+				m.syncAgentWindowsCmd(),
+			)
+		}
 		return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
 
 	case tickMsg:
@@ -438,9 +464,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.shimmerRunning = true
 			cmds = append(cmds, shimmerTickCmd())
 		}
-		if m.shouldReloadInteraction(previous) {
+		if !m.ptyEnabled && m.shouldReloadInteraction(previous) {
 			m.interactionLoadedAt = time.Now()
 			cmds = append(cmds, m.loadInteractionCmd())
+		}
+		if m.ptyEnabled {
+			if selected, ok := m.selectedAgent(); ok &&
+				!selected.ProcessLive && previous.ProcessLive &&
+				selected.ID == previous.ID {
+				// remain-on-exit keeps the pane, so the frame freezes on
+				// the death screen; say why nothing moves anymore.
+				m.status = "Process exited — terminal view frozen"
+			}
 		}
 		if !m.restoreOffered && msg.err == nil {
 			// An empty roster on the first listing is the shape a lost tmux
@@ -466,6 +501,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case restoreCandidatesMsg:
 		m.applyRestoreCandidates(msg)
+		return m, nil
+
+	case ptyStartedMsg:
+		return m.handlePTYStarted(msg)
+
+	case ptyFrameMsg:
+		return m.handlePTYFrame(msg)
+
+	case ptyStoppedMsg:
 		return m, nil
 
 	case interactionMsg:
@@ -605,6 +649,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch m.mode {
+		case modePTYFocus:
+			return m.updatePTYFocus(msg)
 		case modeDispatch:
 			return m.updateDispatch(msg)
 		case modeCompose:
@@ -651,7 +697,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == modeNormal && m.ready && m.activePane == paneInteraction {
+	if m.mode == modeNormal && m.ready && !m.ptyEnabled &&
+		m.activePane == paneInteraction {
 		var cmd tea.Cmd
 		m.interaction, cmd = m.interaction.Update(message)
 		return m, cmd
@@ -705,13 +752,13 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.sortMode = mode
 		m.rebuildGroups(m.selectedWorkspaceID(), m.selectedAgentID())
 		m.status = "Sorted by " + mode.label()
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	}
 	if m.normalPrefix == "g" {
 		m.normalPrefix = ""
 		if key == "g" {
 			m.moveSelectionToStart()
-			return m, m.loadInteractionCmd()
+			return m, m.interactionFollowCmd()
 		}
 		return m, nil
 	}
@@ -724,31 +771,48 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.normalPrefix = ","
 		return m, nil
 	case "q", "ctrl+c":
+		if stop := m.stopPTY(); stop != nil {
+			// The pane pipe and its FIFO must not outlive the dashboard.
+			return m, tea.Sequence(stop, tea.Quit)
+		}
 		return m, tea.Quit
+	case "t":
+		return m, m.togglePTY()
+	case "f":
+		if m.ptyEnabled {
+			if selected, ok := m.selectedAgent(); ok && selected.ProcessLive {
+				m.mode = modePTYFocus
+				m.activePane = paneInteraction
+				m.status = "Keyboard forwarded — ctrl+q to stop"
+			} else {
+				m.err = fmt.Errorf("agent process is not running")
+			}
+			return m, nil
+		}
 	case "j", "down":
 		m.moveSelection(1)
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "k", "up":
 		m.moveSelection(-1)
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "home":
 		m.moveSelectionToStart()
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "G", "end":
 		m.moveSelectionToEnd()
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "ctrl+d":
 		m.moveSelection(max(1, m.visibleRows()/2))
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "ctrl+u":
 		m.moveSelection(-max(1, m.visibleRows()/2))
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "pgdown", "ctrl+f":
 		m.moveSelection(m.visibleRows())
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "pgup", "ctrl+b":
 		m.moveSelection(-m.visibleRows())
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "h", "left":
 		if m.activePane > paneWorkspaces {
 			m.activePane--
@@ -758,13 +822,13 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.activePane < paneInteraction {
 			m.activePane++
 		}
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "tab":
 		m.activePane = (m.activePane + 1) % 3
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "shift+tab":
 		m.activePane = (m.activePane + 2) % 3
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "z":
 		m.rowsExpanded = !m.rowsExpanded
 		return m, nil
@@ -773,11 +837,20 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.activePane == paneWorkspaces {
 			m.activePane = paneAgents
-			return m, m.loadInteractionCmd()
+			return m, m.interactionFollowCmd()
 		}
 		if selected, ok := m.selectedAgent(); ok {
 			displayTitle := agentDisplayTitle(selected)
 			m.status = "Opening " + displayTitle
+			if m.ptyEnabled {
+				// The attached client takes over sizing; the live view
+				// cannot share the window with it. `t` turns it back on.
+				m.ptyEnabled = false
+				if stop := m.stopPTY(); stop != nil {
+					return m, tea.Sequence(stop,
+						attachCmd(m.backend, selected.ID, displayTitle))
+				}
+			}
 			return m, attachCmd(m.backend, selected.ID, displayTitle)
 		}
 	case "/":
@@ -812,6 +885,18 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m.beginDispatch(true)
 	case "i", "s":
+		if m.ptyEnabled {
+			// The live terminal already is the composer; typing goes
+			// straight in.
+			if selected, ok := m.selectedAgent(); ok && selected.ProcessLive {
+				m.mode = modePTYFocus
+				m.activePane = paneInteraction
+				m.status = "Keyboard forwarded — ctrl+q to stop"
+			} else {
+				m.err = fmt.Errorf("agent process is not running")
+			}
+			return m, nil
+		}
 		if selected, ok := m.selectedAgent(); ok {
 			if selected.ProcessLive && selected.Attention.TerminalOwned() {
 				// An active prompt owns the agent's input; composing here
@@ -889,7 +974,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.activePane != paneInteraction {
+	if m.activePane != paneInteraction || m.ptyEnabled {
 		return m, nil
 	}
 	var cmd tea.Cmd

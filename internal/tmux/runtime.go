@@ -914,8 +914,10 @@ func (r *Runtime) SessionName() string {
 // agents render — and are captured — at the width the Spanreed pane
 // displays, instead of the 80x24 a detached window defaults to. Sessions
 // with an attached client are left alone: the client's terminal governs
-// there, and fighting it would resize under the user's feet.
-func (r *Runtime) SyncWindowSizes(ctx context.Context, width, height int) error {
+// there, and fighting it would resize under the user's feet. An agent named
+// by excludeAgentID keeps its window untouched for the same reason a client
+// wins: a live PTY view sizes that window 1:1 itself.
+func (r *Runtime) SyncWindowSizes(ctx context.Context, width, height int, excludeAgentID string) error {
 	if width < 20 || height < 10 {
 		return nil
 	}
@@ -926,6 +928,12 @@ func (r *Runtime) SyncWindowSizes(ctx context.Context, width, height int) error 
 		// No session yet, or someone is attached — nothing to size.
 		return nil
 	}
+	excludeWindowID := ""
+	if excludeAgentID != "" {
+		if excluded, err := r.FindAgent(ctx, excludeAgentID); err == nil {
+			excludeWindowID = excluded.WindowID
+		}
+	}
 	windows, err := r.runner.Run(ctx, nil,
 		"list-windows", "-t", r.sessionName, "-F", "#{window_id}",
 	)
@@ -935,6 +943,9 @@ func (r *Runtime) SyncWindowSizes(ctx context.Context, width, height int) error 
 	size := fmt.Sprintf("%d", width)
 	rows := fmt.Sprintf("%d", height)
 	for _, windowID := range strings.Fields(windows) {
+		if windowID == excludeWindowID {
+			continue
+		}
 		if _, err := r.runner.Run(ctx, nil,
 			"resize-window", "-t", windowID, "-x", size, "-y", rows,
 		); err != nil {

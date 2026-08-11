@@ -272,6 +272,14 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 		}
 		m.agentCursor = clamp(m.agentCursor+delta, 0, len(agents)-1)
 	case paneInteraction:
+		if m.ptyEnabled {
+			// The PTY view scrolls the emulator's history; positive delta
+			// is "down", which moves toward the live tail.
+			if m.pty != nil {
+				m.pty.ScrollBy(-delta)
+			}
+			return
+		}
 		if delta > 0 {
 			m.interaction.ScrollDown(delta)
 		} else {
@@ -288,6 +296,12 @@ func (m *Model) moveSelectionToStart() {
 	case paneAgents:
 		m.agentCursor = 0
 	case paneInteraction:
+		if m.ptyEnabled {
+			if m.pty != nil {
+				m.pty.ScrollBy(1 << 30)
+			}
+			return
+		}
 		m.interaction.GotoTop()
 	}
 }
@@ -305,6 +319,12 @@ func (m *Model) moveSelectionToEnd() {
 			m.agentCursor = len(agents) - 1
 		}
 	case paneInteraction:
+		if m.ptyEnabled {
+			if m.pty != nil {
+				m.pty.ScrollToBottom()
+			}
+			return
+		}
 		m.interaction.GotoBottom()
 	}
 }

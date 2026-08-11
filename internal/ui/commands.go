@@ -49,10 +49,16 @@ func (m Model) syncAgentWindowsCmd() tea.Cmd {
 	}
 	width, height := m.interactionDimensions()
 	rows := clamp(height*4, 24, 160)
+	// A live PTY view owns its agent's window at 1:1; the transcript
+	// sizing loop must not fight it.
+	exclude := ""
+	if m.ptyEnabled && m.pty != nil {
+		exclude = m.pty.AgentID
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := m.backend.SyncAgentWindows(ctx, width, rows); err != nil {
+		if err := m.backend.SyncAgentWindows(ctx, width, rows, exclude); err != nil {
 			diagnostic.Logger().Warn("sync agent window sizes", "error", err)
 		}
 		return nil

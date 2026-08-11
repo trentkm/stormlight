@@ -19,6 +19,9 @@ func (m Model) renderInteraction(width, height int) string {
 	if !ok {
 		return mutedStyle().Render(truncate("No agent selected", width))
 	}
+	if m.ptyEnabled {
+		return m.renderPTYInteraction(managedAgent, width, height)
+	}
 	title := titleStyle().Render(truncate(agentDisplayTitle(managedAgent), width))
 	if rowEmphasisFor(managedAgent) == emphasisWorking {
 		title = shimmerText(
