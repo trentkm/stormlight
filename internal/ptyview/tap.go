@@ -23,6 +23,17 @@ import (
 // carries bytes from the moment it opened; tmux held the rest.
 const scrollbackLines = 2000
 
+// Resync cadence: the seed is captured strictly before the pipe opens, so
+// bytes the pane painted in that gap are lost by design — and a terminal
+// attached mid-boot (every dispatch) is painting exactly then. Relative
+// redraws after a lost frame stamp stale fragments onto rows the program
+// never repaints. The cure is one snap back to the pane's truth the first
+// time the stream goes quiet.
+const (
+	resyncQuiet = 600 * time.Millisecond
+	resyncPoll  = 200 * time.Millisecond
+)
+
 // tapTransport implements oathgate.Transport over a tmux pane.
 type tapTransport struct {
 	agentID  string
@@ -36,6 +47,13 @@ type tapTransport struct {
 	readerDone chan struct{}
 	closing    atomic.Bool
 	closeOnce  sync.Once
+
+	// lastRead (UnixNano) feeds the settle detector; sendMu and
+	// streamClosed let the resync goroutine share the output channel with
+	// readLoop without racing its close.
+	lastRead     atomic.Int64
+	sendMu       sync.Mutex
+	streamClosed bool
 }
 
 // openTap builds the transport: window sized (best effort), seed captured
@@ -112,8 +130,60 @@ func openTap(ctx context.Context, backend Backend, agentID, stateDir string, wid
 		t.abort()
 		return nil, err
 	}
+	t.lastRead.Store(time.Now().UnixNano())
 	go t.readLoop()
+	go t.resyncAfterSettle()
 	return t, nil
+}
+
+// screenSync captures the pane's current screen and cursor as bytes that
+// rebuild the emulator's screen exactly: erase, repaint, park the cursor.
+func screenSync(ctx context.Context, backend Backend, agentID string) ([]byte, error) {
+	screen, err := backend.CaptureRaw(ctx, agentID, 0)
+	if err != nil {
+		return nil, err
+	}
+	view, err := backend.PaneView(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	return []byte("\x1b[H\x1b[2J" + asTerminalLines(screen) +
+		fmt.Sprintf("\x1b[%d;%dH", view.CursorY+1, view.CursorX+1)), nil
+}
+
+// resyncAfterSettle waits for the stream's first quiet moment, then snaps
+// the screen back to the pane's truth, healing whatever the capture-to-pipe
+// gap lost while the program was painting.
+func (t *tapTransport) resyncAfterSettle() {
+	for {
+		time.Sleep(resyncPoll)
+		if t.closing.Load() {
+			return
+		}
+		if time.Since(time.Unix(0, t.lastRead.Load())) >= resyncQuiet {
+			break
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sync, err := screenSync(ctx, t.backend, t.agentID)
+	if err != nil {
+		diagnostic.Logger().Warn("terminal resync",
+			"agent_id", t.agentID, "error", err)
+		return
+	}
+	t.emit(sync)
+}
+
+// emit shares the output channel with readLoop, refusing to send once the
+// stream has closed.
+func (t *tapTransport) emit(chunk []byte) {
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	if t.streamClosed {
+		return
+	}
+	t.output <- chunk
 }
 
 // asTerminalLines turns a capture-pane dump into replayable terminal
@@ -140,7 +210,12 @@ func (t *tapTransport) Resize(ctx context.Context, cols, rows int) error {
 
 func (t *tapTransport) readLoop() {
 	defer close(t.readerDone)
-	defer close(t.output)
+	defer func() {
+		t.sendMu.Lock()
+		t.streamClosed = true
+		t.sendMu.Unlock()
+		close(t.output)
+	}()
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := t.fifo.Read(buf)
@@ -151,9 +226,10 @@ func (t *tapTransport) readLoop() {
 			return
 		}
 		if n > 0 {
+			t.lastRead.Store(time.Now().UnixNano())
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
-			t.output <- chunk
+			t.emit(chunk)
 		}
 		if err != nil {
 			return

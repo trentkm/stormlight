@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trentkm/oathgate"
 
@@ -58,5 +59,29 @@ func TestTapSeedRebuildsScreenFromScreenOnlyCapture(t *testing.T) {
 	widget.ScrollBy(100)
 	if back := widget.View(); !strings.Contains(back, "scrollback-1") {
 		t.Fatalf("history lost from scrollback:\n%s", back)
+	}
+}
+
+// Once the stream first goes quiet, the tap snaps the screen back to the
+// pane's truth — the cure for frames lost in the capture-to-pipe gap while
+// the program was painting.
+func TestTapResyncsAfterFirstQuiet(t *testing.T) {
+	transport, err := openTap(context.Background(), fakeTapBackend{}, "agent-2", t.TempDir(), 40, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case chunk := <-transport.Output():
+			if strings.Contains(string(chunk), "\x1b[2J") &&
+				strings.Contains(string(chunk), "true screen row one") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no resync frame arrived after the stream settled")
+		}
 	}
 }
