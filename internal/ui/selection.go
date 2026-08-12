@@ -220,6 +220,10 @@ func (m Model) paneAt(x int) pane {
 	if width < 72 {
 		return m.activePane
 	}
+	if m.ptyZoom && m.ptyEnabled {
+		// Zoomed, the portal is the whole body: every column is its.
+		return paneInteraction
+	}
 	workspaceWidth, agentWidth, _ := m.paneWidths(width)
 	switch {
 	case x < workspaceWidth:

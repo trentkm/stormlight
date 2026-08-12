@@ -212,6 +212,10 @@ type Model struct {
 	// redraw wake-ups never double up. Pointers and maps on purpose: they
 	// must survive the Model's value copies.
 	ptyEnabled bool
+	// ptyZoom collapses the sidebars so the portal spans the full body —
+	// still the same layout pipeline, not a separate mode. It survives a
+	// trip through the transcript view: t out, t back, still zoomed.
+	ptyZoom    bool
 	ptyManager *ptyview.Manager
 	ptyArmed   map[int64]bool
 }
@@ -854,6 +858,27 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "z":
 		m.rowsExpanded = !m.rowsExpanded
 		return m, nil
+	case "Z", "alt+z":
+		// Zoom from the roster: the sidebars collapse and the keyboard
+		// walks into the portal in the same stroke.
+		if _, ok := m.selectedAgent(); ok {
+			m.ptyEnabled = true
+			m.ptyZoom = true
+			m.activePane = paneInteraction
+			m.status = "Terminal — ctrl+space to leave"
+			return m, tea.Batch(m.ensurePTYCmd(), m.armPTYWait())
+		}
+		return m, nil
+	case "ctrl+space", "ctrl+@":
+		// The seam key works from this side too: in, symmetric with out.
+		if m.ptyEnabled {
+			if _, ok := m.selectedAgent(); ok {
+				m.activePane = paneInteraction
+				m.status = "Terminal — ctrl+space to leave"
+				return m, m.armPTYWait()
+			}
+		}
+		return m, nil
 	case "<", ">":
 		return m.resizeColumns(key)
 	case "enter":
@@ -862,11 +887,11 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.interactionFollowCmd()
 		}
 		if m.ptyEnabled {
-			// The terminal is right there — Enter walks into it. F is the
-			// full-screen version.
+			// The terminal is right there — Enter walks into it. Z is the
+			// zoomed version.
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Terminal — ctrl+q to leave"
+				m.status = "Terminal — ctrl+space to leave"
 				return m, m.armPTYWait()
 			}
 			return m, nil

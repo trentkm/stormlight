@@ -13,13 +13,35 @@ import (
 )
 
 // updateTerminalKey is every keypress while the Spanreed terminal holds
-// focus. Typing into an agent's terminal is the strongest possible form of
-// having seen its result, so attention clears on the way through.
+// focus. A focused terminal must receive letters, so the dashboard's keys
+// here are modifier chords the hosted TUIs don't bind — the tmux-prefix
+// insight without the prefix. Everything else goes to the terminal, byte
+// for byte; typing into an agent's terminal is the strongest possible form
+// of having seen its result, so attention clears on the way through.
 func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+q" {
+	switch msg.String() {
+	case "ctrl+q", "ctrl+space", "ctrl+@":
+		// The seam key: one step out, from anywhere inside. Zoom collapses
+		// with it, so it always lands back on the roster.
+		m.ptyZoom = false
 		m.activePane = paneAgents
 		m.status = "Ready"
-		return m, nil
+		return m, m.ensurePTYCmd()
+	case "alt+j", "alt+down":
+		// Switch agents without stepping out: the portal swaps terminals
+		// under the keyboard and the bar re-labels. The roster's cursor is
+		// the target — plain moveSelection would scroll this terminal.
+		m.moveSelectionIn(paneAgents, 1)
+		return m, m.interactionFollowCmd()
+	case "alt+k", "alt+up":
+		m.moveSelectionIn(paneAgents, -1)
+		return m, m.interactionFollowCmd()
+	case "alt+z":
+		m.ptyZoom = !m.ptyZoom
+		return m, m.ensurePTYCmd()
+	case "alt+t":
+		m.ptyZoom = false
+		return m, tea.Batch(m.togglePTY(), m.ensurePTYCmd())
 	}
 	widget, ok := m.selectedPTY()
 	if !ok {

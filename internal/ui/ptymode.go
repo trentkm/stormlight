@@ -47,13 +47,21 @@ func ptyStateDir() string {
 	return filepath.Join(home, ".local", "state", "stormlight")
 }
 
-// ptyGridDimensions is every terminal box's size: the Spanreed content
-// area, plus the three rows the transcript heading would occupy — the
-// terminal view draws no heading — minus the window bar above the grid
-// and the hint row below it.
+// ptyGridDimensions is every terminal box's size. The terminal view spends
+// exactly two rows on chrome — the window bar, mounted as the pane's title
+// row, and the hint row under the grid — so the grid gets everything else.
+// Zoomed, the sidebars collapse and the grid takes the full body width.
 func (m Model) ptyGridDimensions() (int, int) {
-	width, height := m.interactionDimensions()
-	return width, max(2, height+1)
+	width, bodyHeight := m.bodyDimensions()
+	gridHeight := max(2, bodyHeight-2)
+	if width < 72 {
+		return max(1, width-2), gridHeight
+	}
+	if m.ptyZoom {
+		return width, gridHeight
+	}
+	_, _, interactionWidth := m.paneWidths(width)
+	return max(1, interactionWidth-3), gridHeight
 }
 
 // selectedPTY is the widget behind the Spanreed right now; ok is false
@@ -163,16 +171,12 @@ func (m *Model) togglePTY() tea.Cmd {
 	return m.armPTYWait()
 }
 
-// renderPTYInteraction is renderInteraction's live-terminal branch: the
-// window bar naming what the grid shows, the widget filling everything the
-// transcript's heading and viewport would occupy, then one hint row where
-// the composer affordances live. No heading — the Spanreed is not a
-// preview with a caption, it is the terminal, and the bar already carries
-// the agent facts; every row the chrome gives back makes the portal read
-// more like the terminal itself.
+// renderPTYInteraction is renderInteraction's live-terminal branch: just
+// the grid and one hint row. The window bar is not rendered here — it is
+// mounted as the pane's title row (see renderDashboardBody), so the
+// Spanreed is not a preview with a caption but the terminal itself, wearing
+// the thinnest chrome the dashboard has.
 func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int) string {
-	bar := m.renderTerminalBar(managedAgent, width)
-
 	grid := mutedStyle().Render("Starting terminal...")
 	scrolled := 0
 	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok {
@@ -181,9 +185,9 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int)
 	}
 
 	focused := m.terminalFocused()
-	hint := "Enter/l terminal  t transcript  F full screen"
+	hint := "Enter terminal · t transcript · Z zoom · F attach"
 	if focused {
-		hint = "terminal — ctrl+q to leave  ·  F full screen"
+		hint = "ctrl+space out · alt+j/k agents · alt+z zoom · alt+t transcript"
 	}
 	composer := mutedStyle().Render(truncate(hint, width))
 	if focused {
@@ -195,19 +199,27 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int)
 			width,
 		))
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, bar, grid, composer)
+	return lipgloss.JoinVertical(lipgloss.Left, grid, composer)
 }
 
 // renderTerminalBar is the window bar over the terminal grid, and the only
 // dashboard chrome the terminal view keeps: the agent's status glyph and
 // name, the heading's meta line in words, and the terminal's real
-// dimensions, on a filled band spanning the pane.
+// dimensions, on a filled band spanning the pane. The band flips to accent
+// while the keyboard feeds the terminal — focus is painted, not implied —
+// and zoomed it carries the roster position, because alt+j/k still cycle
+// agents with the roster out of sight.
 func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	symbol, statusStyle := statusVisual(managedAgent)
 	dims := ""
 	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok {
 		cols, rows := widget.TerminalSize()
 		dims = fmt.Sprintf("%d×%d", cols, rows)
+	}
+	if m.ptyZoom {
+		if list := m.agentsForSelectedWorkspace(); len(list) > 1 {
+			dims = fmt.Sprintf("‹ %d/%d ›  %s", m.agentCursor+1, len(list), dims)
+		}
 	}
 	label := agentDisplayTitle(managedAgent)
 	if meta := terminalBarMeta(managedAgent); meta != "" {
@@ -219,10 +231,15 @@ func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	label = truncate(label, max(1, width-dimsWidth-5))
 	gap := max(1, width-4-lipgloss.Width(label)-dimsWidth)
 	band := lipgloss.NewStyle().Background(colorSelect())
-	return band.Render(" ") +
-		statusStyle.Background(colorSelect()).Render(symbol) +
-		band.Foreground(colorText()).
-			Render(" "+label+strings.Repeat(" ", gap)+dims+" ")
+	glyph := statusStyle.Background(colorSelect()).Render(symbol)
+	text := band.Foreground(colorText())
+	if m.terminalFocused() {
+		band = lipgloss.NewStyle().Background(colorAccent())
+		glyph = band.Foreground(colorPortalInk()).Bold(true).Render(symbol)
+		text = band.Foreground(colorPortalInk())
+	}
+	return band.Render(" ") + glyph +
+		text.Render(" "+label+strings.Repeat(" ", gap)+dims+" ")
 }
 
 // terminalBarMeta is the heading's meta line as bar words: the derived
@@ -287,6 +304,11 @@ func (m Model) ptyCursor() *tea.Cursor {
 		// a cursor to.
 		return nil
 	}
+	if m.ptyZoom {
+		// The zoomed pane has no sidebars, seams, or gutters: the grid's
+		// first column is the screen's.
+		return tea.NewCursor(x, ptyGridTop+y)
+	}
 	workspaceWidth, agentWidth, _ := m.paneWidths(width)
 	// Origin constants are measured, not derived: a MARK parked at a known
 	// emulator cell calibrated the grid's screen origin. Recalibrate the
@@ -294,7 +316,6 @@ func (m Model) ptyCursor() *tea.Cursor {
 	return tea.NewCursor(workspaceWidth+agentWidth+1+x, ptyGridTop+y)
 }
 
-// ptyGridTop is the screen row of the terminal grid's first cell: header,
-// pane title, and the window bar the grid sits under — the terminal view
-// draws no heading.
-const ptyGridTop = 4
+// ptyGridTop is the screen row of the terminal grid's first cell: the
+// dashboard header, then the window bar mounted as the pane's title row.
+const ptyGridTop = 2

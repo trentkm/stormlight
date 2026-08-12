@@ -731,7 +731,11 @@ func TestSpanreedHeadingHonorsMarksOverDerivedState(t *testing.T) {
 			model.agents = []agent.Agent{marked}
 			model.rebuildGroups(ws.ID, marked.ID)
 			model.interactionID = marked.ID
-			rendered := ansi.Strip(model.renderInteraction(80, 20))
+			// The meta words live in the window bar, which the layout
+			// mounts as the Spanreed's title row; the interaction body
+			// holds the grid. Together they are the Spanreed surface.
+			rendered := ansi.Strip(model.renderTerminalBar(marked, 80) +
+				"\n" + model.renderInteraction(80, 20))
 			if !strings.Contains(rendered, testCase.want) {
 				t.Fatalf("heading hides %q:\n%s", testCase.want, rendered)
 			}

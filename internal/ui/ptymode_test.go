@@ -58,3 +58,67 @@ func TestTerminalBarFillsWidthExactly(t *testing.T) {
 		t.Errorf("bar drops the agent facts: %q", bar)
 	}
 }
+
+// The reserved chords work while the terminal holds the keyboard: alt+j/k
+// switch agents without stepping out, alt+z toggles zoom, and the seam key
+// lands back on the roster with zoom collapsed.
+func TestSeamChordsInsideTheTerminal(t *testing.T) {
+	model := NewModel(stubBackend{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	model = updated.(Model)
+	ws := workspace.DirectoryContext("/tmp/seam")
+	model.agents = []agent.Agent{
+		{ID: "beta", Name: "beta", Workspace: ws, ProcessLive: true},
+		{ID: "alpha", Name: "alpha", Workspace: ws, ProcessLive: true},
+	}
+	model.rebuildGroups(ws.ID, "alpha")
+	model.activePane = paneInteraction
+
+	next, _ := model.Update(tea.KeyPressMsg{Code: 'k', Mod: tea.ModAlt})
+	model = next.(Model)
+	if got := model.selectedAgentID(); got != "beta" {
+		t.Fatalf("alt+k did not switch agents: still %q", got)
+	}
+	if model.activePane != paneInteraction {
+		t.Fatal("alt+k stole focus from the terminal")
+	}
+
+	next, _ = model.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModAlt})
+	model = next.(Model)
+	if !model.ptyZoom {
+		t.Fatal("alt+z did not zoom")
+	}
+
+	next, _ = model.Update(tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl})
+	model = next.(Model)
+	if model.ptyZoom || model.activePane != paneAgents {
+		t.Fatalf("seam key did not land on the roster: zoom=%v pane=%v",
+			model.ptyZoom, model.activePane)
+	}
+}
+
+// Zoom collapses the sidebars: the body is the bar plus the grid, and the
+// roster panes are gone until the seam key brings them back.
+func TestZoomCollapsesSidebars(t *testing.T) {
+	model := NewModel(stubBackend{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	model = updated.(Model)
+	ws := workspace.DirectoryContext("/tmp/zoom")
+	model.agents = []agent.Agent{
+		{ID: "alpha", Name: "alpha", Workspace: ws, ProcessLive: true},
+	}
+	model.rebuildGroups(ws.ID, "alpha")
+	model.activePane = paneInteraction
+	model.ptyZoom = true
+
+	body := model.renderDashboardBody(139, 36)
+	if strings.Contains(body, "Workspaces") {
+		t.Fatalf("zoomed body still draws the sidebars:\n%s", body)
+	}
+	if !strings.Contains(body, "alpha") {
+		t.Fatalf("zoomed body lost the window bar:\n%s", body)
+	}
+	if model.paneAt(3) != paneInteraction {
+		t.Fatal("zoomed hit-testing still finds a sidebar at x=3")
+	}
+}

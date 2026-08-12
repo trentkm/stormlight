@@ -376,7 +376,9 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 	for _, label := range []string{
 		"Workspaces",
 		"Agents",
-		"Spanreed",
+		// The Spanreed's title row is its window bar in terminal view,
+		// so the context it preserves is the selected agent's name.
+		"agent-one",
 		"New agent",
 		"Coding agent",
 		"Task",
@@ -2174,7 +2176,14 @@ func TestInteractionHeadingNamesTheCheckout(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			model.rebuildGroups(testCase.workspace, testCase.agent)
 			model.interactionID = testCase.agent
-			rendered := ansi.Strip(model.renderInteraction(80, 20))
+			selected, ok := model.selectedAgent()
+			if !ok {
+				t.Fatal("no selected agent")
+			}
+			// The checkout words live in the window bar, the Spanreed's
+			// title row in terminal view.
+			rendered := ansi.Strip(model.renderTerminalBar(selected, 80) +
+				"\n" + model.renderInteraction(80, 20))
 			if testCase.want != "" && !strings.Contains(rendered, testCase.want) {
 				t.Fatalf("heading hides %q:\n%s", testCase.want, rendered)
 			}

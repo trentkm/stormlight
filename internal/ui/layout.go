@@ -133,6 +133,27 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	if width < 72 {
 		return m.renderFocusedPane(width, contentHeight)
 	}
+	if m.ptyZoom && m.ptyEnabled {
+		if selected, ok := m.selectedAgent(); ok {
+			// Zoom collapses the sidebars rather than entering a separate
+			// mode: the same pane pipeline, the portal spanning the full
+			// frame, the header's counts still overhead.
+			return m.renderPane(
+				"Spanreed",
+				"",
+				m.renderInteraction(width, contentHeight-1),
+				paneFrame{
+					width:  width,
+					height: contentHeight,
+					active: true,
+					band:   headerBand{total: width},
+					header: func(w int) string {
+						return m.renderTerminalBar(selected, w)
+					},
+				},
+			)
+		}
+	}
 
 	workspaceWidth, agentWidth, interactionWidth := m.paneWidths(width)
 	listHeight := contentHeight - 2
@@ -161,6 +182,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			band:    headerBand{start: 0, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
+			dimSeam: m.terminalFocused(),
 		},
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
@@ -183,8 +205,27 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			band:    headerBand{start: workspaceWidth, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimAgents,
+			dimSeam: m.terminalFocused(),
 		},
 	)
+	interactionFrame := paneFrame{
+		width:   interactionWidth,
+		height:  contentHeight,
+		active:  m.activePane == paneInteraction,
+		edges:   paneEdges{gutter: true},
+		band:    headerBand{start: workspaceWidth + agentWidth, total: width},
+		margins: paneMargins{top: true},
+		dimming: dimInteraction,
+	}
+	if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
+		// Terminal view: the window bar IS the pane's title row, and the
+		// top margin goes with it — the portal starts on the frame's
+		// second screen row.
+		interactionFrame.header = func(w int) string {
+			return m.renderTerminalBar(selected, w)
+		}
+		interactionFrame.margins = paneMargins{}
+	}
 	interaction := m.renderPane(
 		"Spanreed",
 		"",
@@ -192,15 +233,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			max(1, interactionWidth-3),
 			listHeight,
 		),
-		paneFrame{
-			width:   interactionWidth,
-			height:  contentHeight,
-			active:  m.activePane == paneInteraction,
-			edges:   paneEdges{gutter: true},
-			band:    headerBand{start: workspaceWidth + agentWidth, total: width},
-			margins: paneMargins{top: true},
-			dimming: dimInteraction,
-		},
+		interactionFrame,
 	)
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -529,16 +562,22 @@ func (m Model) renderFocusedPane(width, height int) string {
 			},
 		)
 	case paneInteraction:
+		frame := paneFrame{
+			width:  width,
+			height: height,
+			active: true,
+			band:   headerBand{total: width},
+		}
+		if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
+			frame.header = func(w int) string {
+				return m.renderTerminalBar(selected, w)
+			}
+		}
 		return m.renderPane(
 			"Spanreed",
 			"‹",
 			m.renderInteraction(max(1, width-2), height-1),
-			paneFrame{
-				width:  width,
-				height: height,
-				active: true,
-				band:   headerBand{total: width},
-			},
+			frame,
 		)
 	default:
 		return m.renderPane(
@@ -703,6 +742,13 @@ type paneFrame struct {
 	band    headerBand
 	margins paneMargins
 	dimming paneDimming
+	// header, when set, replaces the pane's title row entirely — the
+	// terminal view mounts its window bar there, so the portal starts on
+	// the frame's very first row. Called with the pane's content width.
+	header func(width int) string
+	// dimSeam recedes the pane's right seam: chrome stepping back while
+	// the Spanreed terminal holds the keyboard.
+	dimSeam bool
 }
 
 func (m Model) renderPane(
@@ -725,10 +771,14 @@ func (m Model) renderPane(
 		// inside it; innerWidth is what is left for content once the seam
 		// has taken its column.
 		innerWidth = max(1, width-1)
+		seamForeground := seamColor(edges.right, frame.band, width)
+		if frame.dimSeam {
+			seamForeground = colorRecede()
+		}
 		style = style.Width(max(1, width)).
 			BorderStyle(edges.right.border()).
 			BorderRight(true).
-			BorderForeground(seamColor(edges.right, frame.band, width))
+			BorderForeground(seamForeground)
 	}
 	// The gutter is the far half of a plane seam, so it comes out of this
 	// pane's own columns: the header rule and every body row start one cell
@@ -744,6 +794,9 @@ func (m Model) renderPane(
 		band.start++
 	}
 	header := renderPaneHeader(label, contextLabel, contentWidth, frame.active, band)
+	if frame.header != nil {
+		header = frame.header(contentWidth)
+	}
 	if dimming.dim {
 		content = dimPane(content, dimming.keep)
 	}
