@@ -42,6 +42,13 @@ var (
 	// teal drawn from the wordmark's cool end so code reads as a different
 	// substance than prose without competing with the status colors.
 	Code = Pair{Light: "#0E7C6B", Dark: "#8FDCCB"}
+	// Screen is the live terminal's ground. Painted over the widget's
+	// default-background cells, it makes the Spanreed read as a recessed
+	// surface — a portal into the agent's terminal — instead of a
+	// transparent region of the dashboard. It sits a step below a typical
+	// dark terminal ground and a step off a typical light one, so the
+	// recess registers on either.
+	Screen = Pair{Light: "#EFF3F5", Dark: "#16181B"}
 )
 
 // dark records which background the palette resolves against.

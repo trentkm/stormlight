@@ -349,7 +349,7 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		status:             "Ready",
 		columns:            options.Columns,
 		ptyEnabled:         true,
-		ptyManager:         ptyview.NewManager(backend, ptyStateDir()),
+		ptyManager:         ptyview.NewManager(backend, ptyStateDir(), spanreedWidgetOptions),
 		ptyArmed:           make(map[int64]bool),
 	}
 	for index, info := range model.providers {

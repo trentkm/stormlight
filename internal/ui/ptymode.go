@@ -33,6 +33,15 @@ type attachReturnedMsg struct {
 	err  error
 }
 
+// spanreedWidgetOptions styles every terminal the herd builds: the ground
+// is painted theme.Screen, so the Spanreed reads as a recessed surface — a
+// portal into the agent's terminal — rather than a transparent region of
+// the dashboard. Evaluated per widget open, after the palette has resolved
+// light or dark.
+func spanreedWidgetOptions() []oathgate.Option {
+	return []oathgate.Option{oathgate.WithDefaultBackground(colorScreen())}
+}
+
 // ptyStateDir mirrors the rest of the state files (prefs, catalog): XDG
 // first, ~/.local/state as the fallback.
 func ptyStateDir() string {

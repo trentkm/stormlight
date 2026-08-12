@@ -74,6 +74,11 @@ func (e *entry) adoptPaneSize(ctx context.Context) {
 type Manager struct {
 	backend  any
 	stateDir string
+	// options styles every widget the Manager builds. A function rather
+	// than a slice because the palette resolves light-or-dark only after
+	// the terminal answers the background query — evaluating at open time
+	// picks up the answer, evaluating at construction bakes in the guess.
+	options func() []oathgate.Option
 
 	mu       sync.Mutex
 	entries  map[string]*entry
@@ -86,10 +91,14 @@ type Manager struct {
 	height   int
 }
 
-func NewManager(backend any, stateDir string) *Manager {
+func NewManager(backend any, stateDir string, options func() []oathgate.Option) *Manager {
+	if options == nil {
+		options = func() []oathgate.Option { return nil }
+	}
 	return &Manager{
 		backend:  backend,
 		stateDir: stateDir,
+		options:  options,
 		entries:  make(map[string]*entry),
 		byWidget: make(map[int64]string),
 		starting: make(map[string]bool),
@@ -176,7 +185,7 @@ func (g *Manager) open(ctx context.Context, id string, width, height int) (*entr
 		if err == nil {
 			return &entry{
 				agentID: id,
-				widget:  oathgate.New(stream, width, height),
+				widget:  oathgate.New(stream, width, height, g.options()...),
 			}, nil
 		}
 		if _, tappable := g.backend.(Backend); !tappable {
@@ -193,7 +202,7 @@ func (g *Manager) open(ctx context.Context, id string, width, height int) (*entr
 	}
 	e := &entry{
 		agentID: id,
-		widget:  oathgate.New(transport, width, height),
+		widget:  oathgate.New(transport, width, height, g.options()...),
 		tap:     true,
 		backend: tap,
 	}
