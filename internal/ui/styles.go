@@ -33,7 +33,6 @@ func colorBorder() color.Color       { return theme.Color(theme.Border) }
 func colorSelect() color.Color       { return theme.Color(theme.Select) }
 func colorSelectedText() color.Color { return theme.Color(theme.SelectedText) }
 func colorDangerBg() color.Color     { return theme.Color(theme.DangerBg) }
-func colorScreen() color.Color       { return theme.Color(theme.Screen) }
 
 func titleStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Bold(true).Foreground(colorText())

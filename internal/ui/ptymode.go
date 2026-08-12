@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,15 +34,6 @@ type attachReturnedMsg struct {
 	err  error
 }
 
-// spanreedWidgetOptions styles every terminal the herd builds: the ground
-// is painted theme.Screen, so the Spanreed reads as a recessed surface — a
-// portal into the agent's terminal — rather than a transparent region of
-// the dashboard. Evaluated per widget open, after the palette has resolved
-// light or dark.
-func spanreedWidgetOptions() []oathgate.Option {
-	return []oathgate.Option{oathgate.WithDefaultBackground(colorScreen())}
-}
-
 // ptyStateDir mirrors the rest of the state files (prefs, catalog): XDG
 // first, ~/.local/state as the fallback.
 func ptyStateDir() string {
@@ -56,10 +48,10 @@ func ptyStateDir() string {
 }
 
 // ptyGridDimensions is every terminal box's size: the Spanreed content
-// area minus the hint row.
+// area minus the window bar above the grid and the hint row below it.
 func (m Model) ptyGridDimensions() (int, int) {
 	width, height := m.interactionDimensions()
-	return width, max(2, height-1)
+	return width, max(2, height-2)
 }
 
 // selectedPTY is the widget behind the Spanreed right now; ok is false
@@ -170,10 +162,14 @@ func (m *Model) togglePTY() tea.Cmd {
 }
 
 // renderPTYInteraction is renderInteraction's live-terminal branch: same
-// heading, then the widget where the transcript viewport would be, then
-// one hint row where the composer affordances live.
+// heading, then a window bar naming what the grid shows, then the widget
+// where the transcript viewport would be, then one hint row where the
+// composer affordances live. The bar is the portal's chrome: the filled
+// band above the grid is what makes the cells below read as a window into
+// the agent's terminal rather than more dashboard.
 func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int) string {
 	heading := m.renderInteractionHeading(managedAgent, width)
+	bar := m.renderTerminalBar(managedAgent, width)
 
 	grid := mutedStyle().Render("Starting terminal...")
 	scrolled := 0
@@ -194,7 +190,33 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int)
 	if focused {
 		composer = accentStyle().Render(truncate(hint, width))
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, heading, grid, composer)
+	return lipgloss.JoinVertical(lipgloss.Left, heading, bar, grid, composer)
+}
+
+// renderTerminalBar is the window bar over the terminal grid: the agent's
+// status glyph, name, and location on the left, the terminal's real
+// dimensions on the right, on a filled band spanning the pane.
+func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
+	symbol, statusStyle := statusVisual(managedAgent)
+	dims := ""
+	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok {
+		cols, rows := widget.TerminalSize()
+		dims = fmt.Sprintf("%d×%d", cols, rows)
+	}
+	label := agentDisplayTitle(managedAgent)
+	if location := agentLocation(managedAgent); location != "" {
+		label += " — " + location
+	}
+	// " ● " + label + gap + dims + " " fills the width exactly; the label
+	// yields first, the gap absorbs what remains.
+	dimsWidth := lipgloss.Width(dims)
+	label = truncate(label, max(1, width-dimsWidth-5))
+	gap := max(1, width-4-lipgloss.Width(label)-dimsWidth)
+	band := lipgloss.NewStyle().Background(colorSelect())
+	return band.Render(" ") +
+		statusStyle.Background(colorSelect()).Render(symbol) +
+		band.Foreground(colorText()).
+			Render(" "+label+strings.Repeat(" ", gap)+dims+" ")
 }
 
 // terminalFocused reports whether the keyboard currently belongs to the
@@ -234,5 +256,6 @@ func (m Model) ptyCursor() *tea.Cursor {
 }
 
 // ptyGridTop is the screen row of the terminal grid's first cell: header,
-// pane title, the heading's three rows, and the pane's top margin.
-const ptyGridTop = 6
+// pane title, the heading's three rows, the pane's top margin — and one
+// more for the window bar the grid sits under.
+const ptyGridTop = 7
