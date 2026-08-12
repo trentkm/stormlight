@@ -1,12 +1,14 @@
-// Package ptyview hosts a live terminal view of one agent's tmux pane: a
-// pipe-pane byte stream feeding a VT emulator, seeded from a capture of the
-// visible screen. It is the experimental full-PTY Spanreed (spike; the
-// transcript path remains the default).
+// Package ptyview makes the Spanreed a terminal multiplexer: every agent
+// keeps a live VT emulator fed by a pipe-pane byte stream for its whole
+// life (Manager), seeded from a deep capture of the pane so history
+// survives dashboard restarts. tmux persists the panes themselves; this
+// package persists the dashboard's view of them.
 package ptyview
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,7 @@ import (
 type Backend interface {
 	PipePaneOpen(ctx context.Context, id, fifoPath string) error
 	PipePaneClose(ctx context.Context, id string) error
-	CaptureRaw(ctx context.Context, id string) (string, error)
+	CaptureRaw(ctx context.Context, id string, history int) (string, error)
 	PaneView(ctx context.Context, id string) (session.PaneView, error)
 	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
 }
@@ -54,6 +56,8 @@ type Session struct {
 	mu     sync.Mutex
 	emu    *vt.Emulator
 	scroll int // lines above the live tail the viewer has scrolled
+	width  int
+	height int
 
 	frames     chan struct{}
 	lastNotify time.Time
@@ -112,6 +116,8 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 		backend:    backend,
 		fifoPath:   fifoPath,
 		fifo:       fifo,
+		width:      width,
+		height:     height,
 		frames:     make(chan struct{}, 1),
 		readerDone: make(chan struct{}),
 	}
@@ -129,6 +135,16 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 	emu := vt.NewEmulator(width, height)
 	emu.Scrollback().SetMaxLines(scrollbackLines)
 	s.emu = emu
+	// The emulator answers terminal queries (DSR, in-band resize reports)
+	// by writing into an internal io.Pipe, and an io.Pipe write BLOCKS
+	// until read. Nothing here wants those answers — tmux already answered
+	// the real program — but they must be drained, or the first query (or
+	// the first Resize, which self-reports) wedges Write while it holds
+	// mu and freezes every Frame call behind it. Found the hard way, via
+	// SIGQUIT. Close releases this goroutine by closing the pipe.
+	go func() {
+		_, _ = io.Copy(io.Discard, emu)
+	}()
 	if err := s.seed(ctx); err != nil {
 		// Bytes piped between open and seed replay after the seed; for a
 		// full-screen program the repaint converges, and for a scroll-mode
@@ -141,11 +157,13 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 	return s, nil
 }
 
-// seed replays the pane's visible screen into the emulator, then parks the
-// cursor where the pane says it is. The pipe is forward-only (verified
-// empirically), so without this the view starts black.
+// seed replays the pane's screen — and as much scrollback as the emulator
+// keeps — into the emulator, then parks the cursor where the pane says it
+// is. The pipe is forward-only (verified empirically), so without this the
+// view starts black; with history included, the emulator's scrollback
+// survives dashboard restarts because tmux held the lines in between.
 func (s *Session) seed(ctx context.Context) error {
-	screen, err := s.backend.CaptureRaw(ctx, s.AgentID)
+	screen, err := s.backend.CaptureRaw(ctx, s.AgentID, scrollbackLines)
 	if err != nil {
 		return err
 	}
@@ -162,6 +180,11 @@ func (s *Session) seed(ctx context.Context) error {
 		return err
 	}
 	_, err = fmt.Fprintf(s.emu, "\x1b[%d;%dH", view.CursorY+1, view.CursorX+1)
+	diagnostic.Logger().Info("pty seed",
+		"agent_id", s.AgentID,
+		"seed_lines", strings.Count(seeded, "\r\n")+1,
+		"scrollback", s.emu.ScrollbackLen(),
+	)
 	return err
 }
 
@@ -282,6 +305,13 @@ func (s *Session) AltScreen() bool {
 	return s.emu.IsAltScreen()
 }
 
+// Size reports the cell grid the session currently renders at.
+func (s *Session) Size() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.width, s.height
+}
+
 // Resize moves the tmux window and the emulator together; the two disagree
 // only for the moment between the resize and the repaint it provokes.
 func (s *Session) Resize(ctx context.Context, width, height int) error {
@@ -293,6 +323,7 @@ func (s *Session) Resize(ctx context.Context, width, height int) error {
 	}
 	s.mu.Lock()
 	s.emu.Resize(width, height)
+	s.width, s.height = width, height
 	s.mu.Unlock()
 	return nil
 }
@@ -316,6 +347,15 @@ func (s *Session) Close() {
 			<-s.readerDone
 		}
 		s.fifo.Close()
+		if s.emu != nil {
+			// Close the emulator's response pipe so the drain goroutine
+			// sees EOF and exits. Via the pipe writer, not Emulator.Close:
+			// the pipe's own methods are synchronized, while Close flips an
+			// unsynchronized flag the drain's concurrent Read also touches.
+			if pw, ok := s.emu.InputPipe().(*io.PipeWriter); ok {
+				pw.CloseWithError(io.EOF)
+			}
+		}
 		s.mu.Lock()
 		if s.pending != nil {
 			s.pending.Stop()

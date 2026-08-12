@@ -62,6 +62,9 @@ func (b *flowBackend) RenameWorkspace(
 func flowModelFixture(t *testing.T, backend Backend) Model {
 	t.Helper()
 	model := NewModel(backend)
+	// These flows exercise the transcript view; the PTY view boots live
+	// terminal sessions no unit fixture wants.
+	model.ptyEnabled = false
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	model = updated.(Model)
 	workspaceContext := workspace.DirectoryContext("/tmp/flows")

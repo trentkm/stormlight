@@ -14,14 +14,10 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
-func (m Model) renderInteraction(width, height int) string {
-	managedAgent, ok := m.selectedAgent()
-	if !ok {
-		return mutedStyle().Render(truncate("No agent selected", width))
-	}
-	if m.ptyEnabled {
-		return m.renderPTYInteraction(managedAgent, width, height)
-	}
+// renderInteractionHeading is the Spanreed masthead both views share: the
+// agent's name (shimmering while it works) over the meta line, with
+// attention states talking over the derived meta when they apply.
+func (m Model) renderInteractionHeading(managedAgent agent.Agent, width int) string {
 	title := titleStyle().Render(truncate(agentDisplayTitle(managedAgent), width))
 	if rowEmphasisFor(managedAgent) == emphasisWorking {
 		title = shimmerText(
@@ -55,7 +51,18 @@ func (m Model) renderInteraction(width, height int) string {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting()).
 			Render(truncate("Unseen result", width))
 	}
-	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
+	return lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
+}
+
+func (m Model) renderInteraction(width, height int) string {
+	managedAgent, ok := m.selectedAgent()
+	if !ok {
+		return mutedStyle().Render(truncate("No agent selected", width))
+	}
+	if m.ptyEnabled {
+		return m.renderPTYInteraction(managedAgent, width, height)
+	}
+	heading := m.renderInteractionHeading(managedAgent, width)
 
 	viewportCopy := m.interaction
 	composer := mutedStyle().Render(truncate("i reply  / search  Enter open terminal", width))

@@ -18,7 +18,8 @@ func (m Model) updatePTYFocus(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.status = "Terminal view"
 		return m, nil
 	}
-	if m.pty == nil {
+	session := m.selectedPTY()
+	if session == nil {
 		m.mode = modeNormal
 		return m, nil
 	}
@@ -27,8 +28,8 @@ func (m Model) updatePTYFocus(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Typing while scrolled back reads as "take me to the action".
-	m.pty.ScrollToBottom()
-	return m, sendRawCmd(m.backend, m.pty.AgentID, data)
+	session.ScrollToBottom()
+	return m, sendRawCmd(m.backend, session.AgentID, data)
 }
 
 func sendRawCmd(backend Backend, id string, data []byte) tea.Cmd {

@@ -595,14 +595,10 @@ func (m Model) resizeColumns(key string) (tea.Model, tea.Cmd) {
 	m.interaction.SetWidth(interactionWidth)
 	m.interaction.SetHeight(contentHeight)
 	m.status = fmt.Sprintf("Columns %d · %d · %d", afterW, afterA, afterI)
-	if m.ptyEnabled && m.pty != nil {
-		gridWidth, gridHeight := m.ptyGridDimensions()
-		return m, tea.Batch(
-			resizePTYCmd(m.pty, gridWidth, gridHeight),
-			m.syncAgentWindowsCmd(),
-		)
+	if m.ptyEnabled {
+		return m, m.ensurePTYCmd()
 	}
-	return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
+	return m, tea.Batch(m.loadInteractionCmd(), m.ensurePTYCmd())
 }
 
 // undimmedRows marks body lines that stay at full strength inside a

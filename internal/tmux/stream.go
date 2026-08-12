@@ -51,18 +51,21 @@ func (r *Runtime) PipePaneClose(ctx context.Context, id string) error {
 	return nil
 }
 
-// CaptureRaw is the emulator seed: the visible screen only, escapes intact,
-// wrapped exactly as the pane wrapped it. No -J — a terminal emulator wants
-// the pane's rows, not rejoined logical lines — and no -S, because history
-// belongs to the stream era, not the seed.
-func (r *Runtime) CaptureRaw(ctx context.Context, id string) (string, error) {
+// CaptureRaw is the emulator seed: escapes intact, wrapped exactly as the
+// pane wrapped it. No -J — a terminal emulator wants the pane's rows, not
+// rejoined logical lines. history > 0 reaches that far into the pane's
+// scrollback above the visible screen; replaying it through the emulator
+// rebuilds the history tmux kept while the dashboard was away.
+func (r *Runtime) CaptureRaw(ctx context.Context, id string, history int) (string, error) {
 	managedAgent, err := r.FindAgent(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	return r.runner.Run(ctx, nil,
-		"capture-pane", "-p", "-e", "-t", managedAgent.PaneID,
-	)
+	args := []string{"capture-pane", "-p", "-e", "-t", managedAgent.PaneID}
+	if history > 0 {
+		args = append(args, "-S", fmt.Sprintf("-%d", history))
+	}
+	return r.runner.Run(ctx, nil, args...)
 }
 
 func (r *Runtime) PaneView(ctx context.Context, id string) (session.PaneView, error) {

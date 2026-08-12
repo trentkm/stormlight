@@ -47,6 +47,9 @@ func TestHighlightSearchMatchesKeepsTextAndPaintsMatches(t *testing.T) {
 func searchModelFixture(t *testing.T) Model {
 	t.Helper()
 	model := NewModel(stubBackend{})
+	// Search, drag-copy, and the composer are transcript-view features;
+	// the PTY view (the default) disables them.
+	model.ptyEnabled = false
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	model = updated.(Model)
 

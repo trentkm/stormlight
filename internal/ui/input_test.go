@@ -855,6 +855,7 @@ func TestFooterShowsOnlyChordOptionsWhilePending(t *testing.T) {
 func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(stubBackend{})
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{{
 		ID:        "one",
@@ -2032,6 +2033,7 @@ func TestInteractionComposerSendsToSelectedAgent(t *testing.T) {
 	}
 	workspaceContext := workspace.DirectoryContext(t.TempDir())
 	model := NewModel(backend)
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{{
 		ID:        "agent-one",
@@ -2096,6 +2098,7 @@ func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 func TestInteractionHidesPreviousAgentTranscript(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(stubBackend{})
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{
 		{ID: "one", Name: "one", Workspace: workspaceContext},
@@ -2400,10 +2403,6 @@ func (stubBackend) Delete(context.Context, string) error {
 	return nil
 }
 
-func (stubBackend) SyncAgentWindows(context.Context, int, int, string) error {
-	return nil
-}
-
 func (stubBackend) PipePaneOpen(context.Context, string, string) error {
 	return nil
 }
@@ -2412,7 +2411,7 @@ func (stubBackend) PipePaneClose(context.Context, string) error {
 	return nil
 }
 
-func (stubBackend) CaptureRaw(context.Context, string) (string, error) {
+func (stubBackend) CaptureRaw(context.Context, string, int) (string, error) {
 	return "", nil
 }
 

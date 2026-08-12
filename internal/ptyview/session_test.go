@@ -40,7 +40,7 @@ func (f *fakeBackend) PipePaneClose(context.Context, string) error {
 	return nil
 }
 
-func (f *fakeBackend) CaptureRaw(context.Context, string) (string, error) {
+func (f *fakeBackend) CaptureRaw(context.Context, string, int) (string, error) {
 	return f.screen, nil
 }
 
@@ -171,5 +171,65 @@ func TestCloseTearsDownTransport(t *testing.T) {
 	}
 	if _, err := os.Stat(fifoPath); !os.IsNotExist(err) {
 		t.Fatalf("fifo still on disk after Close: %v", err)
+	}
+}
+
+func TestManagerReconcilesHerdAgainstRoster(t *testing.T) {
+	backend := &fakeBackend{}
+	manager := NewManager(backend, t.TempDir())
+	ctx := context.Background()
+
+	manager.Ensure(ctx, []string{"aa11", "bb22"}, 20, 5)
+	if manager.Session("aa11") == nil || manager.Session("bb22") == nil {
+		t.Fatal("Ensure did not start sessions for the roster")
+	}
+
+	// Same roster, same size: nothing to do, sessions stay.
+	first := manager.Session("aa11")
+	manager.Ensure(ctx, []string{"aa11", "bb22"}, 20, 5)
+	if manager.Session("aa11") != first {
+		t.Fatal("an unchanged roster restarted a session")
+	}
+
+	// bb22 left the roster; its session closes, aa11 survives.
+	manager.Ensure(ctx, []string{"aa11"}, 20, 5)
+	if manager.Session("bb22") != nil {
+		t.Fatal("departed agent kept its session")
+	}
+	if manager.Session("aa11") != first {
+		t.Fatal("surviving agent lost its session")
+	}
+
+	manager.CloseAll()
+	if manager.Session("aa11") != nil {
+		t.Fatal("CloseAll left a session behind")
+	}
+}
+
+func TestConcurrentEnsureStartsOneSessionPerAgent(t *testing.T) {
+	backend := &fakeBackend{}
+	manager := NewManager(backend, t.TempDir())
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			manager.Ensure(ctx, []string{"aa11"}, 20, 5)
+		}()
+	}
+	wg.Wait()
+
+	if manager.Session("aa11") == nil {
+		t.Fatal("no session started")
+	}
+	// One pipe opened per pipe closed would mean a duplicate stole and
+	// then severed the stream; a lone session never closes its pipe here.
+	backend.mu.Lock()
+	closed := backend.pipeClosed
+	backend.mu.Unlock()
+	if closed != 0 {
+		t.Fatalf("a duplicate session closed the pane pipe %d time(s)", closed)
 	}
 }

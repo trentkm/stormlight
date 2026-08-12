@@ -39,12 +39,11 @@ type Backend interface {
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
-	SyncAgentWindows(ctx context.Context, width, height int, excludeAgentID string) error
-	// The raw-byte transport behind the experimental PTY Spanreed
+	// The raw-byte transport behind the PTY Spanreed
 	// (session.PaneStreamer, surfaced through the service).
 	PipePaneOpen(ctx context.Context, id, fifoPath string) error
 	PipePaneClose(ctx context.Context, id string) error
-	CaptureRaw(ctx context.Context, id string) (string, error)
+	CaptureRaw(ctx context.Context, id string, history int) (string, error)
 	PaneView(ctx context.Context, id string) (session.PaneView, error)
 	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
 	SendRaw(ctx context.Context, id string, data []byte) error
@@ -208,11 +207,15 @@ type Model struct {
 	dispatchPrefix string
 	columns        ColumnPrefs
 
-	// The experimental PTY Spanreed. The session is a pointer on purpose:
-	// it owns goroutines and file handles that must survive the Model's
-	// value copies.
+	// The PTY Spanreed. The manager keeps one live terminal session per
+	// agent for the agent's whole life; ptyEnabled says which view the
+	// Spanreed renders (terminal by default, transcript after `t`), and
+	// ptyArmed tracks which sessions already have a frame listener so
+	// redraw wake-ups never double up. Pointers and maps on purpose: they
+	// must survive the Model's value copies.
 	ptyEnabled bool
-	pty        *ptyview.Session
+	ptyManager *ptyview.Manager
+	ptyArmed   map[string]bool
 }
 
 type dashboardMsg struct {
@@ -347,6 +350,9 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		shimmerRunning:     true,
 		status:             "Ready",
 		columns:            options.Columns,
+		ptyEnabled:         true,
+		ptyManager:         ptyview.NewManager(backend, ptyStateDir()),
+		ptyArmed:           make(map[string]bool),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -402,14 +408,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusForm()
 		}
 		m.syncTaskComposerSize()
-		if m.ptyEnabled && m.pty != nil {
-			gridWidth, gridHeight := m.ptyGridDimensions()
-			return m, tea.Batch(
-				resizePTYCmd(m.pty, gridWidth, gridHeight),
-				m.syncAgentWindowsCmd(),
-			)
+		if m.ptyEnabled {
+			// Ensure re-reads the grid size and moves every window and
+			// emulator with it.
+			return m, m.ensurePTYCmd()
 		}
-		return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
+		return m, tea.Batch(m.loadInteractionCmd(), m.ensurePTYCmd())
 
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
@@ -432,12 +436,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		agentID := m.selectedAgentID()
 		previous, _ := m.selectedAgent()
-		newAgents := false
 		if msg.err != nil {
 			m.err = msg.err
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
 		} else {
-			newAgents = len(msg.agents) > len(m.agents)
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
 			m.rebuildGroups(workspaceID, agentID)
@@ -456,10 +458,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmds []tea.Cmd
-		if newAgents {
-			// A fresh window boots at 80x24; size it like the rest.
-			cmds = append(cmds, m.syncAgentWindowsCmd())
-		}
+		// Reconcile the terminal herd against the roster on every refresh:
+		// new agents get sessions, deleted agents lose them, and when
+		// nothing changed this is a cheap map diff.
+		cmds = append(cmds, m.ensurePTYCmd())
 		if m.anyAgentsActive() && !m.shimmerRunning {
 			m.shimmerRunning = true
 			cmds = append(cmds, shimmerTickCmd())
@@ -503,14 +505,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyRestoreCandidates(msg)
 		return m, nil
 
-	case ptyStartedMsg:
-		return m.handlePTYStarted(msg)
+	case ptyEnsuredMsg:
+		// Fresh sessions may include the selected agent's; listen to it.
+		return m, m.armPTYWait()
 
 	case ptyFrameMsg:
 		return m.handlePTYFrame(msg)
-
-	case ptyStoppedMsg:
-		return m, nil
 
 	case interactionMsg:
 		if msg.id == m.selectedAgentID() {
@@ -560,12 +560,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 						"error", err,
 					)
 				}
-				return actionMsg{status: "Returned from " + msg.name, err: err}
+				return attachReturnedMsg{name: msg.name, err: err}
 			})
 		}
 		m.err = nil
 		m.status = "Attached"
 		return m, nil
+
+	case attachReturnedMsg:
+		m.err = msg.err
+		if msg.err != nil {
+			m.status = "Action failed"
+		} else {
+			m.status = "Returned from " + msg.name
+		}
+		// The attached client owned the window sizes while it looked;
+		// reassert the herd's 1:1 grid now that the dashboard is back.
+		return m, tea.Batch(m.refreshCmd(), resizeAllPTYCmd(m.ptyManager))
 
 	case actionMsg:
 		m.err = msg.err
@@ -771,11 +782,9 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.normalPrefix = ","
 		return m, nil
 	case "q", "ctrl+c":
-		if stop := m.stopPTY(); stop != nil {
-			// The pane pipe and its FIFO must not outlive the dashboard.
-			return m, tea.Sequence(stop, tea.Quit)
-		}
-		return m, tea.Quit
+		// No pane pipe or FIFO outlives the dashboard; the agents
+		// themselves live on in tmux, terminals intact for the next run.
+		return m, tea.Sequence(closeAllPTYCmd(m.ptyManager), tea.Quit)
 	case "t":
 		return m, m.togglePTY()
 	case "f":
@@ -840,17 +849,10 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.interactionFollowCmd()
 		}
 		if selected, ok := m.selectedAgent(); ok {
+			// The session keeps streaming while the client looks; the
+			// return path reasserts window sizes.
 			displayTitle := agentDisplayTitle(selected)
 			m.status = "Opening " + displayTitle
-			if m.ptyEnabled {
-				// The attached client takes over sizing; the live view
-				// cannot share the window with it. `t` turns it back on.
-				m.ptyEnabled = false
-				if stop := m.stopPTY(); stop != nil {
-					return m, tea.Sequence(stop,
-						attachCmd(m.backend, selected.ID, displayTitle))
-				}
-			}
 			return m, attachCmd(m.backend, selected.ID, displayTitle)
 		}
 	case "/":

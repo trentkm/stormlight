@@ -19,11 +19,6 @@ type Runtime interface {
 	Rename(context.Context, string, string) error
 	Update(context.Context, string, Update) error
 	SetWorkspace(context.Context, string, workspace.Context) error
-	// SyncWindowSizes resizes detached agent windows to the given cell
-	// size, so agents render at the width the dashboard displays. An agent
-	// named by excludeAgentID keeps its own size — a live PTY view sizes
-	// that window 1:1 itself and must not be fought.
-	SyncWindowSizes(ctx context.Context, width, height int, excludeAgentID string) error
 }
 
 // PaneStreamer is an optional runtime capability: a runtime that can expose
@@ -39,10 +34,13 @@ type PaneStreamer interface {
 	PipePaneOpen(ctx context.Context, id, fifoPath string) error
 	// PipePaneClose stops the stream. Closing an unpiped pane is a no-op.
 	PipePaneClose(ctx context.Context, id string) error
-	// CaptureRaw returns the pane's visible screen with escape sequences
-	// intact and lines wrapped exactly as the pane wrapped them — the seed a
-	// terminal emulator replays before the stream takes over.
-	CaptureRaw(ctx context.Context, id string) (string, error)
+	// CaptureRaw returns the pane's screen with escape sequences intact and
+	// lines wrapped exactly as the pane wrapped them — the seed a terminal
+	// emulator replays before the stream takes over. history asks for that
+	// many lines of pane scrollback above the screen (zero for the screen
+	// alone), which is how an emulator's history survives a dashboard
+	// restart: tmux held it while nobody was watching.
+	CaptureRaw(ctx context.Context, id string, history int) (string, error)
 	// PaneView reports where the pane's cursor is and whether the
 	// alternate screen is active, completing the seed.
 	PaneView(ctx context.Context, id string) (PaneView, error)

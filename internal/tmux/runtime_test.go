@@ -770,35 +770,6 @@ func TestApplyServerOptionsMatchesWholeFeatureEntries(t *testing.T) {
 	}
 }
 
-func TestSyncWindowSizesResizesDetachedWindows(t *testing.T) {
-	runner := &captureRunner{}
-	runtime := &Runtime{runner: runner, sessionName: "stormlight-agents"}
-
-	if err := runtime.SyncWindowSizes(context.Background(), 76, 120, ""); err != nil {
-		t.Fatal(err)
-	}
-	want := [][]string{
-		{"list-clients", "-t", "stormlight-agents", "-F", "#{client_name}"},
-		{"list-windows", "-t", "stormlight-agents", "-F", "#{window_id}"},
-		{"resize-window", "-t", "@1", "-x", "76", "-y", "120"},
-	}
-	assertCalls(t, runner.calls, want)
-}
-
-func TestSyncWindowSizesLeavesAttachedSessionsAlone(t *testing.T) {
-	runner := &captureRunner{clientLine: "/dev/ttys001"}
-	runtime := &Runtime{runner: runner, sessionName: "stormlight-agents"}
-
-	if err := runtime.SyncWindowSizes(context.Background(), 76, 120, ""); err != nil {
-		t.Fatal(err)
-	}
-	for _, call := range runner.calls {
-		if call[0] == "resize-window" {
-			t.Fatalf("resized under an attached client: %#v", runner.calls)
-		}
-	}
-}
-
 // releaseWindowSizeCalls is Attach handing manually-sized windows back to
 // client-driven sizing before a client goes to look at them.
 func releaseWindowSizeCalls() [][]string {

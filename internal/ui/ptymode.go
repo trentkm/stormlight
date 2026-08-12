@@ -1,9 +1,9 @@
 package ui
 
-// The experimental full-PTY Spanreed: a live terminal view of the selected
-// agent's pane, streamed through internal/ptyview. Toggled with `t`; the
-// transcript path remains the default and everything here stays out of its
-// way when disabled.
+// The PTY Spanreed: every agent keeps a live terminal session for its whole
+// life (internal/ptyview.Manager), and the Spanreed renders the selected
+// one — selecting an agent switches terminals, it never starts one. `t`
+// flips to the transcript reading view; the terminal is the default.
 
 import (
 	"context"
@@ -18,15 +18,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trentkm/stormlight/internal/agent"
-	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/ptyview"
 )
 
-type ptyStartedMsg struct {
-	session *ptyview.Session
-	id      string
-	err     error
-}
+// ptyEnsuredMsg reports that the session herd was reconciled against the
+// roster; the interesting work (arming the selected agent's frame wait)
+// happens in the handler.
+type ptyEnsuredMsg struct{}
 
 // ptyFrameMsg is only a wake-up: View reads the session's frame directly,
 // so nothing is copied through the message.
@@ -34,8 +32,11 @@ type ptyFrameMsg struct {
 	id string
 }
 
-type ptyStoppedMsg struct {
-	id string
+// attachReturnedMsg closes the loop on an external attach: the attached
+// client resized every window, so the herd's sizes must be reasserted.
+type attachReturnedMsg struct {
+	name string
+	err  error
 }
 
 // ptyStateDir mirrors the rest of the state files (prefs, catalog): XDG
@@ -51,76 +52,104 @@ func ptyStateDir() string {
 	return filepath.Join(home, ".local", "state", "stormlight")
 }
 
-// ptyGridDimensions is the emulator's cell size: the Spanreed content area
-// minus the hint row. The transcript viewport spends that row differently
-// (its composer swaps in and out), but the grid, the tmux window, and the
-// drawn rows must all agree on one number.
+// ptyGridDimensions is every emulator's cell size: the Spanreed content
+// area minus the hint row. The grid, the tmux windows, and the drawn rows
+// must all agree on one number, and because the whole herd streams at once
+// they all share it.
 func (m Model) ptyGridDimensions() (int, int) {
 	width, height := m.interactionDimensions()
 	return width, max(2, height-1)
 }
 
-func startPTYCmd(backend Backend, id string, width, height int) tea.Cmd {
+// selectedPTY is the session behind the Spanreed right now; nil while the
+// selected agent's session is still starting (or nothing is selected).
+func (m Model) selectedPTY() *ptyview.Session {
+	if m.ptyManager == nil {
+		return nil
+	}
+	return m.ptyManager.Session(m.selectedAgentID())
+}
+
+// ensurePTYCmd reconciles the session herd against the roster. It runs on
+// every dashboard refresh; when nothing changed it is a map diff and no
+// tmux calls, so the fast cadence stays cheap.
+func (m Model) ensurePTYCmd() tea.Cmd {
+	if m.ptyManager == nil || !m.ready {
+		return nil
+	}
+	ids := make([]string, 0, len(m.agents))
+	for _, managedAgent := range m.agents {
+		ids = append(ids, managedAgent.ID)
+	}
+	width, height := m.ptyGridDimensions()
+	manager := m.ptyManager
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		session, err := ptyview.Start(ctx, backend, id, ptyStateDir(), width, height)
-		return ptyStartedMsg{session: session, id: id, err: err}
+		manager.Ensure(ctx, ids, width, height)
+		return ptyEnsuredMsg{}
 	}
 }
 
-// ptyWaitCmd blocks on the session's frame channel; each delivery earns one
-// redraw and one re-arm. A stopped session goes quiet rather than closing
-// the channel, so the stale receiver is dropped when its message no longer
-// names the live session.
-func ptyWaitCmd(session *ptyview.Session) tea.Cmd {
+// armPTYWait starts (at most) one frame listener for the selected agent's
+// session. The armed set is the dedup: a session emits into a 1-slot
+// channel, and doubling the listeners would double the redraw messages.
+func (m *Model) armPTYWait() tea.Cmd {
+	if !m.ptyEnabled {
+		return nil
+	}
+	session := m.selectedPTY()
+	if session == nil || m.ptyArmed[session.AgentID] {
+		return nil
+	}
+	m.ptyArmed[session.AgentID] = true
 	return func() tea.Msg {
 		<-session.Frames()
 		return ptyFrameMsg{id: session.AgentID}
 	}
 }
 
-func stopPTYCmd(session *ptyview.Session) tea.Cmd {
-	return func() tea.Msg {
-		session.Close()
-		return ptyStoppedMsg{id: session.AgentID}
+func (m Model) handlePTYFrame(msg ptyFrameMsg) (tea.Model, tea.Cmd) {
+	// The listener that produced this message consumed its token and is
+	// gone; only the selected session earns a replacement.
+	delete(m.ptyArmed, msg.id)
+	if m.ptyEnabled && msg.id == m.selectedAgentID() {
+		return m, m.armPTYWait()
 	}
+	return m, nil
 }
 
-// stopPTY tears down the live view synchronously in the model and returns
-// the async half. Callers use it wherever the view must be gone before the
-// next thing happens: toggling off, moving selection, attaching, quitting.
-func (m *Model) stopPTY() tea.Cmd {
-	if m.pty == nil {
+// closeAllPTYCmd is the quit path: no pipe or FIFO outlives the dashboard.
+func closeAllPTYCmd(manager *ptyview.Manager) tea.Cmd {
+	return func() tea.Msg {
+		manager.CloseAll()
 		return nil
 	}
-	session := m.pty
-	m.pty = nil
-	return stopPTYCmd(session)
 }
 
-// interactionFollowCmd is what selection movement returns: the transcript
-// reload normally, or a PTY restart on the newly selected agent when the
-// live view is on.
+// resizeAllPTYCmd reasserts the herd's sizes after an external attach let
+// the client resize the windows.
+func resizeAllPTYCmd(manager *ptyview.Manager) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		manager.ResizeAll(ctx)
+		return nil
+	}
+}
+
+// interactionFollowCmd is what selection movement returns: a transcript
+// reload in transcript view; in terminal view just a listener for the
+// newly selected agent's frames — its session is already running.
 func (m *Model) interactionFollowCmd() tea.Cmd {
 	if !m.ptyEnabled {
 		return m.loadInteractionCmd()
 	}
-	id := m.selectedAgentID()
-	if m.pty != nil && m.pty.AgentID == id {
-		// Same agent — the session is already the right one. Restarting
-		// here would reset scroll position on every navigation key.
-		return nil
-	}
-	stop := m.stopPTY()
-	if id == "" {
-		return stop
-	}
-	width, height := m.ptyGridDimensions()
-	return tea.Batch(stop, startPTYCmd(m.backend, id, width, height))
+	return m.armPTYWait()
 }
 
-// togglePTY flips the live view on or off for the selected agent.
+// togglePTY flips between the live terminal and the transcript reading
+// view. Purely a view change: the sessions stream on either way.
 func (m *Model) togglePTY() tea.Cmd {
 	if m.ptyEnabled {
 		m.ptyEnabled = false
@@ -128,80 +157,25 @@ func (m *Model) togglePTY() tea.Cmd {
 			m.mode = modeNormal
 		}
 		m.status = "Transcript view"
-		return tea.Batch(m.stopPTY(), m.loadInteractionCmd(), m.syncAgentWindowsCmd())
-	}
-	id := m.selectedAgentID()
-	if id == "" {
-		m.status = "No agent selected"
-		return nil
+		return m.loadInteractionCmd()
 	}
 	m.ptyEnabled = true
 	m.activePane = paneInteraction
 	m.status = "Terminal view"
-	width, height := m.ptyGridDimensions()
-	return startPTYCmd(m.backend, id, width, height)
-}
-
-func (m Model) handlePTYStarted(msg ptyStartedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.ptyEnabled = false
-		m.err = msg.err
-		m.status = "Terminal view failed"
-		diagnostic.Logger().Error("pty view start failed",
-			"agent_id", msg.id, "error", msg.err)
-		return m, m.loadInteractionCmd()
-	}
-	if !m.ptyEnabled || msg.id != m.selectedAgentID() {
-		// The user toggled off or moved on while the session was starting;
-		// this one arrives already unwanted.
-		return m, stopPTYCmd(msg.session)
-	}
-	m.pty = msg.session
-	// One sync so every *other* window returns to transcript sizing while
-	// this one keeps its 1:1 size.
-	return m, tea.Batch(ptyWaitCmd(msg.session), m.syncAgentWindowsCmd())
-}
-
-func (m Model) handlePTYFrame(msg ptyFrameMsg) (tea.Model, tea.Cmd) {
-	if m.pty == nil || m.pty.AgentID != msg.id {
-		return m, nil
-	}
-	// The frame itself is read in View; this message only re-arms the wait.
-	return m, ptyWaitCmd(m.pty)
-}
-
-// resizePTYCmd moves the tmux window and emulator to the new grid size.
-func resizePTYCmd(session *ptyview.Session, width, height int) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := session.Resize(ctx, width, height); err != nil {
-			diagnostic.Logger().Warn("pty view resize", "error", err)
-		}
-		return nil
-	}
+	return m.armPTYWait()
 }
 
 // renderPTYInteraction is renderInteraction's live-terminal branch: same
 // heading, then the emulator grid where the transcript viewport would be,
 // then one hint row where the composer affordances live.
 func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int) string {
-	title := titleStyle().Render(truncate(agentDisplayTitle(managedAgent), width))
-	if rowEmphasisFor(managedAgent) == emphasisWorking {
-		title = shimmerText(
-			truncate(agentDisplayTitle(managedAgent), width),
-			m.shimmerPhaseOrRest(),
-			nil,
-		)
-	}
-	meta := interactionMeta(managedAgent, width)
-	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
+	heading := m.renderInteractionHeading(managedAgent, width)
 
 	gridWidth, gridHeight := m.ptyGridDimensions()
-	grid := mutedStyle().Render("Starting terminal view...")
+	grid := mutedStyle().Render("Starting terminal...")
 	scrolled := 0
-	if m.pty != nil {
-		frame := m.pty.Frame()
+	if session := m.ptyManager.Session(managedAgent.ID); session != nil {
+		frame := session.Frame()
 		grid = frame.Grid
 		scrolled = frame.Scrolled
 		if m.mode == modePTYFocus {

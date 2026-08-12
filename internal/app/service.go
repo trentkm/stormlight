@@ -524,10 +524,6 @@ func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
 }
 
-func (s *Service) SyncAgentWindows(ctx context.Context, width, height int, excludeAgentID string) error {
-	return s.runtime.SyncWindowSizes(ctx, width, height, excludeAgentID)
-}
-
 // paneStreamer exposes the runtime's optional raw-byte transport; the error
 // names the capability so a caller's failure reads as "this runtime cannot
 // stream" rather than a mystery.
@@ -555,12 +551,12 @@ func (s *Service) PipePaneClose(ctx context.Context, id string) error {
 	return streamer.PipePaneClose(ctx, id)
 }
 
-func (s *Service) CaptureRaw(ctx context.Context, id string) (string, error) {
+func (s *Service) CaptureRaw(ctx context.Context, id string, history int) (string, error) {
 	streamer, err := s.paneStreamer()
 	if err != nil {
 		return "", err
 	}
-	return streamer.CaptureRaw(ctx, id)
+	return streamer.CaptureRaw(ctx, id, history)
 }
 
 func (s *Service) PaneView(ctx context.Context, id string) (session.PaneView, error) {
