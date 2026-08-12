@@ -153,9 +153,6 @@ func (m *Model) interactionFollowCmd() tea.Cmd {
 func (m *Model) togglePTY() tea.Cmd {
 	if m.ptyEnabled {
 		m.ptyEnabled = false
-		if m.mode == modePTYFocus {
-			m.mode = modeNormal
-		}
 		m.status = "Transcript view"
 		return m.loadInteractionCmd()
 	}
@@ -178,24 +175,62 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int)
 		frame := session.Frame()
 		grid = frame.Grid
 		scrolled = frame.Scrolled
-		if m.mode == modePTYFocus {
-			grid = overlayCursor(grid, frame.CursorX, frame.CursorY, gridWidth)
-		}
 	}
 	grid = fitGrid(grid, gridWidth, gridHeight)
 
-	hint := "f focus  t transcript  Enter open terminal"
-	if m.mode == modePTYFocus {
-		hint = "typing reaches the agent — ctrl+q to stop"
+	focused := m.terminalFocused()
+	hint := "Enter/l terminal  t transcript  F full screen"
+	if focused {
+		hint = "terminal — ctrl+q to leave  ·  F full screen"
 	}
 	if scrolled > 0 {
 		hint = fmt.Sprintf("scrolled %d lines up — wheel down to follow  ·  %s", scrolled, hint)
 	}
 	composer := mutedStyle().Render(truncate(hint, width))
-	if m.mode == modePTYFocus {
+	if focused {
 		composer = accentStyle().Render(truncate(hint, width))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, heading, grid, composer)
+}
+
+// terminalFocused reports whether the keyboard currently belongs to the
+// Spanreed terminal.
+func (m Model) terminalFocused() bool {
+	return m.ptyEnabled && m.mode == modeNormal &&
+		m.activePane == paneInteraction
+}
+
+// ptyCursor places the real terminal cursor on the Spanreed's grid when
+// the terminal holds focus — the cell the agent's program is writing at,
+// blinking like it means it, because it does.
+func (m Model) ptyCursor() *tea.Cursor {
+	if !m.terminalFocused() {
+		return nil
+	}
+	session := m.selectedPTY()
+	if session == nil {
+		return nil
+	}
+	frame := session.Frame()
+	if frame.Scrolled > 0 {
+		return nil
+	}
+	width := max(1, m.width-1)
+	if width < 72 {
+		// The narrow single-pane layout draws no Spanreed grid to anchor
+		// a cursor to.
+		return nil
+	}
+	workspaceWidth, agentWidth, _ := m.paneWidths(width)
+	gridWidth, gridHeight := m.ptyGridDimensions()
+	if frame.CursorX < 0 || frame.CursorX >= gridWidth ||
+		frame.CursorY < 0 || frame.CursorY >= gridHeight {
+		return nil
+	}
+	return tea.NewCursor(
+		workspaceWidth+agentWidth+2+frame.CursorX,
+		spanreedContentTop+frame.CursorY,
+	)
 }
 
 // fitGrid clamps the emulator's render to the pane: exactly height rows,
@@ -218,30 +253,3 @@ func fitGrid(grid string, width, height int) string {
 	return strings.Join(rows, "\n")
 }
 
-// overlayCursor paints the cell under the terminal cursor in reverse video
-// so focus mode shows where typing lands.
-func overlayCursor(grid string, x, y, width int) string {
-	rows := strings.Split(grid, "\n")
-	if y < 0 || y >= len(rows) {
-		return grid
-	}
-	row := rows[y]
-	rowWidth := ansi.StringWidth(row)
-	if x < 0 || x >= width {
-		return grid
-	}
-	left := ""
-	cell := " "
-	right := ""
-	if x < rowWidth {
-		left = ansi.Cut(row, 0, x)
-		if got := ansi.Cut(row, x, x+1); strings.TrimSpace(ansi.Strip(got)) != "" {
-			cell = ansi.Strip(got)
-		}
-		right = ansi.Cut(row, x+1, rowWidth)
-	} else {
-		left = row + strings.Repeat(" ", x-rowWidth)
-	}
-	rows[y] = left + "\x1b[7m" + cell + "\x1b[27m" + right
-	return strings.Join(rows, "\n")
-}

@@ -1,7 +1,8 @@
 package ui
 
-// Focus mode for the PTY Spanreed: every keypress becomes bytes on the
-// agent's terminal, until ctrl+q hands the keyboard back to the dashboard.
+// Keyboard routing for the PTY Spanreed: while the pane holds focus the
+// keyboard belongs to the agent's terminal, byte for byte. ctrl+q hands it
+// back to the dashboard.
 
 import (
 	"context"
@@ -9,18 +10,22 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 )
 
-func (m Model) updatePTYFocus(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+// updateTerminalKey is every keypress while the Spanreed terminal holds
+// focus. Typing into an agent's terminal is the strongest possible form of
+// having seen its result, so attention clears on the way through.
+func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+q" {
-		m.mode = modeNormal
-		m.status = "Terminal view"
+		m.activePane = paneAgents
+		m.status = "Ready"
 		return m, nil
 	}
 	session := m.selectedPTY()
 	if session == nil {
-		m.mode = modeNormal
+		m.activePane = paneAgents
 		return m, nil
 	}
 	data := keyToBytes(msg)
@@ -29,7 +34,15 @@ func (m Model) updatePTYFocus(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	// Typing while scrolled back reads as "take me to the action".
 	session.ScrollToBottom()
-	return m, sendRawCmd(m.backend, session.AgentID, data)
+	send := sendRawCmd(m.backend, session.AgentID, data)
+	if selected, ok := m.selectedAgent(); ok &&
+		selected.ProcessLive &&
+		(selected.Attention == agent.AttentionWaiting ||
+			selected.EffectiveMark() == agent.MarkAttention) {
+		m.markAttentionSeen(selected.ID)
+		return m, tea.Batch(send, clearAttentionCmd(m.backend, selected.ID))
+	}
+	return m, send
 }
 
 func sendRawCmd(backend Backend, id string, data []byte) tea.Cmd {

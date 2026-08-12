@@ -29,10 +29,16 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	mouse := msg.Mouse()
-	if mouse.Button == tea.MouseLeft && m.mode == modeNormal && !m.ptyEnabled {
-		// Drag-to-copy indexes into the cleaned transcript; the PTY grid
-		// has no such line space, so the spike leaves selection to the
-		// real terminal behind Enter.
+	if mouse.Button == tea.MouseLeft && m.mode == modeNormal {
+		if m.ptyEnabled {
+			// Click-to-focus, like tabs: clicking the terminal walks in,
+			// clicking a list walks out. Drag-to-copy stays a transcript
+			// feature; the terminal's selection belongs to F full-screen.
+			if _, ok := msg.(tea.MouseClickMsg); ok {
+				m.activePane = m.paneAt(mouse.X)
+			}
+			return m, nil
+		}
 		return m.handleSelectionMouse(msg)
 	}
 	// A wheel tick is its own message type, so asking for one is the whole

@@ -2071,6 +2071,9 @@ func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 	backend := &recordingBackend{}
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(backend)
+	// In the terminal view Enter walks into the embedded terminal
+	// instead; the external attach is transcript-view behavior (and F).
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{{
 		ID:        "agent-one",
@@ -2503,6 +2506,10 @@ func (b *recordingBackend) Attach(
 func unreadAgentModel(active pane) Model {
 	ws := workspace.DirectoryContext("/workspace/project")
 	model := NewModel(stubBackend{})
+	// Engagement semantics are transcript-view rules; in the terminal
+	// view every forwarded keystroke clears attention by its own path
+	// (updateTerminalKey).
+	model.ptyEnabled = false
 	model.width = 120
 	model.height = 30
 	model.ready = true

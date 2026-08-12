@@ -72,9 +72,6 @@ const (
 	modeHelp
 	modeHistory
 	modeRestore
-	// modePTYFocus forwards the keyboard to the agent's terminal through
-	// the experimental PTY Spanreed.
-	modePTYFocus
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -659,9 +656,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Ready"
 			}
 		}
+		if m.ptyEnabled && m.mode == modeNormal &&
+			m.activePane == paneInteraction {
+			// The Spanreed is not a preview: while it holds focus, the
+			// keyboard belongs to the agent's terminal, exactly like a
+			// focused terminal tab. ctrl+q is the one key that stays ours.
+			return m.updateTerminalKey(msg)
+		}
 		switch m.mode {
-		case modePTYFocus:
-			return m.updatePTYFocus(msg)
 		case modeDispatch:
 			return m.updateDispatch(msg)
 		case modeCompose:
@@ -741,6 +743,9 @@ func (m Model) View() tea.View {
 	body := m.renderBody()
 	footer := m.renderFooter()
 	view.SetContent(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	// The real terminal cursor sits where the agent's program put it —
+	// the Spanreed is the terminal, not a picture of one.
+	view.Cursor = m.ptyCursor()
 	return view
 }
 
@@ -787,16 +792,13 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Sequence(closeAllPTYCmd(m.ptyManager), tea.Quit)
 	case "t":
 		return m, m.togglePTY()
-	case "f":
-		if m.ptyEnabled {
-			if selected, ok := m.selectedAgent(); ok && selected.ProcessLive {
-				m.mode = modePTYFocus
-				m.activePane = paneInteraction
-				m.status = "Keyboard forwarded — ctrl+q to stop"
-			} else {
-				m.err = fmt.Errorf("agent process is not running")
-			}
-			return m, nil
+	case "F":
+		// The full-screen escape hatch: the same terminal, every column
+		// of the display, via an interactive attachment.
+		if selected, ok := m.selectedAgent(); ok {
+			displayTitle := agentDisplayTitle(selected)
+			m.status = "Opening " + displayTitle
+			return m, attachCmd(m.backend, selected.ID, displayTitle)
 		}
 	case "j", "down":
 		m.moveSelection(1)
@@ -848,9 +850,17 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.activePane = paneAgents
 			return m, m.interactionFollowCmd()
 		}
+		if m.ptyEnabled {
+			// The terminal is right there — Enter walks into it. F is the
+			// full-screen version.
+			if _, ok := m.selectedAgent(); ok {
+				m.activePane = paneInteraction
+				m.status = "Terminal — ctrl+q to leave"
+				return m, m.armPTYWait()
+			}
+			return m, nil
+		}
 		if selected, ok := m.selectedAgent(); ok {
-			// The session keeps streaming while the client looks; the
-			// return path reasserts window sizes.
 			displayTitle := agentDisplayTitle(selected)
 			m.status = "Opening " + displayTitle
 			return m, attachCmd(m.backend, selected.ID, displayTitle)
@@ -888,14 +898,11 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.beginDispatch(true)
 	case "i", "s":
 		if m.ptyEnabled {
-			// The live terminal already is the composer; typing goes
-			// straight in.
-			if selected, ok := m.selectedAgent(); ok && selected.ProcessLive {
-				m.mode = modePTYFocus
+			// The live terminal is the composer; walking in is replying.
+			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Keyboard forwarded — ctrl+q to stop"
-			} else {
-				m.err = fmt.Errorf("agent process is not running")
+				m.status = "Terminal — ctrl+q to leave"
+				return m, m.armPTYWait()
 			}
 			return m, nil
 		}
