@@ -79,7 +79,12 @@ func openTap(ctx context.Context, backend Backend, agentID, stateDir string, wid
 		t.abort()
 		return nil, err
 	}
-	screen, err := backend.CaptureRaw(ctx, agentID, scrollbackLines)
+	history, err := backend.CaptureRaw(ctx, agentID, scrollbackLines)
+	if err != nil {
+		t.abort()
+		return nil, err
+	}
+	screen, err := backend.CaptureRaw(ctx, agentID, 0)
 	if err != nil {
 		t.abort()
 		return nil, err
@@ -89,17 +94,33 @@ func openTap(ctx context.Context, backend Backend, agentID, stateDir string, wid
 		t.abort()
 		return nil, err
 	}
+	// The seed replays in two phases. History first, for the widget's
+	// scrollback — but its tail cannot be trusted as the screen: those
+	// lines were rendered at whatever widths the pane has lived through,
+	// and re-wrapping them at today's width shifts everything, leaving
+	// stale frames (an echoed prompt, a half-cleared redraw) on rows a
+	// diff-based TUI will never repaint. So the screen is erased and
+	// rebuilt from a screen-only capture — exactly the rows the pane
+	// shows right now — with the cursor parked where the pane says it is.
 	// capture-pane emits bare newlines; a terminal needs the carriage
-	// returns it would have seen, and the cursor parked where the pane
-	// says it is.
-	seeded := strings.ReplaceAll(strings.TrimSuffix(screen, "\n"), "\n", "\r\n")
-	t.seed = []byte(seeded + fmt.Sprintf("\x1b[%d;%dH", view.CursorY+1, view.CursorX+1))
+	// returns it would have seen.
+	t.seed = []byte(asTerminalLines(history) +
+		"\x1b[H\x1b[2J" +
+		asTerminalLines(screen) +
+		fmt.Sprintf("\x1b[%d;%dH", view.CursorY+1, view.CursorX+1))
 	if err := backend.PipePaneOpen(ctx, agentID, fifoPath); err != nil {
 		t.abort()
 		return nil, err
 	}
 	go t.readLoop()
 	return t, nil
+}
+
+// asTerminalLines turns a capture-pane dump into replayable terminal
+// lines: bare newlines become CRLF, and the trailing newline goes so the
+// final line does not scroll the screen.
+func asTerminalLines(capture string) string {
+	return strings.ReplaceAll(strings.TrimSuffix(capture, "\n"), "\n", "\r\n")
 }
 
 func (t *tapTransport) Seed() []byte          { return t.seed }

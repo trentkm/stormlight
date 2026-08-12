@@ -43,6 +43,8 @@ func TestTerminalBarFillsWidthExactly(t *testing.T) {
 		ID:          "alpha",
 		Name:        "alpha",
 		Workspace:   workspace.DirectoryContext("/tmp/portal"),
+		Cwd:         "/tmp/portal",
+		Activity:    agent.ActivityWorking,
 		ProcessLive: true,
 	}
 	for _, width := range []int{20, 56, 120} {
@@ -51,7 +53,7 @@ func TestTerminalBarFillsWidthExactly(t *testing.T) {
 			t.Errorf("width %d: bar renders %d cells", width, got)
 		}
 	}
-	bar := model.renderTerminalBar(managedAgent, 56)
+	bar := model.renderTerminalBar(managedAgent, 80)
 	if !strings.Contains(bar, "alpha") || !strings.Contains(bar, "portal") {
 		t.Errorf("bar drops the agent facts: %q", bar)
 	}

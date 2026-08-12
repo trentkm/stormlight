@@ -169,6 +169,10 @@ const metaSeparator = " · "
 // grey word. Tokens drop from the tail when the pane narrows, so the loudest
 // facts outlive the path.
 func interactionMeta(managedAgent agent.Agent, width int) string {
+	return joinMetaTokens(interactionMetaTokens(managedAgent), width)
+}
+
+func interactionMetaTokens(managedAgent agent.Agent) []metaToken {
 	symbol, symbolStyle := statusVisual(managedAgent)
 	tokens := []metaToken{{
 		plain: symbol + " " + agentStateLabel(managedAgent),
@@ -197,7 +201,7 @@ func interactionMeta(managedAgent agent.Agent, width int) string {
 	if path := shortPath(managedAgent.Cwd); path != "" {
 		tokens = append(tokens, metaToken{path, mutedStyle().Render(path)})
 	}
-	return joinMetaTokens(tokens, width)
+	return tokens
 }
 
 func joinMetaTokens(tokens []metaToken, width int) string {

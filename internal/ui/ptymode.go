@@ -48,10 +48,12 @@ func ptyStateDir() string {
 }
 
 // ptyGridDimensions is every terminal box's size: the Spanreed content
-// area minus the window bar above the grid and the hint row below it.
+// area, plus the three rows the transcript heading would occupy — the
+// terminal view draws no heading — minus the window bar above the grid
+// and the hint row below it.
 func (m Model) ptyGridDimensions() (int, int) {
 	width, height := m.interactionDimensions()
-	return width, max(2, height-2)
+	return width, max(2, height+1)
 }
 
 // selectedPTY is the widget behind the Spanreed right now; ok is false
@@ -161,14 +163,14 @@ func (m *Model) togglePTY() tea.Cmd {
 	return m.armPTYWait()
 }
 
-// renderPTYInteraction is renderInteraction's live-terminal branch: same
-// heading, then a window bar naming what the grid shows, then the widget
-// where the transcript viewport would be, then one hint row where the
-// composer affordances live. The bar is the portal's chrome: the filled
-// band above the grid is what makes the cells below read as a window into
-// the agent's terminal rather than more dashboard.
+// renderPTYInteraction is renderInteraction's live-terminal branch: the
+// window bar naming what the grid shows, the widget filling everything the
+// transcript's heading and viewport would occupy, then one hint row where
+// the composer affordances live. No heading — the Spanreed is not a
+// preview with a caption, it is the terminal, and the bar already carries
+// the agent facts; every row the chrome gives back makes the portal read
+// more like the terminal itself.
 func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int) string {
-	heading := m.renderInteractionHeading(managedAgent, width)
 	bar := m.renderTerminalBar(managedAgent, width)
 
 	grid := mutedStyle().Render("Starting terminal...")
@@ -183,19 +185,23 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int)
 	if focused {
 		hint = "terminal — ctrl+q to leave  ·  F full screen"
 	}
-	if scrolled > 0 {
-		hint = fmt.Sprintf("scrolled %d lines up — wheel down to follow  ·  %s", scrolled, hint)
-	}
 	composer := mutedStyle().Render(truncate(hint, width))
 	if focused {
 		composer = accentStyle().Render(truncate(hint, width))
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, heading, bar, grid, composer)
+	if scrolled > 0 {
+		composer = mutedStyle().Render(truncate(
+			fmt.Sprintf("scrolled %d lines up — wheel down to follow", scrolled),
+			width,
+		))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, bar, grid, composer)
 }
 
-// renderTerminalBar is the window bar over the terminal grid: the agent's
-// status glyph, name, and location on the left, the terminal's real
-// dimensions on the right, on a filled band spanning the pane.
+// renderTerminalBar is the window bar over the terminal grid, and the only
+// dashboard chrome the terminal view keeps: the agent's status glyph and
+// name, the heading's meta line in words, and the terminal's real
+// dimensions, on a filled band spanning the pane.
 func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	symbol, statusStyle := statusVisual(managedAgent)
 	dims := ""
@@ -204,8 +210,8 @@ func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 		dims = fmt.Sprintf("%d×%d", cols, rows)
 	}
 	label := agentDisplayTitle(managedAgent)
-	if location := agentLocation(managedAgent); location != "" {
-		label += " — " + location
+	if meta := terminalBarMeta(managedAgent); meta != "" {
+		label += "  ·  " + meta
 	}
 	// " ● " + label + gap + dims + " " fills the width exactly; the label
 	// yields first, the gap absorbs what remains.
@@ -217,6 +223,39 @@ func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 		statusStyle.Background(colorSelect()).Render(symbol) +
 		band.Foreground(colorText()).
 			Render(" "+label+strings.Repeat(" ", gap)+dims+" ")
+}
+
+// terminalBarMeta is the heading's meta line as bar words: the derived
+// tokens, with attention states talking over them exactly as the
+// transcript heading's meta does. The bar draws the status glyph itself,
+// so the state speaks through its label alone.
+func terminalBarMeta(managedAgent agent.Agent) string {
+	switch {
+	case managedAgent.EffectiveMark() == agent.MarkAttention:
+		return "Marked needs attention"
+	case managedAgent.EffectiveMark() == agent.MarkWorking:
+		// The human said it is still going; nothing derived talks over
+		// that. The tokens below carry the "marked in progress" label.
+	case managedAgent.ProcessLive && managedAgent.Attention.Urgent():
+		if managedAgent.Attention.TerminalOwned() {
+			return "Needs " + string(managedAgent.Attention) + " — Enter opens the terminal"
+		}
+		return "Needs " + string(managedAgent.Attention) + " — i to reply"
+	case managedAgent.ProcessLive && managedAgent.Attention == agent.AttentionWaiting:
+		return "Unseen result"
+	}
+	tokens := interactionMetaTokens(managedAgent)
+	parts := make([]string, 0, len(tokens))
+	for index, token := range tokens {
+		text := token.plain
+		if index == 0 {
+			text = agentStateLabel(managedAgent)
+		}
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // terminalFocused reports whether the keyboard currently belongs to the
@@ -256,6 +295,6 @@ func (m Model) ptyCursor() *tea.Cursor {
 }
 
 // ptyGridTop is the screen row of the terminal grid's first cell: header,
-// pane title, the heading's three rows, the pane's top margin — and one
-// more for the window bar the grid sits under.
-const ptyGridTop = 7
+// pane title, and the window bar the grid sits under — the terminal view
+// draws no heading.
+const ptyGridTop = 4
