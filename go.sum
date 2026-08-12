@@ -76,6 +76,8 @@ github.com/trentkm/oathgate v0.0.0-20260812190110-b080c8a5ff8b h1:EBOe++LYhJ7KMO
 github.com/trentkm/oathgate v0.0.0-20260812190110-b080c8a5ff8b/go.mod h1:MwPES9sYPFdgs81KHIsmck2z6iohUh2E0hKkT/J2wQI=
 github.com/trentkm/oathgate v0.0.0-20260812192150-2caa4e3a4e21 h1:2M3F0DgSOuoCSIpGxWwoCg8YG+ZwHVKtFL0qWl7rr9o=
 github.com/trentkm/oathgate v0.0.0-20260812192150-2caa4e3a4e21/go.mod h1:MwPES9sYPFdgs81KHIsmck2z6iohUh2E0hKkT/J2wQI=
+github.com/trentkm/oathgate v0.0.0-20260812200204-87acda46f911 h1:IozuZ8kqt14oGrL7Dy6ex/w2si5ilfjxmQvzOVuCGm8=
+github.com/trentkm/oathgate v0.0.0-20260812200204-87acda46f911/go.mod h1:MwPES9sYPFdgs81KHIsmck2z6iohUh2E0hKkT/J2wQI=
 github.com/trentkm/windrunner v0.0.0-20260812034225-d372917a2843 h1:IY2GUAVmORCAiI4TdcH7QnZdYokcasCZ2yFXBO7XiQE=
 github.com/trentkm/windrunner v0.0.0-20260812034225-d372917a2843/go.mod h1:NeoAehJ7W0IWERTIrGWxscAUIMic6uxVDfzWjYZEMZA=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=

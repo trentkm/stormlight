@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
-	github.com/trentkm/oathgate v0.0.0-20260812192150-2caa4e3a4e21
+	github.com/trentkm/oathgate v0.0.0-20260812200204-87acda46f911
 	github.com/trentkm/windrunner v0.0.0-20260812034225-d372917a2843
 	golang.org/x/sys v0.47.0
 )
