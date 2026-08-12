@@ -230,11 +230,19 @@ func (m Model) ptyCursor() *tea.Cursor {
 		cursorY < 0 || cursorY >= gridHeight {
 		return nil
 	}
+	// Origin constants are measured, not derived: a MARK parked at a known
+	// emulator cell calibrated the grid's screen origin at
+	// (workspaceWidth+agentWidth+1, ptyGridTop). Recalibrate the same way
+	// if the pane chrome changes.
 	return tea.NewCursor(
-		workspaceWidth+agentWidth+2+frame.CursorX,
-		spanreedContentTop+cursorY,
+		workspaceWidth+agentWidth+1+frame.CursorX,
+		ptyGridTop+cursorY,
 	)
 }
+
+// ptyGridTop is the screen row of the terminal grid's first cell: header,
+// pane title, the heading's three rows, and the pane's top margin.
+const ptyGridTop = 6
 
 // fitGrid clamps the emulator's render to the pane: exactly height rows,
 // no row wider than width. In tap mode the emulator mirrors the real pane,
