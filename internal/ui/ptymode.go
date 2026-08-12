@@ -223,23 +223,28 @@ func (m Model) ptyCursor() *tea.Cursor {
 	}
 	workspaceWidth, agentWidth, _ := m.paneWidths(width)
 	gridWidth, gridHeight := m.ptyGridDimensions()
+	// The display clips a too-tall emulator to its bottom rows; cursor
+	// coordinates are emulator-space and shift with the clip.
+	cursorY := frame.CursorY - max(0, frame.Rows-gridHeight)
 	if frame.CursorX < 0 || frame.CursorX >= gridWidth ||
-		frame.CursorY < 0 || frame.CursorY >= gridHeight {
+		cursorY < 0 || cursorY >= gridHeight {
 		return nil
 	}
 	return tea.NewCursor(
 		workspaceWidth+agentWidth+2+frame.CursorX,
-		spanreedContentTop+frame.CursorY,
+		spanreedContentTop+cursorY,
 	)
 }
 
 // fitGrid clamps the emulator's render to the pane: exactly height rows,
-// no row wider than width. The emulator is sized to match, so this only
-// trims the transient frames around a resize.
+// no row wider than width. In tap mode the emulator mirrors the real pane,
+// which an attached client can hold larger than the display box — clip
+// like tmux does, keeping the bottom rows where the action is and the
+// left columns where lines begin.
 func fitGrid(grid string, width, height int) string {
 	rows := strings.Split(grid, "\n")
 	if len(rows) > height {
-		rows = rows[:height]
+		rows = rows[len(rows)-height:]
 	}
 	for index, row := range rows {
 		if ansi.StringWidth(row) > width {

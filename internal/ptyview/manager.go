@@ -87,6 +87,9 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 		s.Close()
 	}
 	for _, s := range existing {
+		// A pane resized under a live session by an attached client must
+		// be re-adopted, or the emulator re-wraps a wide pane into soup.
+		s.AdoptPaneSize(ctx)
 		if w, h := s.Size(); w == width && h == height {
 			continue
 		}

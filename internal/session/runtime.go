@@ -52,11 +52,16 @@ type PaneStreamer interface {
 	SendRaw(ctx context.Context, id string, data []byte) error
 }
 
-// PaneView is the cursor-and-screen state CaptureRaw cannot carry.
+// PaneView is the cursor-and-screen state CaptureRaw cannot carry. Cols
+// and Rows are the pane's actual size, which is not always the size that
+// was asked for: an attached client owns its windows' sizes, and an
+// emulator replaying that pane's rows must match the pane, not the wish.
 type PaneView struct {
 	CursorX   int
 	CursorY   int
 	AltScreen bool
+	Cols      int
+	Rows      int
 }
 
 // TerminalStreamer is an optional runtime capability: a runtime whose

@@ -68,8 +68,14 @@ type Session struct {
 	mu     sync.Mutex
 	emu    *vt.Emulator
 	scroll int // lines above the live tail the viewer has scrolled
-	width  int
-	height int
+	// width and height are the emulator's dimensions — the pane's actual
+	// size in tap mode, which an attached client may hold different from
+	// what was asked. targetWidth and targetHeight remember the ask, so
+	// reconciliation retries only when the ask changes.
+	width        int
+	height       int
+	targetWidth  int
+	targetHeight int
 
 	frames     chan struct{}
 	lastNotify time.Time
@@ -79,6 +85,7 @@ type Session struct {
 	readerDone    chan struct{}
 	closing       atomic.Bool
 	closeOnce     sync.Once
+	lastAdopt     time.Time
 }
 
 // Frame is what the UI draws: the styled grid, where the cursor is, and the
@@ -88,6 +95,12 @@ type Frame struct {
 	CursorX   int
 	CursorY   int
 	AltScreen bool
+	// Cols and Rows are the emulator's dimensions — in tap mode the
+	// pane's real size, which can exceed the display box when an attached
+	// client holds the window large. The renderer clips; coordinates here
+	// are emulator-space.
+	Cols int
+	Rows int
 	// Scrolled reports how many lines above the live tail the view sits;
 	// zero means following output.
 	Scrolled int
@@ -124,14 +137,14 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 	}
 
 	s := &Session{
-		AgentID:    agentID,
-		backend:    backend,
-		fifoPath:   fifoPath,
-		fifo:       fifo,
-		width:      width,
-		height:     height,
-		frames:     make(chan struct{}, 1),
-		readerDone: make(chan struct{}),
+		AgentID:      agentID,
+		backend:      backend,
+		fifoPath:     fifoPath,
+		fifo:         fifo,
+		targetWidth:  width,
+		targetHeight: height,
+		frames:       make(chan struct{}, 1),
+		readerDone:   make(chan struct{}),
 	}
 	// Size before piping: the SIGWINCH repaint the resize provokes then
 	// arrives through the pipe at the size the emulator expects.
@@ -144,7 +157,17 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 		return nil, err
 	}
 
-	emu := vt.NewEmulator(width, height)
+	// The pane's real size is the emulator's size. An attached client can
+	// refuse the resize and hold the window wide; replaying a 130-column
+	// pane through a 70-column emulator re-wraps every row into soup, so
+	// the emulator matches the pane and the renderer clips instead.
+	actualWidth, actualHeight := width, height
+	if view, err := backend.PaneView(ctx, agentID); err == nil &&
+		view.Cols >= 2 && view.Rows >= 2 {
+		actualWidth, actualHeight = view.Cols, view.Rows
+	}
+	s.width, s.height = actualWidth, actualHeight
+	emu := vt.NewEmulator(actualWidth, actualHeight)
 	emu.Scrollback().SetMaxLines(scrollbackLines)
 	s.emu = emu
 	// The emulator answers terminal queries (DSR, in-band resize reports)
@@ -181,11 +204,13 @@ func StartStream(ctx context.Context, backend StreamBackend, agentID string, wid
 		return nil, err
 	}
 	s := &Session{
-		AgentID: agentID,
-		stream:  stream,
-		width:   width,
-		height:  height,
-		frames:  make(chan struct{}, 1),
+		AgentID:      agentID,
+		stream:       stream,
+		width:        width,
+		height:       height,
+		targetWidth:  width,
+		targetHeight: height,
+		frames:       make(chan struct{}, 1),
 	}
 	emu := vt.NewEmulator(width, height)
 	emu.Scrollback().SetMaxLines(scrollbackLines)
@@ -322,6 +347,8 @@ func (s *Session) Frame() Frame {
 		CursorX:   cursor.X,
 		CursorY:   cursor.Y,
 		AltScreen: s.emu.IsAltScreen(),
+		Cols:      s.width,
+		Rows:      s.height,
 		Scrolled:  s.scroll,
 	}
 	if s.scroll == 0 || frame.AltScreen {
@@ -364,11 +391,39 @@ func (s *Session) AltScreen() bool {
 	return s.emu.IsAltScreen()
 }
 
-// Size reports the cell grid the session currently renders at.
+// AdoptPaneSize re-reads the pane's actual size and moves the emulator to
+// match — the healing path for a pane resized under a live session by an
+// attached client. Throttled internally; tap-only, a no-op elsewhere.
+func (s *Session) AdoptPaneSize(ctx context.Context) {
+	if s.stream != nil {
+		return
+	}
+	s.mu.Lock()
+	if time.Since(s.lastAdopt) < 2500*time.Millisecond {
+		s.mu.Unlock()
+		return
+	}
+	s.lastAdopt = time.Now()
+	s.mu.Unlock()
+	view, err := s.backend.PaneView(ctx, s.AgentID)
+	if err != nil || view.Cols < 2 || view.Rows < 2 {
+		return
+	}
+	s.mu.Lock()
+	if view.Cols != s.width || view.Rows != s.height {
+		s.emu.Resize(view.Cols, view.Rows)
+		s.width, s.height = view.Cols, view.Rows
+	}
+	s.mu.Unlock()
+}
+
+// Size reports the size the session was asked to be — the reconciliation
+// key. The emulator's real dimensions can differ in tap mode (an attached
+// client owns the window) and travel with each Frame instead.
 func (s *Session) Size() (int, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.width, s.height
+	return s.targetWidth, s.targetHeight
 }
 
 // Resize moves the agent's terminal and the emulator together; the two
@@ -382,12 +437,30 @@ func (s *Session) Resize(ctx context.Context, width, height int) error {
 		if err := s.stream.Resize(ctx, width, height); err != nil {
 			return err
 		}
-	} else if err := s.backend.ResizeAgentWindow(ctx, s.AgentID, width, height); err != nil {
+		s.mu.Lock()
+		s.emu.Resize(width, height)
+		s.width, s.height = width, height
+		s.targetWidth, s.targetHeight = width, height
+		s.mu.Unlock()
+		return nil
+	}
+	// Tap mode: ask, then adopt whatever the pane really is — the ask is
+	// refused whenever a client is attached, and the emulator must always
+	// mirror the pane.
+	if err := s.backend.ResizeAgentWindow(ctx, s.AgentID, width, height); err != nil {
 		return err
 	}
+	actualWidth, actualHeight := width, height
+	if view, err := s.backend.PaneView(ctx, s.AgentID); err == nil &&
+		view.Cols >= 2 && view.Rows >= 2 {
+		actualWidth, actualHeight = view.Cols, view.Rows
+	}
 	s.mu.Lock()
-	s.emu.Resize(width, height)
-	s.width, s.height = width, height
+	if actualWidth != s.width || actualHeight != s.height {
+		s.emu.Resize(actualWidth, actualHeight)
+		s.width, s.height = actualWidth, actualHeight
+	}
+	s.targetWidth, s.targetHeight = width, height
 	s.mu.Unlock()
 	return nil
 }

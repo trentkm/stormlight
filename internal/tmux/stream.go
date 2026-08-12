@@ -75,24 +75,33 @@ func (r *Runtime) PaneView(ctx context.Context, id string) (session.PaneView, er
 	}
 	out, err := r.runner.Run(ctx, nil,
 		"display-message", "-p", "-t", managedAgent.PaneID,
-		"#{cursor_x} #{cursor_y} #{alternate_on}",
+		"#{cursor_x} #{cursor_y} #{alternate_on} #{pane_width} #{pane_height}",
 	)
 	if err != nil {
 		return session.PaneView{}, fmt.Errorf("read pane view state: %w", err)
 	}
 	fields := strings.Fields(out)
-	if len(fields) != 3 {
+	if len(fields) != 5 {
 		return session.PaneView{}, fmt.Errorf("read pane view state: unexpected reply %q", out)
 	}
-	x, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return session.PaneView{}, fmt.Errorf("read pane view state: %w", err)
+	numbers := make([]int, 5)
+	for index, field := range fields {
+		if index == 2 {
+			continue
+		}
+		value, err := strconv.Atoi(field)
+		if err != nil {
+			return session.PaneView{}, fmt.Errorf("read pane view state: %w", err)
+		}
+		numbers[index] = value
 	}
-	y, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return session.PaneView{}, fmt.Errorf("read pane view state: %w", err)
-	}
-	return session.PaneView{CursorX: x, CursorY: y, AltScreen: fields[2] == "1"}, nil
+	return session.PaneView{
+		CursorX:   numbers[0],
+		CursorY:   numbers[1],
+		AltScreen: fields[2] == "1",
+		Cols:      numbers[3],
+		Rows:      numbers[4],
+	}, nil
 }
 
 // ResizeAgentWindow sizes one agent's window exactly — the 1:1 contract a
