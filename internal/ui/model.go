@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/trentkm/oathgate"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -207,12 +208,12 @@ type Model struct {
 	// The PTY Spanreed. The manager keeps one live terminal session per
 	// agent for the agent's whole life; ptyEnabled says which view the
 	// Spanreed renders (terminal by default, transcript after `t`), and
-	// ptyArmed tracks which sessions already have a frame listener so
+	// ptyArmed tracks which widgets already have a frame listener so
 	// redraw wake-ups never double up. Pointers and maps on purpose: they
 	// must survive the Model's value copies.
 	ptyEnabled bool
 	ptyManager *ptyview.Manager
-	ptyArmed   map[string]bool
+	ptyArmed   map[int64]bool
 }
 
 type dashboardMsg struct {
@@ -349,7 +350,7 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		columns:            options.Columns,
 		ptyEnabled:         true,
 		ptyManager:         ptyview.NewManager(backend, ptyStateDir()),
-		ptyArmed:           make(map[string]bool),
+		ptyArmed:           make(map[int64]bool),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -506,7 +507,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Fresh sessions may include the selected agent's; listen to it.
 		return m, m.armPTYWait()
 
-	case ptyFrameMsg:
+	case oathgate.FrameMsg:
 		return m.handlePTYFrame(msg)
 
 	case interactionMsg:
