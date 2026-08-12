@@ -203,6 +203,9 @@ func (m Model) commandHints() string {
 	if m.width < 72 {
 		rowMode = ""
 	}
+	if m.terminalFocused() {
+		return m.terminalHints()
+	}
 	if m.activePane == paneInteraction {
 		if selected, ok := m.selectedAgent(); ok &&
 			selected.ProcessLive && selected.Attention.TerminalOwned() {

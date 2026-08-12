@@ -13,9 +13,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// spanreedContentTop is the screen row where the transcript viewport
+// interactionContentTop is the screen row where the transcript viewport
 // starts: header, pane title, then the agent heading's three rows.
-const spanreedContentTop = 5
+const interactionContentTop = 5
 
 // handleMouse drives the transcript's two mouse behaviors: the wheel
 // scrolls it (positionally, without moving keyboard focus), and
@@ -128,7 +128,7 @@ func (m Model) transcriptLineAt(y int) (int, bool) {
 	if _, ok := m.selectedAgent(); !ok || m.interactionContent == "" {
 		return 0, false
 	}
-	row := y - spanreedContentTop
+	row := y - interactionContentTop
 	if row < 0 {
 		row = 0
 	}

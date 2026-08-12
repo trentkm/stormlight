@@ -11,12 +11,12 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/trentkm/spanreed"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/ptyview"
 	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/session"
@@ -383,6 +383,11 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if m.ptyEnabled {
+		if widget, ok := m.selectedPTY(); ok && widget.Handle(message) {
+			return m, nil
+		}
+	}
 	switch msg := message.(type) {
 	case tea.BackgroundColorMsg:
 		// Settling the palette changes every color the next frame draws,
@@ -511,7 +516,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Fresh sessions may include the selected agent's; listen to it.
 		return m, m.armPTYWait()
 
-	case spanreed.FrameMsg:
+	case pty.FrameMsg:
 		return m.handlePTYFrame(msg)
 
 	case interactionMsg:
@@ -716,13 +721,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.ptyEnabled && m.ready {
-		// Whatever the dashboard did not claim may belong to the selected
-		// terminal widget — its scroll-flush ticks arrive as unexported
-		// message types. Foreign or unknown messages come back as no-ops.
-		if widget, ok := m.selectedPTY(); ok {
-			_, cmd := widget.Update(message)
-			return m, cmd
-		}
+		// Everything a terminal owns has already been handled above. An
+		// unclaimed message must not leak into the transcript surface.
 		return m, nil
 	}
 	if m.mode == modeNormal && m.ready &&

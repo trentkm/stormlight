@@ -1,15 +1,14 @@
 package ui
 
-// Keyboard routing for the PTY Spanreed: while the pane holds focus the
+// Keyboard routing for Stormlight's PTY view: while the pane holds focus the
 // keyboard belongs to the agent's terminal, byte for byte. ctrl+q hands it
 // back to the dashboard.
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/trentkm/spanreed"
-
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/pty"
 )
 
 // updateTerminalKey is every keypress while the Spanreed terminal holds
@@ -48,7 +47,7 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.activePane = paneAgents
 		return m, nil
 	}
-	data := spanreed.KeyToBytes(msg)
+	data := pty.KeyToBytes(msg)
 	if len(data) == 0 {
 		return m, nil
 	}
@@ -65,7 +64,7 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, send
 }
 
-func writeTerminalCmd(widget spanreed.Model, data []byte) tea.Cmd {
+func writeTerminalCmd(widget pty.Model, data []byte) tea.Cmd {
 	return func() tea.Msg {
 		if err := widget.Write(data); err != nil {
 			diagnostic.Logger().Warn("terminal write failed", "error", err)

@@ -319,7 +319,7 @@ func TestColumnResizeAdjustsPersistsAndClamps(t *testing.T) {
 	model = updated.(Model)
 	_, a, i := model.paneWidths(width)
 	if a != baseA-2 || i != baseI {
-		t.Fatalf("after spanreed grow: agents=%d spanreed=%d (base %d/%d)",
+		t.Fatalf("after terminal grow: agents=%d terminal=%d (base %d/%d)",
 			a, i, baseA, baseI)
 	}
 
@@ -394,7 +394,7 @@ func TestSpanreedNeverDimsAndListsAlwaysDoOutsideTheSelection(t *testing.T) {
 		model.activePane = focus
 		workspaces, agents, interaction := model.paneDimmings(20)
 		if interaction.dim {
-			t.Fatalf("spanreed dimmed with pane %d focused", focus)
+			t.Fatalf("terminal dimmed with pane %d focused", focus)
 		}
 		if !workspaces.dim || !agents.dim {
 			t.Fatalf("lists undimmed with pane %d focused: %+v %+v",

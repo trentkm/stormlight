@@ -1,7 +1,7 @@
 package ui
 
-// The PTY Spanreed: every agent keeps a live terminal (a spanreed widget
-// over the runtime's transport) for its whole life, and the Spanreed
+// The PTY view: every agent keeps a live terminal (Stormlight's own widget
+// over the runtime's transport) for its whole life, and the dashboard
 // renders the selected one — selecting an agent switches terminals, it
 // never starts one. `t` flips to the transcript reading view; the
 // terminal is the default.
@@ -17,9 +17,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/trentkm/spanreed"
-
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/ptyview"
 )
 
@@ -58,13 +57,14 @@ func ptyStateDir() string {
 	return filepath.Join(home, ".local", "state", "stormlight")
 }
 
-// ptyGridDimensions is every terminal box's size. The terminal view spends
-// exactly two rows on chrome — the window bar, mounted as the pane's title
-// row, and the hint row under the grid — so the grid gets everything else.
-// Zoomed, the sidebars collapse and the grid takes the full body width.
+// ptyGridDimensions is every terminal box's size. The window bar is mounted
+// as the pane's title row; the terminal takes the rest of the body. Its
+// controls live in the dashboard's existing blue footer, not in a second
+// strip under the terminal. Zoomed, the sidebars collapse and the grid takes
+// the full body width.
 func (m Model) ptyGridDimensions() (int, int) {
 	width, bodyHeight := m.bodyDimensions()
-	gridHeight := max(2, bodyHeight-2)
+	gridHeight := max(2, bodyHeight-1)
 	if width < 72 {
 		return max(1, width-2), gridHeight
 	}
@@ -75,12 +75,12 @@ func (m Model) ptyGridDimensions() (int, int) {
 	return max(1, interactionWidth-3), gridHeight
 }
 
-// selectedPTY is the widget behind the Spanreed right now; ok is false
+// selectedPTY is the widget behind the terminal pane right now; ok is false
 // while the selected agent's terminal is still opening (or nothing is
 // selected).
-func (m Model) selectedPTY() (spanreed.Model, bool) {
+func (m Model) selectedPTY() (pty.Model, bool) {
 	if m.ptyManager == nil {
-		return spanreed.Model{}, false
+		return pty.Model{}, false
 	}
 	return m.ptyManager.Widget(m.selectedAgentID())
 }
@@ -125,7 +125,7 @@ func (m *Model) armPTYWait() tea.Cmd {
 
 // handlePTYFrame routes a widget's wake-up: the listener that produced it
 // is spent, and only the selected agent's widget earns a replacement.
-func (m Model) handlePTYFrame(msg spanreed.FrameMsg) (tea.Model, tea.Cmd) {
+func (m Model) handlePTYFrame(msg pty.FrameMsg) (tea.Model, tea.Cmd) {
 	delete(m.ptyArmed, msg.ID)
 	if !m.ptyEnabled || m.ptyManager == nil {
 		return m, nil
@@ -182,37 +182,24 @@ func (m *Model) togglePTY() tea.Cmd {
 	return m.armPTYWait()
 }
 
-// renderPTYInteraction is renderInteraction's live-terminal branch: just
-// the grid and one hint row. The window bar is not rendered here — it is
-// mounted as the pane's title row (see renderDashboardBody), so the
-// Spanreed is not a preview with a caption but the terminal itself, wearing
-// the thinnest chrome the dashboard has.
-func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int) string {
+// renderPTYInteraction is renderInteraction's live-terminal branch. The
+// window bar is mounted as the pane's title row (see renderDashboardBody),
+// while the dashboard's footer carries the terminal controls.
+func (m Model) renderPTYInteraction(managedAgent agent.Agent, _, _ int) string {
 	grid := mutedStyle().Render("Starting terminal...")
-	scrolled := 0
 	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok {
 		grid = widget.View()
-		scrolled = widget.Scrolled()
 	}
+	return grid
+}
 
-	focused := m.terminalFocused()
-	hint := "Enter terminal · t transcript · Z zoom · F attach"
-	if focused {
-		alt := altKeyName()
-		hint = fmt.Sprintf("ctrl+space out · %s+j/k agents · %s+z zoom · %s+t transcript",
-			alt, alt, alt)
+func (m Model) terminalHints() string {
+	if widget, ok := m.selectedPTY(); ok && widget.Scrolled() > 0 {
+		return fmt.Sprintf("scrolled %d lines up — wheel down to follow", widget.Scrolled())
 	}
-	composer := mutedStyle().Render(truncate(hint, width))
-	if focused {
-		composer = accentStyle().Render(truncate(hint, width))
-	}
-	if scrolled > 0 {
-		composer = mutedStyle().Render(truncate(
-			fmt.Sprintf("scrolled %d lines up — wheel down to follow", scrolled),
-			width,
-		))
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, grid, composer)
+	alt := altKeyName()
+	return fmt.Sprintf("ctrl+space out  %s+j/k agents  %s+z zoom  %s+t transcript",
+		alt, alt, alt)
 }
 
 // renderTerminalBar is the window bar over the terminal grid, and the only
@@ -289,7 +276,7 @@ func terminalBarMeta(managedAgent agent.Agent) string {
 }
 
 // terminalFocused reports whether the keyboard currently belongs to the
-// Spanreed terminal.
+// embedded terminal.
 func (m Model) terminalFocused() bool {
 	return m.ptyEnabled && m.mode == modeNormal &&
 		m.activePane == paneInteraction
