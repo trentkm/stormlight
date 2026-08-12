@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,11 @@ import (
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/tmux"
 	"github.com/trentkm/stormlight/internal/ui"
+	"github.com/trentkm/stormlight/internal/windrun"
 	"github.com/trentkm/stormlight/internal/workspace"
+	"github.com/trentkm/windrunner"
+	wrclient "github.com/trentkm/windrunner/client"
+	"github.com/trentkm/windrunner/server"
 )
 
 var version = "dev"
@@ -139,8 +144,62 @@ func newRootCommand() *cobra.Command {
 		newRunCommand(&socket, &sessionName, cfg),
 		newRestoreCommand(&socket, &sessionName, cfg),
 		newConfigCommand(&socket, &sessionName, cfg),
+		newWindrunnerDaemonCommand(),
+		newWindrunnerAttachCommand(),
 	)
 	return root
+}
+
+// newWindrunnerDaemonCommand hosts the windrunner engine: agents' PTYs and
+// terminal state live here, outliving every dashboard. Started on demand
+// by the windrun runtime; running it by hand is only for debugging.
+func newWindrunnerDaemonCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "_wrdaemon",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := windrun.SocketPath()
+			os.Remove(path)
+			listener, err := net.Listen("unix", path)
+			if err != nil {
+				return err
+			}
+			defer os.Remove(path)
+			engine := windrunner.NewEngine()
+			defer engine.Close()
+			diagnostic.Logger().Info("windrunner daemon serving", "socket", path)
+			return server.Serve(engine, listener)
+		},
+	}
+}
+
+// newWindrunnerAttachCommand is the Enter key's other half for windrunner
+// agents: a full-terminal interactive attachment, ctrl+q to come back.
+// The dashboard runs it through ExecProcess.
+func newWindrunnerAttachCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "_wrattach <session-id>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := wrclient.Dial(windrun.SocketPath())
+			if err != nil {
+				return err
+			}
+			defer c.Close()
+			result, err := c.Interactive(args[0], 0x11) // ctrl+q
+			if err != nil {
+				return err
+			}
+			switch result {
+			case wrclient.SessionExited:
+				fmt.Fprintln(os.Stderr, "\r\n[agent process exited]")
+			case wrclient.ConnectionLost:
+				fmt.Fprintln(os.Stderr, "\r\n[windrunner daemon connection lost]")
+			}
+			return nil
+		},
+	}
 }
 
 func configValueOr(value, fallback string) string {
@@ -472,6 +531,19 @@ func newLogsCommand(logFile *string) *cobra.Command {
 }
 
 func newService(socket, sessionName string, cfg config.Config) (*app.Service, error) {
+	if os.Getenv(windrun.RuntimeEnv) == "windrunner" {
+		// Agents live in the windrunner daemon: PTYs the engine owns,
+		// terminals that are authoritative state rather than sampled
+		// panes. No tmux anywhere on this path. The resurrect store stays
+		// out of it — the daemon persisting sessions is the roster, and a
+		// windrunner roster must not overwrite the tmux world's snapshot.
+		runtime, err := windrun.NewRuntime()
+		if err != nil {
+			return nil, err
+		}
+		registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
+		return app.NewService(runtime, registry, workspace.NewRegistry()), nil
+	}
 	client := tmux.NewClient(socket)
 	if serverConfig := stormlightServerConfig(socket); serverConfig != "" {
 		client = tmux.NewClientWithConfig(socket, serverConfig)

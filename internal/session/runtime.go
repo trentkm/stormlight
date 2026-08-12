@@ -59,6 +59,26 @@ type PaneView struct {
 	AltScreen bool
 }
 
+// TerminalStreamer is an optional runtime capability: a runtime whose
+// terminals can be attached to directly — an exact state snapshot followed
+// by the live byte stream, with input and resize flowing back. It is the
+// native shape of a windrunner-hosted agent, where the tap-based
+// PaneStreamer is the tmux retrofit of the same idea.
+type TerminalStreamer interface {
+	OpenTerminalStream(ctx context.Context, id string, cols, rows int) (TerminalStream, error)
+}
+
+// TerminalStream is one live attachment to one agent's terminal.
+type TerminalStream interface {
+	// Seed is the exact serialized state at attach time; everything on
+	// Output happened after it.
+	Seed() []byte
+	Output() <-chan []byte
+	Write(p []byte) error
+	Resize(ctx context.Context, cols, rows int) error
+	Close()
+}
+
 // Restorer is an optional runtime capability: a runtime whose agent records
 // live and die with the runtime itself, and which can therefore be handed a
 // record from before it started and asked to build the agent back.

@@ -23,14 +23,23 @@ import (
 	"github.com/trentkm/stormlight/internal/session"
 )
 
-// Backend is the slice of the app service a session needs. Narrow on
-// purpose: the package can be exercised with a fake in tests.
+// Backend is the tap-shaped slice of the app service a session needs:
+// pipe-pane into a FIFO, seeded by a raw capture. Narrow on purpose: the
+// package can be exercised with a fake in tests.
 type Backend interface {
 	PipePaneOpen(ctx context.Context, id, fifoPath string) error
 	PipePaneClose(ctx context.Context, id string) error
 	CaptureRaw(ctx context.Context, id string, history int) (string, error)
 	PaneView(ctx context.Context, id string) (session.PaneView, error)
 	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
+}
+
+// StreamBackend is the native shape: the runtime attaches directly and
+// hands over an exact seed plus the live byte stream. When a backend
+// offers both, the Manager prefers this one — no FIFO, no capture, no
+// reconstruction.
+type StreamBackend interface {
+	OpenTerminalStream(ctx context.Context, id string, cols, rows int) (session.TerminalStream, error)
 }
 
 // framePeriod caps how often the reader wakes the UI: a stream writing
@@ -49,6 +58,9 @@ const scrollbackLines = 2000
 type Session struct {
 	AgentID string
 
+	// Exactly one transport is set: stream is the native attachment,
+	// backend+fifo the tmux tap.
+	stream   session.TerminalStream
 	backend  Backend
 	fifoPath string
 	fifo     *os.File
@@ -155,6 +167,53 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 	s.readerStarted = true
 	go s.readLoop()
 	return s, nil
+}
+
+// StartStream brings up the live view over a native attachment: the seed
+// is the runtime's exact serialized state, the stream is every byte since
+// it, and nothing here reconstructs anything.
+func StartStream(ctx context.Context, backend StreamBackend, agentID string, width, height int) (*Session, error) {
+	if width < 2 || height < 2 {
+		return nil, fmt.Errorf("pty view: %dx%d is no place to put a terminal", width, height)
+	}
+	stream, err := backend.OpenTerminalStream(ctx, agentID, width, height)
+	if err != nil {
+		return nil, err
+	}
+	s := &Session{
+		AgentID: agentID,
+		stream:  stream,
+		width:   width,
+		height:  height,
+		frames:  make(chan struct{}, 1),
+	}
+	emu := vt.NewEmulator(width, height)
+	emu.Scrollback().SetMaxLines(scrollbackLines)
+	s.emu = emu
+	// Program queries travel the output stream too, and this client-side
+	// emulator would synthesize answers into its blocking response pipe.
+	// The daemon's emulator is the authority that actually answers; here
+	// the pipe is drained so a query can never wedge the render lock.
+	go func() {
+		_, _ = io.Copy(io.Discard, emu)
+	}()
+	s.mu.Lock()
+	s.emu.Write(stream.Seed())
+	s.mu.Unlock()
+	go s.streamLoop()
+	return s, nil
+}
+
+func (s *Session) streamLoop() {
+	for chunk := range s.stream.Output() {
+		s.mu.Lock()
+		s.emu.Write(chunk)
+		if s.scroll != 0 && s.emu.IsAltScreen() {
+			s.scroll = 0
+		}
+		s.mu.Unlock()
+		s.notify()
+	}
 }
 
 // seed replays the pane's screen — and as much scrollback as the emulator
@@ -312,13 +371,18 @@ func (s *Session) Size() (int, int) {
 	return s.width, s.height
 }
 
-// Resize moves the tmux window and the emulator together; the two disagree
+// Resize moves the agent's terminal and the emulator together; the two
+// disagree
 // only for the moment between the resize and the repaint it provokes.
 func (s *Session) Resize(ctx context.Context, width, height int) error {
 	if width < 2 || height < 2 {
 		return nil
 	}
-	if err := s.backend.ResizeAgentWindow(ctx, s.AgentID, width, height); err != nil {
+	if s.stream != nil {
+		if err := s.stream.Resize(ctx, width, height); err != nil {
+			return err
+		}
+	} else if err := s.backend.ResizeAgentWindow(ctx, s.AgentID, width, height); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -334,6 +398,23 @@ func (s *Session) Resize(ctx context.Context, width, height int) error {
 // context dying.
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
+		if s.stream != nil {
+			// Native attachments tear down by hanging up: the stream
+			// closes, streamLoop drains out, and the daemon keeps the
+			// session. The emulator's response pipe closes so its drain
+			// goroutine follows.
+			s.stream.Close()
+			if pw, ok := s.emu.InputPipe().(*io.PipeWriter); ok {
+				pw.CloseWithError(io.EOF)
+			}
+			s.mu.Lock()
+			if s.pending != nil {
+				s.pending.Stop()
+				s.pending = nil
+			}
+			s.mu.Unlock()
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := s.backend.PipePaneClose(ctx, s.AgentID); err != nil {

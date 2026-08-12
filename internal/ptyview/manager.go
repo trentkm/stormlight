@@ -9,13 +9,16 @@ package ptyview
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/trentkm/stormlight/internal/diagnostic"
 )
 
 type Manager struct {
-	backend  Backend
+	// backend is asserted per capability: StreamBackend wins (native
+	// attach), tap Backend is the tmux fallback.
+	backend  any
 	stateDir string
 
 	mu       sync.Mutex
@@ -35,7 +38,7 @@ type Manager struct {
 	height   int
 }
 
-func NewManager(backend Backend, stateDir string) *Manager {
+func NewManager(backend any, stateDir string) *Manager {
 	return &Manager{
 		backend:  backend,
 		stateDir: stateDir,
@@ -93,7 +96,7 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 		}
 	}
 	for _, id := range missing {
-		s, err := Start(ctx, g.backend, id, g.stateDir, width, height)
+		s, err := g.start(ctx, id, width, height)
 		g.mu.Lock()
 		delete(g.starting, id)
 		surplus := err == nil && g.draining
@@ -109,6 +112,27 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 				"agent_id", id, "error", err)
 		}
 	}
+}
+
+// start opens a session over the richest transport the backend offers.
+// The service exposes both method sets whichever runtime is behind it, so
+// capability is discovered by trying: native stream first, tap on refusal.
+func (g *Manager) start(ctx context.Context, id string, width, height int) (*Session, error) {
+	streamer, canStream := g.backend.(StreamBackend)
+	tap, canTap := g.backend.(Backend)
+	if canStream {
+		s, err := StartStream(ctx, streamer, id, width, height)
+		if err == nil {
+			return s, nil
+		}
+		if !canTap {
+			return nil, err
+		}
+	}
+	if canTap {
+		return Start(ctx, tap, id, g.stateDir, width, height)
+	}
+	return nil, fmt.Errorf("ptyview: backend offers no terminal transport")
 }
 
 // ResizeAll reasserts the current size on every window and emulator — the

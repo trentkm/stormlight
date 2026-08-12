@@ -583,6 +583,17 @@ func (s *Service) SendRaw(ctx context.Context, id string, data []byte) error {
 	return streamer.SendRaw(ctx, id, data)
 }
 
+// OpenTerminalStream surfaces the runtime's native attach when it has one
+// (windrunner); tap-based runtimes answer with an error and the view
+// layer falls back to the pipe-pane transport.
+func (s *Service) OpenTerminalStream(ctx context.Context, id string, cols, rows int) (session.TerminalStream, error) {
+	streamer, ok := s.runtime.(session.TerminalStreamer)
+	if !ok {
+		return nil, fmt.Errorf("runtime does not stream terminals")
+	}
+	return streamer.OpenTerminalStream(ctx, id, cols, rows)
+}
+
 func (s *Service) Runtime() session.Runtime {
 	return s.runtime
 }
