@@ -871,7 +871,7 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	model.interaction.SetContent("agent response")
 
 	view := ansi.Strip(model.View().Content)
-	for _, label := range []string{"Workspaces", "Agents", "Spanreed", "agent response"} {
+	for _, label := range []string{"Workspaces", "Agents", "agent response"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("dashboard is missing %q:\n%s", label, view)
 		}
@@ -894,8 +894,7 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	header := -1
 	for index, line := range lines {
 		if strings.Contains(line, "Workspaces") &&
-			strings.Contains(line, "Agents") &&
-			strings.Contains(line, "Spanreed") {
+			strings.Contains(line, "Agents") {
 			header = index
 			break
 		}
@@ -1008,8 +1007,7 @@ func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 	body := ansi.Strip(model.renderBody())
 	header := strings.Split(body, "\n")[0]
 	if !strings.Contains(header, "Workspaces") ||
-		!strings.Contains(header, "Agents") ||
-		!strings.Contains(header, "Spanreed") {
+		!strings.Contains(header, "Agents") {
 		t.Fatalf("density toggle hid dashboard panes: %q", header)
 	}
 	if !strings.Contains(model.commandHints(), "z compact rows") {

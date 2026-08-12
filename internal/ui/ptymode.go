@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -32,6 +33,16 @@ type ptyEnsuredMsg struct{}
 type attachReturnedMsg struct {
 	name string
 	err  error
+}
+
+// altKeyName is what the hint row calls the modifier: macOS keyboards
+// label it option, everywhere else it is alt. The chord itself is the
+// same key either way.
+func altKeyName() string {
+	if runtime.GOOS == "darwin" {
+		return "option"
+	}
+	return "alt"
 }
 
 // ptyStateDir mirrors the rest of the state files (prefs, catalog): XDG
@@ -187,7 +198,9 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, width, height int)
 	focused := m.terminalFocused()
 	hint := "Enter terminal · t transcript · Z zoom · F attach"
 	if focused {
-		hint = "ctrl+space out · alt+j/k agents · alt+z zoom · alt+t transcript"
+		alt := altKeyName()
+		hint = fmt.Sprintf("ctrl+space out · %s+j/k agents · %s+z zoom · %s+t transcript",
+			alt, alt, alt)
 	}
 	composer := mutedStyle().Render(truncate(hint, width))
 	if focused {

@@ -14,6 +14,17 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
+// renderEmptyPortal is the Spanreed with nothing to show — not an error,
+// an invitation, centered where the terminal would be.
+func (m Model) renderEmptyPortal(width, height int) string {
+	invitation := "No agents yet — press n to dispatch one"
+	if len(m.catalogWorkspaces) == 0 {
+		invitation = "Add a workspace to begin — press n in Workspaces"
+	}
+	return lipgloss.Place(width, max(1, height), lipgloss.Center, lipgloss.Center,
+		mutedStyle().Render(truncate(invitation, width)))
+}
+
 // renderInteractionHeading is the Spanreed masthead both views share: the
 // agent's name (shimmering while it works) over the meta line, with
 // attention states talking over the derived meta when they apply.
@@ -57,7 +68,7 @@ func (m Model) renderInteractionHeading(managedAgent agent.Agent, width int) str
 func (m Model) renderInteraction(width, height int) string {
 	managedAgent, ok := m.selectedAgent()
 	if !ok {
-		return mutedStyle().Render(truncate("No agent selected", width))
+		return m.renderEmptyPortal(width, height)
 	}
 	if m.ptyEnabled {
 		return m.renderPTYInteraction(managedAgent, width, height)

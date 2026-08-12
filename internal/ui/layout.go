@@ -139,7 +139,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			// mode: the same pane pipeline, the portal spanning the full
 			// frame, the header's counts still overhead.
 			return m.renderPane(
-				"Spanreed",
+				"",
 				"",
 				m.renderInteraction(width, contentHeight-1),
 				paneFrame{
@@ -226,8 +226,11 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		}
 		interactionFrame.margins = paneMargins{}
 	}
+	// The pane has no name row: with an agent the window bar is the title,
+	// and without one the empty state speaks for itself. "Spanreed" is a
+	// name for the docs, not the screen.
 	interaction := m.renderPane(
-		"Spanreed",
+		"",
 		"",
 		m.renderInteraction(
 			max(1, interactionWidth-3),
@@ -574,7 +577,7 @@ func (m Model) renderFocusedPane(width, height int) string {
 			}
 		}
 		return m.renderPane(
-			"Spanreed",
+			"",
 			"‹",
 			m.renderInteraction(max(1, width-2), height-1),
 			frame,
