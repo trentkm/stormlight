@@ -274,7 +274,9 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 	case paneInteraction:
 		if m.ptyEnabled {
 			// The PTY view scrolls the emulator's history; positive delta
-			// is "down", which moves toward the live tail.
+			// is "down", which moves toward the live tail. Keyboard scroll
+			// applies immediately — key repeat is slow; the wheel path
+			// coalesces separately (see handleMouse).
 			if widget, ok := m.selectedPTY(); ok {
 				widget.ScrollBy(-delta)
 			}

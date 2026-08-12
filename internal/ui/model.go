@@ -711,7 +711,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == modeNormal && m.ready && !m.ptyEnabled &&
+	if m.ptyEnabled && m.ready {
+		// Whatever the dashboard did not claim may belong to the selected
+		// terminal widget — its scroll-flush ticks arrive as unexported
+		// message types. Foreign or unknown messages come back as no-ops.
+		if widget, ok := m.selectedPTY(); ok {
+			_, cmd := widget.Update(message)
+			return m, cmd
+		}
+		return m, nil
+	}
+	if m.mode == modeNormal && m.ready &&
 		m.activePane == paneInteraction {
 		var cmd tea.Cmd
 		m.interaction, cmd = m.interaction.Update(message)

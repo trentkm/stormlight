@@ -63,6 +63,15 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.paneAt(mouse.X) != paneInteraction {
 		return m, nil
 	}
+	if m.ptyEnabled {
+		// Wheel deltas coalesce through the widget, so a trackpad burst
+		// lands as one update; the scheduled flush returns through
+		// Update's message forwarding.
+		if widget, ok := m.selectedPTY(); ok {
+			return m, widget.QueueScroll(-direction * 3)
+		}
+		return m, nil
+	}
 	m.moveSelectionIn(paneInteraction, direction*3)
 	return m, nil
 }
