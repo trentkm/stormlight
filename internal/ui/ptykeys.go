@@ -6,7 +6,7 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/trentkm/oathgate"
+	"github.com/trentkm/spanreed"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -48,7 +48,7 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.activePane = paneAgents
 		return m, nil
 	}
-	data := oathgate.KeyToBytes(msg)
+	data := spanreed.KeyToBytes(msg)
 	if len(data) == 0 {
 		return m, nil
 	}
@@ -65,7 +65,7 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, send
 }
 
-func writeTerminalCmd(widget oathgate.Model, data []byte) tea.Cmd {
+func writeTerminalCmd(widget spanreed.Model, data []byte) tea.Cmd {
 	return func() tea.Msg {
 		if err := widget.Write(data); err != nil {
 			diagnostic.Logger().Warn("terminal write failed", "error", err)

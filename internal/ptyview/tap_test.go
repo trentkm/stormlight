@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trentkm/oathgate"
+	"github.com/trentkm/spanreed"
 
 	"github.com/trentkm/stormlight/internal/session"
 )
@@ -40,7 +40,7 @@ func TestTapSeedRebuildsScreenFromScreenOnlyCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	widget := oathgate.New(transport, 40, 6)
+	widget := spanreed.New(transport, 40, 6)
 	defer widget.Close()
 
 	view := widget.View()

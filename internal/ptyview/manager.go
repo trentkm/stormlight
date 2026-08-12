@@ -1,6 +1,6 @@
 // Package ptyview keeps one live terminal per agent for the agent's whole
 // life, so selecting an agent switches which terminal is rendered instead
-// of starting one. Each terminal is an oathgate widget over the richest
+// of starting one. Each terminal is a spanreed widget over the richest
 // transport the backend offers: the runtime's native stream when it has
 // one, the tmux tap otherwise.
 package ptyview
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/trentkm/oathgate"
+	"github.com/trentkm/spanreed"
 
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/session"
@@ -39,7 +39,7 @@ type StreamBackend interface {
 // to keep it honest.
 type entry struct {
 	agentID string
-	widget  oathgate.Model
+	widget  spanreed.Model
 	// tap marks tmux-hosted terminals, whose real pane size an attached
 	// client can hold apart from the box — the Manager re-adopts it.
 	tap     bool
@@ -176,7 +176,7 @@ func (g *Manager) open(ctx context.Context, id string, width, height int) (*entr
 		if err == nil {
 			return &entry{
 				agentID: id,
-				widget:  oathgate.New(stream, width, height),
+				widget:  spanreed.New(stream, width, height),
 			}, nil
 		}
 		if _, tappable := g.backend.(Backend); !tappable {
@@ -193,7 +193,7 @@ func (g *Manager) open(ctx context.Context, id string, width, height int) (*entr
 	}
 	e := &entry{
 		agentID: id,
-		widget:  oathgate.New(transport, width, height),
+		widget:  spanreed.New(transport, width, height),
 		tap:     true,
 		backend: tap,
 	}
@@ -202,12 +202,12 @@ func (g *Manager) open(ctx context.Context, id string, width, height int) (*entr
 }
 
 // Widget hands the UI an agent's terminal.
-func (g *Manager) Widget(id string) (oathgate.Model, bool) {
+func (g *Manager) Widget(id string) (spanreed.Model, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	e, ok := g.entries[id]
 	if !ok {
-		return oathgate.Model{}, false
+		return spanreed.Model{}, false
 	}
 	return e.widget, true
 }

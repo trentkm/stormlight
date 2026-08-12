@@ -1,6 +1,6 @@
 package ui
 
-// The PTY Spanreed: every agent keeps a live terminal (an oathgate widget
+// The PTY Spanreed: every agent keeps a live terminal (a spanreed widget
 // over the runtime's transport) for its whole life, and the Spanreed
 // renders the selected one — selecting an agent switches terminals, it
 // never starts one. `t` flips to the transcript reading view; the
@@ -17,7 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/trentkm/oathgate"
+	"github.com/trentkm/spanreed"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/ptyview"
@@ -78,9 +78,9 @@ func (m Model) ptyGridDimensions() (int, int) {
 // selectedPTY is the widget behind the Spanreed right now; ok is false
 // while the selected agent's terminal is still opening (or nothing is
 // selected).
-func (m Model) selectedPTY() (oathgate.Model, bool) {
+func (m Model) selectedPTY() (spanreed.Model, bool) {
 	if m.ptyManager == nil {
-		return oathgate.Model{}, false
+		return spanreed.Model{}, false
 	}
 	return m.ptyManager.Widget(m.selectedAgentID())
 }
@@ -125,7 +125,7 @@ func (m *Model) armPTYWait() tea.Cmd {
 
 // handlePTYFrame routes a widget's wake-up: the listener that produced it
 // is spent, and only the selected agent's widget earns a replacement.
-func (m Model) handlePTYFrame(msg oathgate.FrameMsg) (tea.Model, tea.Cmd) {
+func (m Model) handlePTYFrame(msg spanreed.FrameMsg) (tea.Model, tea.Cmd) {
 	delete(m.ptyArmed, msg.ID)
 	if !m.ptyEnabled || m.ptyManager == nil {
 		return m, nil

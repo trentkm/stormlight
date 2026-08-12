@@ -11,7 +11,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/trentkm/oathgate"
+	"github.com/trentkm/spanreed"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -511,7 +511,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Fresh sessions may include the selected agent's; listen to it.
 		return m, m.armPTYWait()
 
-	case oathgate.FrameMsg:
+	case spanreed.FrameMsg:
 		return m.handlePTYFrame(msg)
 
 	case interactionMsg:

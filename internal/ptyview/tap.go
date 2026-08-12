@@ -1,6 +1,6 @@
 package ptyview
 
-// The tmux tap as an oathgate transport: pipe-pane into a FIFO for the
+// The tmux tap as a spanreed transport: pipe-pane into a FIFO for the
 // stream, a raw capture for the seed. Everything reconstruction-shaped
 // lives here; the widget on top neither knows nor cares.
 
@@ -34,7 +34,7 @@ const (
 	resyncPoll  = 200 * time.Millisecond
 )
 
-// tapTransport implements oathgate.Transport over a tmux pane.
+// tapTransport implements spanreed.Transport over a tmux pane.
 type tapTransport struct {
 	agentID  string
 	backend  Backend
