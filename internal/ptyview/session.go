@@ -152,10 +152,6 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 		s.abort()
 		return nil, err
 	}
-	if err := backend.PipePaneOpen(ctx, agentID, fifoPath); err != nil {
-		s.abort()
-		return nil, err
-	}
 
 	// The pane's real size is the emulator's size. An attached client can
 	// refuse the resize and hold the window wide; replaying a 130-column
@@ -180,10 +176,20 @@ func Start(ctx context.Context, backend Backend, agentID, stateDir string, width
 	go func() {
 		_, _ = io.Copy(io.Discard, emu)
 	}()
+
+	// Seed strictly BEFORE the pipe opens. The order decides what the
+	// unavoidable gap between the two tmux calls does to the emulator:
+	// pipe-first replays the gap's bytes onto a screen that already
+	// contains them, and a TUI that repaints with relative cursor moves
+	// (Claude Code does) then drifts by a row forever — doubles never
+	// heal. Seed-first loses the gap instead, and a loss is repainted
+	// over by the program's next redraw. Found by watching a live agent's
+	// composer land on top of its own rule line.
 	if err := s.seed(ctx); err != nil {
-		// Bytes piped between open and seed replay after the seed; for a
-		// full-screen program the repaint converges, and for a scroll-mode
-		// one the overlap is at worst a duplicated tail line. Spike-grade.
+		s.Close()
+		return nil, err
+	}
+	if err := backend.PipePaneOpen(ctx, agentID, fifoPath); err != nil {
 		s.Close()
 		return nil, err
 	}
