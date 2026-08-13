@@ -40,6 +40,9 @@ type Backend interface {
 	// AttachTerminal is the transport behind the live terminal view: one
 	// attachment per agent, seed plus stream plus input and resize.
 	AttachTerminal(ctx context.Context, id string, cols, rows int) (pty.Transport, error)
+	// StartOverlay floats a short-lived interactive program (the picker,
+	// the task editor) on a runtime-owned PTY for the popup to render.
+	StartOverlay(ctx context.Context, request app.OverlayRequest) (app.Overlay, error)
 	Providers() []provider.Info
 	SessionHistory(context.Context) ([]history.Record, error)
 	Resume(context.Context, history.Record) (agent.Agent, error)
@@ -197,6 +200,13 @@ type Model struct {
 	ptyZoom    bool
 	ptyManager *ptyview.Manager
 	ptyWaiting bool
+
+	// The floating program overlay (Yazi picker, Neovim task editor): a
+	// windrunner session rendered through the same widget machinery as
+	// the Spanreed, composited over the dashboard. The generation ties
+	// async open/exit messages to the opening they belong to.
+	overlay           *overlayView
+	overlayGeneration int
 }
 
 type dashboardMsg struct {
@@ -372,6 +382,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusForm()
 		}
 		m.syncTaskComposerSize()
+		if m.overlay != nil {
+			outerWidth, outerHeight := m.overlayDimensions()
+			_, resize := m.overlay.widget.SetSize(
+				max(2, outerWidth-2), max(2, outerHeight-2))
+			if resize != nil {
+				return m, tea.Batch(resize, m.ensurePTYCmd())
+			}
+		}
 		if m.ptyEnabled {
 			// Ensure re-reads the grid size and moves every window and
 			// emulator with it.
@@ -596,10 +614,27 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Workspace added"
 		return m, nil
 
+	case overlayOpenedMsg:
+		return m.handleOverlayOpened(msg)
+
+	case overlayExitedMsg:
+		return m.handleOverlayExited(msg)
+
 	case tea.MouseMsg:
+		if m.overlay != nil {
+			// The popup owns the screen; clicks must not move the panes
+			// beneath it.
+			return m, nil
+		}
 		return m.handleMouse(msg)
 
 	case tea.PasteMsg:
+		if m.overlay != nil {
+			// Bracketed paste, so a multi-line paste lands in the hosted
+			// program as one paste rather than a burst of keys.
+			return m, writeTerminalCmd(m.overlay.widget,
+				[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
+		}
 		return m.updatePaste(msg)
 
 	case tea.KeyPressMsg:
@@ -608,6 +643,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.status == "Action failed" {
 				m.status = "Ready"
 			}
+		}
+		if m.overlay != nil {
+			// The floating program owns the keyboard while it is up;
+			// ctrl+q cancels it.
+			return m.updateOverlayKey(msg)
 		}
 		if m.ptyEnabled && m.mode == modeNormal &&
 			m.activePane == paneInteraction {

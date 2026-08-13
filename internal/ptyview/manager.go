@@ -50,6 +50,12 @@ func (g *Manager) Wait() tea.Cmd {
 	return g.gate.Wait()
 }
 
+// Gate exposes the shared gate for terminals the Manager does not own —
+// the dashboard's overlay popup rides the same redraw stream.
+func (g *Manager) Gate() *pty.Gate {
+	return g.gate
+}
+
 // SetVisible marks which agents' terminals are on screen; only those
 // request redraws when output arrives.
 func (g *Manager) SetVisible(ids ...string) {

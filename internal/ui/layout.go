@@ -67,6 +67,22 @@ func (m Model) bodyDimensions() (int, int) {
 
 func (m Model) renderBody() string {
 	width, contentHeight := m.bodyDimensions()
+	body := m.renderModeBody(width, contentHeight)
+	if m.overlay != nil {
+		// The floating program draws over everything, the mode's own
+		// modal included — Yazi opened from the dispatch form floats
+		// above the form it will answer.
+		return overlayCentered(
+			body,
+			m.renderOverlayPopup(),
+			width,
+			contentHeight,
+		)
+	}
+	return body
+}
+
+func (m Model) renderModeBody(width, contentHeight int) string {
 	dashboard := m.renderDashboardBody(width, contentHeight)
 	switch m.mode {
 	case modeDispatch:

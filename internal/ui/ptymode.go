@@ -98,7 +98,7 @@ func (m Model) ensurePTYCmd() tea.Cmd {
 // terminals knock on that gate. The armed flag is the dedup: doubling
 // the listeners would double the redraw messages.
 func (m *Model) armPTYWait() tea.Cmd {
-	if !m.ptyEnabled || m.ptyManager == nil {
+	if m.ptyManager == nil || (!m.ptyEnabled && m.overlay == nil) {
 		return nil
 	}
 	m.ptyManager.SetVisible(m.selectedAgentID())
@@ -267,6 +267,9 @@ func (m Model) terminalFocused() bool {
 // component cannot know where it sits — and the measured origin does the
 // rest.
 func (m Model) ptyCursor() *tea.Cursor {
+	if m.overlay != nil {
+		return m.overlayCursor()
+	}
 	if !m.terminalFocused() {
 		return nil
 	}
@@ -299,3 +302,7 @@ func (m Model) ptyCursor() *tea.Cursor {
 // ptyGridTop is the screen row of the terminal grid's first cell: the
 // dashboard header, then the window bar mounted as the pane's title row.
 const ptyGridTop = 2
+
+// bodyTop is the screen row the body block starts on, under the one-row
+// dashboard header; overlayCursor anchors the popup's cursor to it.
+const bodyTop = 1

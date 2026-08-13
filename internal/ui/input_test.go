@@ -1159,7 +1159,7 @@ func TestTaskComposerWrapsLongPrompts(t *testing.T) {
 
 func TestTaskEditorRoundTripsThroughTheHandoffFile(t *testing.T) {
 	start := t.TempDir()
-	command, result, err := taskEditorCmd(
+	spec, err := taskEditorSpec(
 		"/usr/local/bin/nvim",
 		start,
 		"Review this workspace",
@@ -1167,16 +1167,17 @@ func TestTaskEditorRoundTripsThroughTheHandoffFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer spec.cleanup()
 
-	if command.Path != "/usr/local/bin/nvim" || command.Dir != start ||
-		len(command.Args) != 2 ||
-		!strings.HasSuffix(command.Args[1], ".md") {
-		t.Fatalf("editor command = %#v", command.Args)
+	if spec.path != "/usr/local/bin/nvim" || spec.dir != start ||
+		len(spec.args) != 1 ||
+		!strings.HasSuffix(spec.args[0], ".md") {
+		t.Fatalf("editor spec = %#v", spec)
 	}
 
 	// The editor "session": what is in the handoff when it exits is the
 	// task that comes back.
-	message := result(nil)
+	message := spec.result(nil)
 	edited, ok := message.(taskEditedMsg)
 	if !ok || edited.err != nil || edited.task != "Review this workspace" {
 		t.Fatalf("editor result = %#v", message)
@@ -1387,23 +1388,23 @@ func TestResolveYaziDirectory(t *testing.T) {
 
 func TestYaziPickerBuildsHandoffsAndResolvesTheChoice(t *testing.T) {
 	start := t.TempDir()
-	command, result, err := yaziPickerCmd("/usr/local/bin/yazi", start)
+	spec, err := yaziPickerSpec("/usr/local/bin/yazi", start)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if command.Path != "/usr/local/bin/yazi" || command.Dir != start {
-		t.Fatalf("picker command = %#v", command)
+	if spec.path != "/usr/local/bin/yazi" || spec.dir != start {
+		t.Fatalf("picker spec = %#v", spec)
 	}
-	args := strings.Join(command.Args, " ")
+	args := strings.Join(spec.args, " ")
 	if !strings.Contains(args, "--chooser-file") ||
 		!strings.Contains(args, "--cwd-file") {
-		t.Fatalf("Yazi handoff args = %#v", command.Args)
+		t.Fatalf("Yazi handoff args = %#v", spec.args)
 	}
 
 	// Empty handoffs are a cancelled pick, which completes cleanly with
 	// no path.
-	message := result(nil)
+	message := spec.result(nil)
 	picked, ok := message.(directoryPickedMsg)
 	if !ok || picked.err != nil || picked.path != "" {
 		t.Fatalf("picker result = %#v", message)
@@ -2367,6 +2368,10 @@ func (stubBackend) Delete(context.Context, string) error {
 
 func (stubBackend) AttachTerminal(context.Context, string, int, int) (pty.Transport, error) {
 	return nil, fmt.Errorf("stub backend has no terminals")
+}
+
+func (stubBackend) StartOverlay(context.Context, app.OverlayRequest) (app.Overlay, error) {
+	return nil, fmt.Errorf("stub backend hosts no overlays")
 }
 
 func (stubBackend) Providers() []provider.Info {

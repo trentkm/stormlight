@@ -28,6 +28,9 @@ type DispatchRequest struct {
 
 type AttachResult = session.AttachResult
 
+type OverlayRequest = session.OverlayRequest
+type Overlay = session.Overlay
+
 type Service struct {
 	runtime    session.Runtime
 	providers  *provider.Registry
@@ -472,6 +475,17 @@ func (s *Service) find(ctx context.Context, id string) (agent.Agent, error) {
 
 func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
+}
+
+// StartOverlay floats a short-lived interactive program (the Yazi picker,
+// the Neovim task editor) on a runtime-owned PTY, for the dashboard to
+// render in a popup.
+func (s *Service) StartOverlay(ctx context.Context, request session.OverlayRequest) (session.Overlay, error) {
+	host, ok := s.runtime.(session.OverlayHost)
+	if !ok {
+		return nil, fmt.Errorf("runtime cannot host overlays")
+	}
+	return host.StartOverlay(ctx, request)
 }
 
 // AttachTerminal surfaces the runtime's live terminal attachment as the

@@ -163,9 +163,16 @@ under a divider so streaming output stays visible; an agent with no
 transcript falls back to its terminal snapshot.
 
 External overlays — the Yazi directory picker and the Neovim task editor —
-always suspend the dashboard with `tea.ExecProcess` and run full-screen in
-the terminal, returning their results through permission-restricted
-temporary handoff files.
+float over the dashboard in a popup: the program runs in its own
+runtime-owned session (`session.OverlayHost`, a runtime capability beside
+`TerminalStreamer`), and the dashboard renders its terminal through the
+same widget as the Spanreed, composited into a modal frame. The keyboard
+belongs to the floating program while it is up — `Ctrl-q` cancels, which
+destroys the session — and results return through permission-restricted
+temporary handoff files when the program exits. Overlay sessions carry no
+agent document, so the roster never sees them, and Close always removes
+them from the daemon: an overlay resurrected from persistence would be a
+ghost with nothing waiting on its exit.
 
 ## State model
 

@@ -229,16 +229,17 @@ the agent list carries (the same thing `R` sets afterward, and what
 of the form in panes too short to hold both it and the task composer.
 
 Press `e` from the coding-agent picker or `Ctrl-o` from the task composer to
-edit the task in Neovim. The dashboard suspends, Neovim takes the terminal,
-and the saved text returns to the form.
+edit the task in Neovim, floating in a popup over the dashboard. The saved
+text returns to the form; `Ctrl-q` cancels without saving.
 
 Press `o` when the agent should run somewhere else. This opens the full
 directory picker with known workspaces, worktrees, components, Yazi, and
 interactive path entry. Use `j` / `k` or `gg` / `G` to select a location.
 Pressing `e` on a location edits that path directly. In Yazi, `Enter` chooses
 the highlighted directory (or a highlighted file's parent), `q` chooses
-Yazi's current directory, and `Q` cancels. Yazi runs full-screen while the
-dashboard suspends, and the dashboard returns the moment it closes.
+Yazi's current directory, and `Q` cancels. Yazi floats in a popup over the
+dashboard — its own live terminal in a modal frame — and the form takes the
+answer the moment it closes; `Ctrl-q` dismisses the popup outright.
 
 `Enter a path` is an interactive `cd` from the current directory: type to
 filter its subdirectories, `Tab` descends into the best match (arrows pick

@@ -4,14 +4,188 @@ package ui
 // Split from model.go; see #34.
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/pty"
 )
+
+// overlaySpec is one floating program the dashboard can host: what to run,
+// how to read its answer back, and how to clean up if it never answers.
+type overlaySpec struct {
+	title   string
+	path    string
+	args    []string
+	dir     string
+	result  func(error) tea.Msg
+	cleanup func()
+}
+
+// overlayView is the running overlay: a windrunner session rendered
+// through the same widget as the Spanreed, floated over the dashboard.
+type overlayView struct {
+	spec       overlaySpec
+	session    app.Overlay
+	widget     pty.Model
+	generation int
+}
+
+type overlayOpenedMsg struct {
+	generation int
+	spec       overlaySpec
+	session    app.Overlay
+	err        error
+}
+
+type overlayExitedMsg struct {
+	generation int
+	code       int
+}
+
+// overlayDimensions sizes the popup frame: most of the body, in the
+// proportions the tmux popups used, bounded so small terminals still get
+// a frame.
+func (m Model) overlayDimensions() (int, int) {
+	width, height := m.bodyDimensions()
+	return clamp(width*78/100, min(width, 24), width),
+		clamp(height*82/100, min(height, 8), height)
+}
+
+// openOverlay starts the spec's program in its own runtime session, sized
+// to the popup's inside. The opened message carries the session back; the
+// generation ties every later message to this particular opening.
+func (m *Model) openOverlay(spec overlaySpec) tea.Cmd {
+	m.overlayGeneration++
+	generation := m.overlayGeneration
+	outerWidth, outerHeight := m.overlayDimensions()
+	request := app.OverlayRequest{
+		Path: spec.path,
+		Args: spec.args,
+		Dir:  spec.dir,
+		Cols: max(2, outerWidth-2),
+		Rows: max(2, outerHeight-2),
+	}
+	backend := m.backend
+	m.status = "Opening " + strings.TrimSpace(spec.title)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		session, err := backend.StartOverlay(ctx, request)
+		return overlayOpenedMsg{
+			generation: generation,
+			spec:       spec,
+			session:    session,
+			err:        err,
+		}
+	}
+}
+
+// handleOverlayOpened builds the widget over the session's terminal and
+// starts the exit watch. A stale generation means the user already
+// cancelled a slow open: the session is destroyed, not adopted.
+func (m Model) handleOverlayOpened(msg overlayOpenedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		msg.spec.cleanup()
+		m.err = msg.err
+		m.status = "Action failed"
+		return m, nil
+	}
+	if msg.generation != m.overlayGeneration || m.overlay != nil {
+		session := msg.session
+		msg.spec.cleanup()
+		return m, func() tea.Msg { session.Close(); return nil }
+	}
+	outerWidth, outerHeight := m.overlayDimensions()
+	widget := pty.New(msg.session, m.ptyManager.Gate(),
+		max(2, outerWidth-2), max(2, outerHeight-2))
+	widget.SetVisible(true)
+	m.overlay = &overlayView{
+		spec:       msg.spec,
+		session:    msg.session,
+		widget:     widget,
+		generation: msg.generation,
+	}
+	session := msg.session
+	generation := msg.generation
+	exitWatch := func() tea.Msg {
+		return overlayExitedMsg{generation: generation, code: <-session.Exited()}
+	}
+	return m, tea.Batch(exitWatch, m.armPTYWait())
+}
+
+// handleOverlayExited closes the popup and reads the program's answer
+// back. Cancel bumps the generation, so a late exit from a killed session
+// falls through the guard.
+func (m Model) handleOverlayExited(msg overlayExitedMsg) (tea.Model, tea.Cmd) {
+	if m.overlay == nil || msg.generation != m.overlay.generation {
+		return m, nil
+	}
+	view := m.overlay
+	m.overlay = nil
+	return m, func() tea.Msg {
+		view.widget.Close()
+		if msg.code != 0 {
+			return view.spec.result(fmt.Errorf(
+				"%s exited with status %d", strings.TrimSpace(view.spec.title), msg.code))
+		}
+		return view.spec.result(nil)
+	}
+}
+
+// updateOverlayKey forwards the keyboard to the floating program, byte for
+// byte; ctrl+q is the one key that stays ours, and it cancels.
+func (m Model) updateOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+q" {
+		return m.cancelOverlay()
+	}
+	data := pty.KeyToBytes(msg)
+	if len(data) == 0 {
+		return m, nil
+	}
+	return m, writeTerminalCmd(m.overlay.widget, data)
+}
+
+// cancelOverlay tears the popup down without an answer: the session dies
+// with it, and the handoff files are removed unread.
+func (m Model) cancelOverlay() (tea.Model, tea.Cmd) {
+	view := m.overlay
+	m.overlay = nil
+	m.overlayGeneration++
+	m.status = "Cancelled"
+	return m, func() tea.Msg {
+		view.widget.Close()
+		view.spec.cleanup()
+		return nil
+	}
+}
+
+// renderOverlayPopup is the floating frame: the program's live terminal
+// inside the modal border every other overlay wears.
+func (m Model) renderOverlayPopup() string {
+	outerWidth, outerHeight := m.overlayDimensions()
+	return renderModal(m.overlay.widget.View(), outerWidth, outerHeight)
+}
+
+// overlayCursor places the floating program's cursor on the screen: the
+// popup's centered origin, plus its border, plus the widget's own
+// box-relative answer.
+func (m Model) overlayCursor() *tea.Cursor {
+	x, y, visible := m.overlay.widget.Cursor()
+	if !visible {
+		return nil
+	}
+	width, height := m.bodyDimensions()
+	outerWidth, outerHeight := m.overlayDimensions()
+	left := max(0, (width-outerWidth)/2)
+	top := max(0, (height-outerHeight)/2)
+	return tea.NewCursor(left+1+x, bodyTop+top+1+y)
+}
 
 func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if m.nvimPath == "" {
@@ -23,27 +197,22 @@ func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if !isDirectory(cwd) {
 		cwd = m.initialCwd
 	}
-	command, result, err := taskEditorCmd(m.nvimPath, cwd, m.taskInput.Value())
+	spec, err := taskEditorSpec(m.nvimPath, cwd, m.taskInput.Value())
 	if err != nil {
 		m.err = err
 		m.status = "Action failed"
 		return m, nil
 	}
-	m.status = "Opening Neovim"
-	return m, tea.ExecProcess(command, result)
+	return m, m.openOverlay(spec)
 }
 
-// taskEditorCmd builds the editor invocation and the completion handler
-// that reads the edited task back; the caller suspends the dashboard
-// around it with tea.ExecProcess.
-func taskEditorCmd(
-	binary string,
-	cwd string,
-	task string,
-) (*exec.Cmd, func(error) tea.Msg, error) {
+// taskEditorSpec builds the editor overlay: the invocation, and the
+// completion handler that reads the edited task back from the handoff
+// file.
+func taskEditorSpec(binary, cwd, task string) (overlaySpec, error) {
 	handoff, err := os.CreateTemp("", "stormlight-task-*.md")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create task editor file: %w", err)
+		return overlaySpec{}, fmt.Errorf("create task editor file: %w", err)
 	}
 	handoffPath := handoff.Name()
 	cleanup := func() {
@@ -52,11 +221,11 @@ func taskEditorCmd(
 	if _, err := handoff.WriteString(task); err != nil {
 		_ = handoff.Close()
 		cleanup()
-		return nil, nil, fmt.Errorf("write task editor file: %w", err)
+		return overlaySpec{}, fmt.Errorf("write task editor file: %w", err)
 	}
 	if err := handoff.Close(); err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("close task editor file: %w", err)
+		return overlaySpec{}, fmt.Errorf("close task editor file: %w", err)
 	}
 
 	result := func(runErr error) tea.Msg {
@@ -76,9 +245,14 @@ func taskEditorCmd(
 		}
 	}
 
-	command := exec.Command(binary, handoffPath)
-	command.Dir = cwd
-	return command, result, nil
+	return overlaySpec{
+		title:   "Neovim",
+		path:    binary,
+		args:    []string{handoffPath},
+		dir:     cwd,
+		result:  result,
+		cleanup: cleanup,
+	}, nil
 }
 
 func (m Model) openYazi() (tea.Model, tea.Cmd) {
@@ -94,31 +268,27 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	if !isDirectory(start) {
 		start = m.initialCwd
 	}
-	command, result, err := yaziPickerCmd(m.yaziPath, start)
+	spec, err := yaziPickerSpec(m.yaziPath, start)
 	if err != nil {
 		m.err = err
 		m.status = "Action failed"
 		return m, nil
 	}
-	m.status = "Opening Yazi"
-	return m, tea.ExecProcess(command, result)
+	return m, m.openOverlay(spec)
 }
 
-// yaziPickerCmd builds the picker invocation and the completion handler
-// that resolves the chosen directory; the caller suspends the dashboard
-// around it with tea.ExecProcess.
-func yaziPickerCmd(
-	binary string,
-	start string,
-) (*exec.Cmd, func(error) tea.Msg, error) {
+// yaziPickerSpec builds the picker overlay: the invocation, and the
+// completion handler that resolves the chosen directory from the handoff
+// files.
+func yaziPickerSpec(binary, start string) (overlaySpec, error) {
 	choiceHandoff, err := createYaziHandoff("choice")
 	if err != nil {
-		return nil, nil, err
+		return overlaySpec{}, err
 	}
 	cwdHandoff, err := createYaziHandoff("cwd")
 	if err != nil {
 		_ = os.Remove(choiceHandoff)
-		return nil, nil, err
+		return overlaySpec{}, err
 	}
 
 	pickerArgs := []string{
@@ -150,9 +320,17 @@ func yaziPickerCmd(
 		return directoryPickedMsg{path: selected}
 	}
 
-	command := exec.Command(binary, pickerArgs...)
-	command.Dir = start
-	return command, result, nil
+	return overlaySpec{
+		title:  "Yazi",
+		path:   binary,
+		args:   pickerArgs,
+		dir:    start,
+		result: result,
+		cleanup: func() {
+			_ = os.Remove(choiceHandoff)
+			_ = os.Remove(cwdHandoff)
+		},
+	}, nil
 }
 
 func createYaziHandoff(kind string) (string, error) {

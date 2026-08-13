@@ -39,6 +39,33 @@ type TerminalStream interface {
 	Close()
 }
 
+// OverlayRequest describes a short-lived interactive program the
+// dashboard wants floated over itself rather than handed the whole
+// screen: the Yazi picker, the Neovim task editor.
+type OverlayRequest struct {
+	Path string
+	Args []string
+	Dir  string
+	Cols int
+	Rows int
+}
+
+// Overlay is one running overlay program: its terminal stream plus the
+// exit the dashboard waits on. Close always destroys the hosting session —
+// an overlay must never persist into the roster.
+type Overlay interface {
+	TerminalStream
+	Exited() <-chan int
+}
+
+// OverlayHost is an optional runtime capability: run a short-lived
+// interactive program on a runtime-owned PTY and stream its terminal, so
+// the dashboard can float it in a popup instead of surrendering the
+// screen.
+type OverlayHost interface {
+	StartOverlay(ctx context.Context, request OverlayRequest) (Overlay, error)
+}
+
 type DispatchRequest struct {
 	Provider  agent.Provider
 	Name      string
