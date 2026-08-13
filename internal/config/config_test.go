@@ -30,8 +30,8 @@ func TestLoadMissingFileYieldsDefaults(t *testing.T) {
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("err = %v, warnings = %v", err, warnings)
 	}
-	if cfg.SocketOr("stormlight") != "stormlight" {
-		t.Fatalf("socket = %q", cfg.SocketOr("stormlight"))
+	if cfg.Defaults.Provider != "" || cfg.Defaults.Mode != "" {
+		t.Fatalf("defaults = %#v", cfg.Defaults)
 	}
 }
 
@@ -40,12 +40,6 @@ func TestLoadParsesAndValidates(t *testing.T) {
 [defaults]
 provider = "claude"
 mode = "auto"
-
-[tmux]
-socket = ""
-return_keys = ["F12"]
-next_keys = ["F11"]
-previous_keys = ["F10"]
 
 [ui]
 rows = "sideways"
@@ -63,18 +57,6 @@ provider = "codex"
 	}
 	if cfg.Defaults.Provider != "claude" || cfg.Defaults.Mode != "auto" {
 		t.Fatalf("defaults = %#v", cfg.Defaults)
-	}
-	if cfg.SocketOr("stormlight") != "" {
-		t.Fatal("explicit empty socket was not honored")
-	}
-	if len(cfg.Tmux.ReturnKeys) != 1 || cfg.Tmux.ReturnKeys[0] != "F12" {
-		t.Fatalf("return keys = %#v", cfg.Tmux.ReturnKeys)
-	}
-	if len(cfg.Tmux.NextKeys) != 1 || cfg.Tmux.NextKeys[0] != "F11" {
-		t.Fatalf("next keys = %#v", cfg.Tmux.NextKeys)
-	}
-	if len(cfg.Tmux.PreviousKeys) != 1 || cfg.Tmux.PreviousKeys[0] != "F10" {
-		t.Fatalf("previous keys = %#v", cfg.Tmux.PreviousKeys)
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "ui.rows") {
 		t.Fatalf("warnings = %#v", warnings)
@@ -131,7 +113,7 @@ mode = "yolo"
 }
 
 func TestEffectiveTOMLFillsBuiltinDefaults(t *testing.T) {
-	rendered, err := Config{}.EffectiveTOML("stormlight-sock", "stormlight-agents")
+	rendered, err := Config{}.EffectiveTOML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +121,6 @@ func TestEffectiveTOMLFillsBuiltinDefaults(t *testing.T) {
 	for _, want := range []string{
 		`provider = 'codex'`,
 		`mode = '` + string(agent.DefaultMode) + `'`,
-		`session = 'stormlight-agents'`,
-		`socket = 'stormlight-sock'`,
-		`return_keys = ['C-6', 'C-^']`,
-		`next_keys = ['C-]']`,
-		`previous_keys = ['C-\']`,
 		`rows = 'compact'`,
 		`level = 'info'`,
 	} {
@@ -154,20 +131,13 @@ func TestEffectiveTOMLFillsBuiltinDefaults(t *testing.T) {
 }
 
 func TestEffectiveTOMLKeepsFileValuesOverDefaults(t *testing.T) {
-	socket := ""
 	cfg := Config{
-		Defaults: Defaults{Provider: "claude", Mode: "ask", Session: "mine"},
-		Tmux: Tmux{
-			Socket:       &socket,
-			ReturnKeys:   []string{"F12"},
-			NextKeys:     []string{"F11"},
-			PreviousKeys: []string{"F10"},
-		},
-		UI:  UI{Rows: "sideways"},
-		Log: Log{Level: "debug"},
+		Defaults: Defaults{Provider: "claude", Mode: "ask"},
+		UI:       UI{Rows: "sideways"},
+		Log:      Log{Level: "debug"},
 	}
 
-	rendered, err := cfg.EffectiveTOML("stormlight-sock", "stormlight-agents")
+	rendered, err := cfg.EffectiveTOML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,11 +145,6 @@ func TestEffectiveTOMLKeepsFileValuesOverDefaults(t *testing.T) {
 	for _, want := range []string{
 		`provider = 'claude'`,
 		`mode = 'ask'`,
-		`session = 'mine'`,
-		`socket = ''`,
-		`return_keys = ['F12']`,
-		`next_keys = ['F11']`,
-		`previous_keys = ['F10']`,
 		`rows = 'sideways'`,
 		`level = 'debug'`,
 	} {
@@ -187,15 +152,10 @@ func TestEffectiveTOMLKeepsFileValuesOverDefaults(t *testing.T) {
 			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
 		}
 	}
-	// An explicit empty socket means "the default tmux server" and must not
-	// be overwritten by the built-in.
-	if strings.Contains(rendered, "stormlight-sock") {
-		t.Fatalf("explicit empty socket was replaced:\n%s", rendered)
-	}
 }
 
 func TestEffectiveTOMLRoundTripsThroughLoad(t *testing.T) {
-	rendered, err := Config{}.EffectiveTOML("stormlight-sock", "stormlight-agents")
+	rendered, err := Config{}.EffectiveTOML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,11 +168,8 @@ func TestEffectiveTOMLRoundTripsThroughLoad(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("rendered config produced warnings %#v:\n%s", warnings, rendered)
 	}
-	if cfg.Defaults.Provider != "codex" || cfg.Defaults.Session != "stormlight-agents" {
+	if cfg.Defaults.Provider != "codex" {
 		t.Fatalf("defaults did not survive the round trip: %#v", cfg.Defaults)
-	}
-	if cfg.SocketOr("fallback") != "stormlight-sock" {
-		t.Fatalf("socket = %q", cfg.SocketOr("fallback"))
 	}
 }
 

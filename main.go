@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,11 +19,8 @@ import (
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/provider"
-	"github.com/trentkm/stormlight/internal/resurrect"
-	"github.com/trentkm/stormlight/internal/selfpath"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
-	"github.com/trentkm/stormlight/internal/tmux"
 	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/windrun"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -35,8 +30,6 @@ import (
 )
 
 var version = "dev"
-
-const dashboardHostedEnv = "STORMLIGHT_UI_HOSTED"
 
 func main() {
 	root := newRootCommand()
@@ -51,8 +44,6 @@ func main() {
 }
 
 func newRootCommand() *cobra.Command {
-	var socket string
-	var sessionName string
 	var logFile string
 	var logLevel string
 
@@ -96,29 +87,9 @@ func newRootCommand() *cobra.Command {
 				}
 				openPath = resolved
 			}
-			if shouldHostDashboard() {
-				tmuxPath, lookupErr := exec.LookPath("tmux")
-				if lookupErr == nil {
-					return hostDashboard(cmd, tmuxPath, socket)
-				}
-				diagnostic.Logger().Warn(
-					"tmux is unavailable; running dashboard directly",
-					"error", lookupErr,
-				)
-			}
-			configureHostedDashboard(socket)
-			return runDashboard(socket, sessionName, cfg, openPath)
+			return runDashboard(cmd, cfg, openPath)
 		},
 	}
-	root.PersistentFlags().StringVar(&socket, "tmux-socket",
-		envFirstOr(cfg.SocketOr(tmux.DefaultSocket), "STORMLIGHT_TMUX_SOCKET"),
-		"tmux socket name; empty targets the default tmux server",
-	)
-	root.PersistentFlags().StringVar(&sessionName, "session",
-		envFirstOr(configValueOr(cfg.Defaults.Session, "stormlight-agents"),
-			"STORMLIGHT_SESSION"),
-		"managed tmux session name",
-	)
 	root.PersistentFlags().StringVar(&logFile, "log-file",
 		envFirstOr(cfg.Log.File, "STORMLIGHT_LOG_FILE"),
 		"diagnostic log file",
@@ -129,21 +100,18 @@ func newRootCommand() *cobra.Command {
 	)
 
 	root.AddCommand(
-		newDispatchCommand(&socket, &sessionName, cfg),
-		newListCommand(&socket, &sessionName, cfg),
-		newAttachCommand(&socket, &sessionName, cfg),
-		newSendCommand(&socket, &sessionName, cfg),
-		newRenameCommand(&socket, &sessionName, cfg),
-		newStopCommand(&socket, &sessionName, cfg),
-		newDeleteCommand(&socket, &sessionName, cfg),
-		newMarkCommand(&socket, &sessionName, cfg),
-		newNextCommand(&socket, &sessionName, cfg),
-		newEventCommand(&socket, &sessionName, cfg),
-		newProviderEventCommand(&socket, &sessionName, cfg),
+		newDispatchCommand(cfg),
+		newListCommand(cfg),
+		newAttachCommand(cfg),
+		newSendCommand(cfg),
+		newRenameCommand(cfg),
+		newStopCommand(cfg),
+		newDeleteCommand(cfg),
+		newMarkCommand(cfg),
+		newEventCommand(cfg),
+		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
-		newRunCommand(&socket, &sessionName, cfg),
-		newRestoreCommand(&socket, &sessionName, cfg),
-		newConfigCommand(&socket, &sessionName, cfg),
+		newConfigCommand(cfg),
 		newWindrunnerDaemonCommand(),
 		newWindrunnerAttachCommand(),
 	)
@@ -173,9 +141,9 @@ func newWindrunnerDaemonCommand() *cobra.Command {
 	}
 }
 
-// newWindrunnerAttachCommand is the Enter key's other half for windrunner
-// agents: a full-terminal interactive attachment, ctrl+q to come back.
-// The dashboard runs it through ExecProcess.
+// newWindrunnerAttachCommand is the F key's other half: a full-terminal
+// interactive attachment, ctrl+q to come back. The dashboard runs it
+// through ExecProcess.
 func newWindrunnerAttachCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "_wrattach <session-id>",
@@ -238,13 +206,13 @@ func providerSpecs(cfg config.Config) []provider.Spec {
 	return specs
 }
 
-func newConfigCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newConfigCommand(cfg config.Config) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "config",
 		Short: "Show the effective configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(cmd.OutOrStdout(), "# "+config.Path())
-			rendered, err := cfg.EffectiveTOML(*socket, *sessionName)
+			rendered, err := cfg.EffectiveTOML()
 			if err != nil {
 				return err
 			}
@@ -271,8 +239,7 @@ func newConfigCommand(socket, sessionName *string, cfg config.Config) *cobra.Com
 }
 
 // openWorkspacePath validates the optional root-command argument early, so
-// a bad path fails in the caller's terminal instead of inside the hosted
-// dashboard session.
+// a bad path fails before the dashboard takes the terminal.
 func openWorkspacePath(argument string) (string, error) {
 	absolute, err := filepath.Abs(argument)
 	if err != nil {
@@ -285,26 +252,10 @@ func openWorkspacePath(argument string) (string, error) {
 	return absolute, nil
 }
 
-func shouldHostDashboard() bool {
-	return os.Getenv("TMUX") == "" && !dashboardIsHosted()
-}
-
-func dashboardIsHosted() bool {
-	return os.Getenv(dashboardHostedEnv) != ""
-}
-
-func runDashboard(socket, sessionName string, cfg config.Config, openPath string) error {
-	service, err := newService(socket, sessionName, cfg)
+func runDashboard(command *cobra.Command, cfg config.Config, openPath string) error {
+	service, err := newService(cfg)
 	if err != nil {
 		return err
-	}
-	// A running appliance server keeps the options it booted with, so a
-	// dashboard launch is the moment upgraded configuration reaches it. The
-	// user's default server (empty socket) is never touched.
-	if runtime, ok := service.Runtime().(*tmux.Runtime); ok && socket != "" {
-		if err := runtime.ApplyServerOptions(context.Background()); err != nil {
-			diagnostic.Logger().Warn("apply server options failed", "error", err)
-		}
 	}
 	// The session history log accretes one line per provider event, and
 	// dashboard launch is the natural moment to fold it down: off every
@@ -331,12 +282,6 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 		}
 		options.SelectWorkspaceID = value.ID
 	}
-	currentSurface := surface.Surface(surface.NewDirect())
-	if os.Getenv("TMUX") != "" {
-		if tmuxPath, lookupErr := exec.LookPath("tmux"); lookupErr == nil {
-			currentSurface = tmux.NewSurface(tmuxPath)
-		}
-	}
 	options.DefaultMode, err = agent.ParseMode(cfg.Defaults.Mode)
 	if err != nil {
 		options.DefaultMode = agent.DefaultMode
@@ -351,47 +296,17 @@ func runDashboard(socket, sessionName string, cfg config.Config, openPath string
 	// SGR report cut at three different points and getting a single clean
 	// wheel event and no stray keys each time.
 	program := tea.NewProgram(
-		ui.NewModelWithOptions(service, currentSurface, options),
+		ui.NewModelWithOptions(service, surface.NewDirect(), options),
 	)
-	_, err = program.Run()
-	return err
-}
-
-func hostDashboard(command *cobra.Command, tmuxPath, socket string) error {
-	executable, err := selfpath.Resolve()
-	if err != nil {
+	if _, err = program.Run(); err != nil {
 		return err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("find dashboard directory: %w", err)
-	}
-
-	session := dashboardSessionName(os.Getpid(), time.Now())
-	shellCommand := dashboardShellCommand(executable, os.Args[1:])
-	args := dashboardHostArgs(
-		socket,
-		stormlightServerConfig(socket),
-		session,
-		cwd,
-		shellCommand,
-	)
-	process := exec.Command(tmuxPath, args...)
-	process.Stdin = command.InOrStdin()
-	process.Stdout = command.OutOrStdout()
-	process.Stderr = command.ErrOrStderr()
-
-	defer cleanupDashboardSession(tmuxPath, socket, session)
-	if err := process.Run(); err != nil {
-		return fmt.Errorf("host dashboard in tmux: %w", err)
 	}
 	printFarewell(command.OutOrStdout())
 	return nil
 }
 
-// printFarewell replaces tmux's parting "[exited]" line with Stormlight's
-// own. Only on a clean exit — an error's output must stay readable — and
-// only on a real terminal.
+// printFarewell speaks the oath on the way out. Only on a clean exit — an
+// error's output must stay readable — and only on a real terminal.
 func printFarewell(out io.Writer) {
 	file, ok := out.(*os.File)
 	if !ok {
@@ -401,103 +316,8 @@ func printFarewell(out io.Writer) {
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return
 	}
-	// Cursor up onto tmux's "[exited]" line, clear it, speak the oath.
-	fmt.Fprint(file, "\x1b[A\x1b[2K")
 	fmt.Fprintln(file,
 		"\x1b[38;2;125;207;255m✦\x1b[0m \x1b[2mJourney before destination.\x1b[0m")
-}
-
-func dashboardSessionName(pid int, now time.Time) string {
-	return fmt.Sprintf(
-		"stormlight-ui-%d-%06x",
-		pid,
-		uint64(now.UnixNano())&0xffffff,
-	)
-}
-
-func dashboardShellCommand(executable string, args []string) string {
-	command := append([]string{executable}, args...)
-	return dashboardHostedEnv + "=1 exec " + shellJoinCommand(command)
-}
-
-func dashboardHostArgs(socket, config, session, cwd, shellCommand string) []string {
-	args := make([]string, 0, 12)
-	if socket != "" {
-		args = append(args, "-L", socket)
-	}
-	if config != "" {
-		args = append(args, "-f", config)
-	}
-	return append(
-		args,
-		"new-session",
-		"-s", session,
-		"-c", cwd,
-		"-n", "stormlight",
-		shellCommand,
-	)
-}
-
-func configureHostedDashboard(socket string) {
-	if !dashboardIsHosted() || os.Getenv("TMUX") == "" {
-		return
-	}
-	tmuxPath, err := exec.LookPath("tmux")
-	if err != nil {
-		diagnostic.Logger().Warn(
-			"cannot configure hosted dashboard",
-			"error", err,
-		)
-		return
-	}
-
-	pane := os.Getenv("TMUX_PANE")
-	displayArgs := tmuxSocketArgs(socket,
-		"display-message", "-p", "-t", pane, "#{session_id}",
-	)
-	output, err := exec.Command(tmuxPath, displayArgs...).CombinedOutput()
-	if err != nil {
-		diagnostic.Logger().Warn(
-			"cannot identify hosted dashboard session",
-			"error", strings.TrimSpace(string(output)),
-		)
-		return
-	}
-	session := strings.TrimSpace(string(output))
-	args := tmuxSocketArgs(
-		socket,
-		"set-option", "-t", session, "status", "off",
-	)
-	if output, err := exec.Command(tmuxPath, args...).CombinedOutput(); err != nil {
-		diagnostic.Logger().Warn(
-			"cannot hide hosted dashboard status",
-			"error", strings.TrimSpace(string(output)),
-		)
-	}
-}
-
-func cleanupDashboardSession(tmuxPath, socket, session string) {
-	args := tmuxSocketArgs(socket, "kill-session", "-t", session)
-	_ = exec.Command(tmuxPath, args...).Run()
-}
-
-func tmuxSocketArgs(socket string, args ...string) []string {
-	if socket == "" {
-		return args
-	}
-	return append([]string{"-L", socket}, args...)
-}
-
-func shellJoinCommand(args []string) string {
-	quoted := make([]string, len(args))
-	for index, arg := range args {
-		if arg == "" {
-			quoted[index] = "''"
-			continue
-		}
-		quoted[index] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-	}
-	return strings.Join(quoted, " ")
 }
 
 func newLogsCommand(logFile *string) *cobra.Command {
@@ -530,64 +350,20 @@ func newLogsCommand(logFile *string) *cobra.Command {
 	return command
 }
 
-func newService(socket, sessionName string, cfg config.Config) (*app.Service, error) {
-	if os.Getenv(windrun.RuntimeEnv) == "windrunner" {
-		// Agents live in the windrunner daemon: PTYs the engine owns,
-		// terminals that are authoritative state rather than sampled
-		// panes. No tmux anywhere on this path. The resurrect store stays
-		// out of it — the daemon persisting sessions is the roster, and a
-		// windrunner roster must not overwrite the tmux world's snapshot.
-		runtime, err := windrun.NewRuntime()
-		if err != nil {
-			return nil, err
-		}
-		registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
-		return app.NewService(runtime, registry, workspace.NewRegistry()), nil
-	}
-	client := tmux.NewClient(socket)
-	if serverConfig := stormlightServerConfig(socket); serverConfig != "" {
-		client = tmux.NewClientWithConfig(socket, serverConfig)
-	}
-	runtime, err := tmux.NewRuntime(client, sessionName)
+// newService builds the app service over the windrunner runtime: agents
+// live in the windrunner daemon — PTYs the engine owns, terminals that are
+// authoritative state rather than sampled panes — so they outlive every
+// dashboard and every terminal the dashboard ran in.
+func newService(cfg config.Config) (*app.Service, error) {
+	runtime, err := windrun.NewRuntime()
 	if err != nil {
 		return nil, err
 	}
-	if len(cfg.Tmux.ReturnKeys) > 0 {
-		runtime.SetReturnKeys(cfg.Tmux.ReturnKeys)
-	}
-	if len(cfg.Tmux.NextKeys) > 0 {
-		runtime.SetNextKeys(cfg.Tmux.NextKeys)
-	}
-	if len(cfg.Tmux.PreviousKeys) > 0 {
-		runtime.SetPreviousKeys(cfg.Tmux.PreviousKeys)
-	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
-	// Every command that reaches the runtime keeps the roster on disk. It
-	// has to be every one: a server dies without warning, and the snapshot
-	// is only worth reading if it was current when that happened.
-	return app.NewService(runtime, registry, workspace.NewRegistry()).
-		Remembering(resurrect.NewStore()), nil
+	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
 }
 
-// stormlightServerConfig resolves the config for Stormlight-owned tmux
-// servers. An empty socket targets the user's default server, which keeps
-// their own configuration; Stormlight's config is never applied there.
-func stormlightServerConfig(socket string) string {
-	if socket == "" {
-		return ""
-	}
-	path, err := tmux.EnsureServerConfig(config.Dir())
-	if err != nil {
-		diagnostic.Logger().Warn(
-			"cannot prepare Stormlight tmux config; using tmux defaults",
-			"error", err,
-		)
-		return ""
-	}
-	return path
-}
-
-func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newDispatchCommand(cfg config.Config) *cobra.Command {
 	var providerName string
 	var cwd string
 	var name string
@@ -595,7 +371,7 @@ func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.C
 
 	command := &cobra.Command{
 		Use:   "dispatch [task]",
-		Short: "Start an agent in a managed tmux window",
+		Short: "Start a managed agent",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, err := readTask(args)
@@ -618,7 +394,7 @@ func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.C
 					}
 				}
 			}
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -634,7 +410,7 @@ func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.C
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s\t%s\t%s\n", managedAgent.ID, managedAgent.Name, managedAgent.WindowID)
+			fmt.Printf("%s\t%s\n", managedAgent.ID, managedAgent.Name)
 			return nil
 		},
 	}
@@ -642,7 +418,7 @@ func newDispatchCommand(socket, sessionName *string, cfg config.Config) *cobra.C
 		configValueOr(cfg.Defaults.Provider, string(agent.ProviderCodex)),
 		"provider: codex, claude, or a configured provider")
 	command.Flags().StringVarP(&cwd, "cwd", "C", "", "working directory")
-	command.Flags().StringVarP(&name, "name", "n", "", "tmux window name")
+	command.Flags().StringVarP(&name, "name", "n", "", "agent name")
 	command.Flags().StringVarP(&modeName, "mode", "m",
 		configValueOr(cfg.Defaults.Mode, string(agent.DefaultMode)),
 		"permission mode: ask, edits, or auto")
@@ -658,118 +434,13 @@ func dispatchDirectory(cwd string) (string, error) {
 	return filepath.Abs(cwd)
 }
 
-// newRestoreCommand brings agents back from the snapshot after the tmux
-// server that held them is gone. Listing is the default because restoring is
-// not: it opens conversations and costs real windows, so it happens when
-// asked for.
-func newRestoreCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
-	var restoreAll bool
-	var forget bool
-	command := &cobra.Command{
-		Use:   "restore [id...]",
-		Short: "Bring remembered agents back after the tmux server is gone",
-		Long: "Restore reopens each agent's conversation where it left off " +
-			"and idles at the composer; it never resumes the agent's work.\n\n" +
-			"With no arguments it lists what is remembered. Name ids to " +
-			"restore them, or pass --all for everything that can come back.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
-			if err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-			defer cancel()
-
-			if forget {
-				if len(args) == 0 {
-					return fmt.Errorf("name the agents to forget")
-				}
-				if err := service.Forget(ctx, args...); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Forgot %d agent(s).\n", len(args))
-				return nil
-			}
-
-			candidates, err := service.RestoreCandidates(ctx)
-			if err != nil {
-				return err
-			}
-			if len(candidates) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(),
-					"Nothing remembered in %s.\n", service.SnapshotPath())
-				return nil
-			}
-			if len(args) == 0 && !restoreAll {
-				printRestoreCandidates(cmd.OutOrStdout(), candidates)
-				return nil
-			}
-			results, err := service.Restore(ctx, args...)
-			if err != nil {
-				return err
-			}
-			return printRestoreResults(cmd.OutOrStdout(), results)
-		},
-	}
-	command.Flags().BoolVar(&restoreAll, "all", false,
-		"restore every agent that can come back")
-	command.Flags().BoolVar(&forget, "forget", false,
-		"drop the named agents from the record instead of restoring them")
-	return command
-}
-
-func printRestoreCandidates(out io.Writer, candidates []resurrect.Candidate) {
-	fmt.Fprintf(out, "%-10s %-8s %-24s %s\n", "ID", "PROVIDER", "NAME", "STATE")
-	for _, candidate := range candidates {
-		state := "restorable"
-		switch {
-		case candidate.Live:
-			state = "running"
-		case candidate.Reason != "":
-			state = candidate.Reason
-		}
-		fmt.Fprintf(out, "%-10s %-8s %-24s %s\n",
-			shortID(candidate.Entry.ID),
-			candidate.Entry.Provider,
-			truncatePlain(candidate.Entry.Name, 24),
-			state,
-		)
-	}
-	if len(resurrect.Restorable(candidates)) > 0 {
-		fmt.Fprintln(out, "\nRestore them with: stormlight restore --all")
-	}
-}
-
-func printRestoreResults(out io.Writer, results []app.RestoreResult) error {
-	if len(results) == 0 {
-		fmt.Fprintln(out, "Nothing to restore.")
-		return nil
-	}
-	failures := 0
-	for _, result := range results {
-		if result.Err != nil {
-			failures++
-			fmt.Fprintf(out, "%-10s %s: %v\n",
-				shortID(result.Entry.ID), result.Entry.Name, result.Err)
-			continue
-		}
-		fmt.Fprintf(out, "%-10s %s restored\n",
-			shortID(result.Agent.ID), result.Agent.Name)
-	}
-	if failures > 0 {
-		return fmt.Errorf("%d of %d agents could not be restored",
-			failures, len(results))
-	}
-	return nil
-}
-
-func newListCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newListCommand(cfg config.Config) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List managed agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -805,13 +476,13 @@ func newListCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 	return command
 }
 
-func newAttachCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newAttachCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <id>",
-		Short: "Switch the current tmux client to an agent",
+		Short: "Attach an agent's terminal, full screen",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -826,20 +497,20 @@ func newAttachCommand(socket, sessionName *string, cfg config.Config) *cobra.Com
 			result.Command.Stdout = cmd.OutOrStdout()
 			result.Command.Stderr = cmd.ErrOrStderr()
 			if err := result.Command.Run(); err != nil {
-				return fmt.Errorf("attach tmux session: %w", err)
+				return fmt.Errorf("attach agent: %w", err)
 			}
 			return nil
 		},
 	}
 }
 
-func newRenameCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newRenameCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "rename <id> <name>",
 		Short: "Rename an agent",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -848,13 +519,13 @@ func newRenameCommand(socket, sessionName *string, cfg config.Config) *cobra.Com
 	}
 }
 
-func newSendCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newSendCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "send <id> <message>",
 		Short: "Send a message to an agent",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -863,13 +534,13 @@ func newSendCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 	}
 }
 
-func newStopCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newStopCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <id>",
 		Short: "Interrupt an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -878,13 +549,13 @@ func newStopCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 	}
 }
 
-func newDeleteCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newDeleteCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>",
-		Short: "Delete an agent tmux window",
+		Short: "Delete an agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -893,7 +564,7 @@ func newDeleteCommand(socket, sessionName *string, cfg config.Config) *cobra.Com
 	}
 }
 
-func newMarkCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newMarkCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "mark <id> <working|attention|none>",
 		Short: "Record your own reading of an agent's state",
@@ -906,7 +577,7 @@ func newMarkCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -915,56 +586,7 @@ func newMarkCommand(socket, sessionName *string, cfg config.Config) *cobra.Comma
 	}
 }
 
-// newNextCommand is what the tmux queue keys invoke. The ordering it applies
-// depends on marks and on when each agent started waiting — inference tmux
-// formats cannot rank — so the binding calls back into the binary that keeps
-// that record rather than trying to express it as a format.
-func newNextCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
-	var client string
-	var window string
-	var agentID string
-	var previous bool
-
-	command := &cobra.Command{
-		Use:   "next",
-		Short: "Switch to the next agent waiting on you",
-		Long: "Hand the terminal the next agent in the attention queue, " +
-			"oldest first. From inside an agent the queue steps past it; " +
-			"from anywhere else it starts at the end it came from. Visiting " +
-			"an agent leaves its attention exactly as it was.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := newService(*socket, *sessionName, cfg)
-			if err != nil {
-				return err
-			}
-			runtime, ok := service.Runtime().(*tmux.Runtime)
-			if !ok {
-				return fmt.Errorf("the queue needs a tmux runtime")
-			}
-			step := agent.QueueForward
-			if previous {
-				step = agent.QueueBack
-			}
-			return runtime.NextWaiting(cmd.Context(), tmux.NextRequest{
-				Client: client,
-				Window: window,
-				Agent:  agentID,
-				Step:   step,
-			})
-		},
-	}
-	command.Flags().StringVar(&client, "client", "",
-		"tmux client to switch (default: the current one)")
-	command.Flags().StringVar(&window, "window", "",
-		"tmux window the request came from")
-	command.Flags().StringVar(&agentID, "agent", "",
-		"agent the request came from; the queue steps past it")
-	command.Flags().BoolVar(&previous, "previous", false,
-		"step back through the queue instead of forward")
-	return command
-}
-
-func newEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newEventCommand(cfg config.Config) *cobra.Command {
 	var id string
 	var state string
 	var attention string
@@ -988,7 +610,7 @@ func newEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				return err
 			}
@@ -1006,7 +628,7 @@ func newEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Comm
 	return command
 }
 
-func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
+func newProviderEventCommand(cfg config.Config) *cobra.Command {
 	// Every failure here is logged and swallowed. A hook that exits
 	// non-zero is the provider's problem to report, and no dashboard
 	// bookkeeping is worth interrupting an agent mid-turn for — but a hook
@@ -1063,7 +685,7 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 				"activity", event.Activity,
 				"attention", event.Attention,
 			)
-			service, err := newService(*socket, *sessionName, cfg)
+			service, err := newService(cfg)
 			if err != nil {
 				diagnostic.Logger().Warn("provider event service unavailable",
 					"provider", providerID,
@@ -1090,81 +712,6 @@ func newProviderEventCommand(socket, sessionName *string, cfg config.Config) *co
 			return nil
 		},
 	}
-}
-
-func newRunCommand(socket, sessionName *string, cfg config.Config) *cobra.Command {
-	var id string
-	var window string
-	var cwd string
-	var encodedLaunch string
-
-	command := &cobra.Command{
-		Use:    "_run",
-		Hidden: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if id == "" || window == "" {
-				return fmt.Errorf("internal agent identity is missing")
-			}
-			launch, err := tmux.DecodeLaunch(encodedLaunch)
-			if err != nil {
-				return err
-			}
-			service, err := newService(*socket, *sessionName, cfg)
-			if err != nil {
-				return err
-			}
-			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = service.Update(updateCtx, id, session.Update{Activity: agent.ActivityWorking})
-			cancel()
-
-			// Hooks resolve $STORMLIGHT_BIN long after this process
-			// started, so it has to name a binary that survives an
-			// upgrade rather than however this invocation was spelled.
-			stormlightBin, err := selfpath.Resolve()
-			if err != nil {
-				return err
-			}
-
-			child := exec.Command(launch.Path, launch.Args...)
-			child.Dir = cwd
-			child.Stdin = os.Stdin
-			child.Stdout = os.Stdout
-			child.Stderr = os.Stderr
-			child.Env = append(os.Environ(),
-				"STORMLIGHT_ID="+id,
-				"STORMLIGHT_WINDOW="+window,
-				"STORMLIGHT_BIN="+stormlightBin,
-				"STORMLIGHT_SESSION="+*sessionName,
-				"STORMLIGHT_TMUX_SOCKET="+*socket,
-			)
-
-			runErr := child.Run()
-			activity := agent.ActivityCompleted
-			if runErr != nil {
-				activity = agent.ActivityFailed
-				var exitErr *exec.ExitError
-				if errors.As(runErr, &exitErr) {
-					code := exitErr.ExitCode()
-					if code == 130 || code == 143 {
-						activity = agent.ActivityStopped
-					}
-				}
-			}
-
-			updateCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			_ = service.Update(updateCtx, id, session.Update{Activity: activity})
-			cancel()
-			if runErr != nil {
-				return fmt.Errorf("%s exited: %w", launch.Path, runErr)
-			}
-			return nil
-		},
-	}
-	command.Flags().StringVar(&id, "id", "", "agent id")
-	command.Flags().StringVar(&window, "window", "", "tmux window id")
-	command.Flags().StringVar(&cwd, "cwd", "", "working directory")
-	command.Flags().StringVar(&encodedLaunch, "launch", "", "encoded launch payload")
-	return command
 }
 
 func readTask(args []string) (string, error) {

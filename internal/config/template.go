@@ -13,13 +13,6 @@ const template = `# Stormlight configuration.
 [defaults]
 # provider = "codex"            # codex | claude, or a custom provider
 # mode     = "edits"            # ask | edits | auto
-# session  = "stormlight-agents"
-
-[tmux]
-# socket      = "stormlight"    # tmux -L <socket>; "" targets the default server
-# return_keys = ["C-6", "C-^"]  # single-press return-to-dashboard keys
-# next_keys     = ["C-]"]       # single-press step forward through the queue
-# previous_keys = ['C-\\']       # single-press step back through the queue
 
 [ui]
 # rows = "compact"              # compact | expanded
