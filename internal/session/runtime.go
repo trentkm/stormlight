@@ -21,56 +21,11 @@ type Runtime interface {
 	SetWorkspace(context.Context, string, workspace.Context) error
 }
 
-// PaneStreamer is an optional runtime capability: a runtime that can expose
-// an agent's terminal as a raw byte stream and accept raw bytes back, so a
-// dashboard can host a live terminal view instead of sampling captures.
-//
-// It is separate from Runtime because it is about the transport, not agent
-// semantics: a runtime without a streamable pane is complete without it, and
-// callers treat its absence as "this runtime cannot stream".
-type PaneStreamer interface {
-	// PipePaneOpen streams every byte the agent's pane emits, from now on,
-	// into fifoPath. Any pipe a previous run left behind is replaced.
-	PipePaneOpen(ctx context.Context, id, fifoPath string) error
-	// PipePaneClose stops the stream. Closing an unpiped pane is a no-op.
-	PipePaneClose(ctx context.Context, id string) error
-	// CaptureRaw returns the pane's screen with escape sequences intact and
-	// lines wrapped exactly as the pane wrapped them — the seed a terminal
-	// emulator replays before the stream takes over. history asks for that
-	// many lines of pane scrollback above the screen (zero for the screen
-	// alone), which is how an emulator's history survives a dashboard
-	// restart: tmux held it while nobody was watching.
-	CaptureRaw(ctx context.Context, id string, history int) (string, error)
-	// PaneView reports where the pane's cursor is and whether the
-	// alternate screen is active, completing the seed.
-	PaneView(ctx context.Context, id string) (PaneView, error)
-	// ResizeAgentWindow sizes one agent's window exactly, with the same
-	// attached-client deference SyncWindowSizes applies.
-	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
-	// SendRaw delivers bytes to the agent's terminal input verbatim — no
-	// bracketed paste, no synthesized Enter.
-	SendRaw(ctx context.Context, id string, data []byte) error
-}
-
-// PaneView is the cursor-and-screen state CaptureRaw cannot carry. Cols
-// and Rows are the pane's actual size, which is not always the size that
-// was asked for: an attached client owns its windows' sizes, and an
-// emulator replaying that pane's rows must match the pane, not the wish.
-type PaneView struct {
-	CursorX   int
-	CursorY   int
-	AltScreen bool
-	Cols      int
-	Rows      int
-}
-
 // TerminalStreamer is an optional runtime capability: a runtime whose
 // terminals can be attached to directly — an exact state snapshot followed
-// by the live byte stream, with input and resize flowing back. It is the
-// native shape of a windrunner-hosted agent, where the tap-based
-// PaneStreamer is the tmux retrofit of the same idea.
+// by the live byte stream, with input and resize flowing back.
 type TerminalStreamer interface {
-	OpenTerminalStream(ctx context.Context, id string, cols, rows int) (TerminalStream, error)
+	AttachTerminal(ctx context.Context, id string, cols, rows int) (TerminalStream, error)
 }
 
 // TerminalStream is one live attachment to one agent's terminal.

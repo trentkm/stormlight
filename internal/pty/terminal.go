@@ -128,19 +128,6 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	}
 }
 
-// SetTerminalSize mirrors a terminal which an attached tmux client holds at
-// a different size from Stormlight's box. View clips it like tmux does.
-func (m Model) SetTerminalSize(cols, rows int) {
-	cols, rows = max(2, cols), max(2, rows)
-	s := m.state
-	s.mu.Lock()
-	if cols != s.termCols || rows != s.termRows {
-		s.emu.Resize(cols, rows)
-		s.termCols, s.termRows = cols, rows
-	}
-	s.mu.Unlock()
-}
-
 func (m Model) TerminalSize() (int, int) {
 	s := m.state
 	s.mu.Lock()

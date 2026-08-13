@@ -20,8 +20,8 @@ import (
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/resurrect"
-	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -2413,28 +2413,8 @@ func (stubBackend) Delete(context.Context, string) error {
 	return nil
 }
 
-func (stubBackend) PipePaneOpen(context.Context, string, string) error {
-	return nil
-}
-
-func (stubBackend) PipePaneClose(context.Context, string) error {
-	return nil
-}
-
-func (stubBackend) CaptureRaw(context.Context, string, int) (string, error) {
-	return "", nil
-}
-
-func (stubBackend) PaneView(context.Context, string) (session.PaneView, error) {
-	return session.PaneView{}, nil
-}
-
-func (stubBackend) ResizeAgentWindow(context.Context, string, int, int) error {
-	return nil
-}
-
-func (stubBackend) SendRaw(context.Context, string, []byte) error {
-	return nil
+func (stubBackend) AttachTerminal(context.Context, string, int, int) (pty.Transport, error) {
+	return nil, fmt.Errorf("stub backend has no terminals")
 }
 
 func (stubBackend) Providers() []provider.Info {

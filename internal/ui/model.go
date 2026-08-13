@@ -19,7 +19,6 @@ import (
 	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/ptyview"
 	"github.com/trentkm/stormlight/internal/resurrect"
-	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/theme"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -40,14 +39,9 @@ type Backend interface {
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
-	// The raw-byte transport behind the PTY Spanreed
-	// (session.PaneStreamer, surfaced through the service).
-	PipePaneOpen(ctx context.Context, id, fifoPath string) error
-	PipePaneClose(ctx context.Context, id string) error
-	CaptureRaw(ctx context.Context, id string, history int) (string, error)
-	PaneView(ctx context.Context, id string) (session.PaneView, error)
-	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
-	SendRaw(ctx context.Context, id string, data []byte) error
+	// AttachTerminal is the transport behind the live terminal view: one
+	// attachment per agent, seed plus stream plus input and resize.
+	AttachTerminal(ctx context.Context, id string, cols, rows int) (pty.Transport, error)
 	Providers() []provider.Info
 	SessionHistory(context.Context) ([]history.Record, error)
 	Resume(context.Context, history.Record) (agent.Agent, error)
@@ -353,7 +347,7 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		status:             "Ready",
 		columns:            options.Columns,
 		ptyEnabled:         true,
-		ptyManager:         ptyview.NewManager(backend, ptyStateDir()),
+		ptyManager:         ptyview.NewManager(backend),
 		ptyArmed:           make(map[int64]bool),
 	}
 	for index, info := range model.providers {

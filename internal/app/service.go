@@ -13,6 +13,7 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -524,76 +525,13 @@ func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
 }
 
-// paneStreamer exposes the runtime's optional raw-byte transport; the error
-// names the capability so a caller's failure reads as "this runtime cannot
-// stream" rather than a mystery.
-func (s *Service) paneStreamer() (session.PaneStreamer, error) {
-	streamer, ok := s.runtime.(session.PaneStreamer)
-	if !ok {
-		return nil, fmt.Errorf("runtime does not stream panes")
-	}
-	return streamer, nil
-}
-
-func (s *Service) PipePaneOpen(ctx context.Context, id, fifoPath string) error {
-	streamer, err := s.paneStreamer()
-	if err != nil {
-		return err
-	}
-	return streamer.PipePaneOpen(ctx, id, fifoPath)
-}
-
-func (s *Service) PipePaneClose(ctx context.Context, id string) error {
-	streamer, err := s.paneStreamer()
-	if err != nil {
-		return err
-	}
-	return streamer.PipePaneClose(ctx, id)
-}
-
-func (s *Service) CaptureRaw(ctx context.Context, id string, history int) (string, error) {
-	streamer, err := s.paneStreamer()
-	if err != nil {
-		return "", err
-	}
-	return streamer.CaptureRaw(ctx, id, history)
-}
-
-func (s *Service) PaneView(ctx context.Context, id string) (session.PaneView, error) {
-	streamer, err := s.paneStreamer()
-	if err != nil {
-		return session.PaneView{}, err
-	}
-	return streamer.PaneView(ctx, id)
-}
-
-func (s *Service) ResizeAgentWindow(ctx context.Context, id string, width, height int) error {
-	streamer, err := s.paneStreamer()
-	if err != nil {
-		return err
-	}
-	return streamer.ResizeAgentWindow(ctx, id, width, height)
-}
-
-func (s *Service) SendRaw(ctx context.Context, id string, data []byte) error {
-	streamer, err := s.paneStreamer()
-	if err != nil {
-		return err
-	}
-	return streamer.SendRaw(ctx, id, data)
-}
-
-// OpenTerminalStream surfaces the runtime's native attach when it has one
-// (windrunner); tap-based runtimes answer with an error and the view
-// layer falls back to the pipe-pane transport.
-func (s *Service) OpenTerminalStream(ctx context.Context, id string, cols, rows int) (session.TerminalStream, error) {
+// AttachTerminal surfaces the runtime's live terminal attachment as the
+// widget-facing transport: an exact snapshot seed, then the byte stream,
+// with input and resize flowing back.
+func (s *Service) AttachTerminal(ctx context.Context, id string, cols, rows int) (pty.Transport, error) {
 	streamer, ok := s.runtime.(session.TerminalStreamer)
 	if !ok {
 		return nil, fmt.Errorf("runtime does not stream terminals")
 	}
-	return streamer.OpenTerminalStream(ctx, id, cols, rows)
-}
-
-func (s *Service) Runtime() session.Runtime {
-	return s.runtime
+	return streamer.AttachTerminal(ctx, id, cols, rows)
 }

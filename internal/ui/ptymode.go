@@ -9,8 +9,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -42,19 +40,6 @@ func altKeyName() string {
 		return "option"
 	}
 	return "alt"
-}
-
-// ptyStateDir mirrors the rest of the state files (prefs, catalog): XDG
-// first, ~/.local/state as the fallback.
-func ptyStateDir() string {
-	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "stormlight")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".local", "state", "stormlight")
 }
 
 // ptyGridDimensions is every terminal box's size. The window bar is mounted

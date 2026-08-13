@@ -1,105 +1,52 @@
 // Package ptyview keeps one live terminal per agent for the agent's whole
 // life, so selecting an agent switches which terminal is rendered instead
-// of starting one. Each terminal is Stormlight's own widget over the richest
-// transport the backend offers: the runtime's native stream when it has
-// one, the tmux tap otherwise.
+// of starting one. Each terminal is Stormlight's own widget over the
+// runtime's native terminal attachment.
 package ptyview
 
 import (
 	"context"
-	"fmt"
 	"sync"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/pty"
-	"github.com/trentkm/stormlight/internal/session"
 )
 
-// Backend is the tap-shaped slice of the app service: pipe-pane into a
-// FIFO, seeded by a raw capture, input through the runtime.
+// Backend opens one live attachment to an agent's terminal: an exact
+// snapshot seed, then the live byte stream, with input and resize flowing
+// back.
 type Backend interface {
-	PipePaneOpen(ctx context.Context, id, fifoPath string) error
-	PipePaneClose(ctx context.Context, id string) error
-	CaptureRaw(ctx context.Context, id string, history int) (string, error)
-	PaneView(ctx context.Context, id string) (session.PaneView, error)
-	ResizeAgentWindow(ctx context.Context, id string, width, height int) error
-	SendRaw(ctx context.Context, id string, data []byte) error
-}
-
-// StreamBackend is the native shape: the runtime attaches directly and
-// hands over an exact seed plus the live byte stream.
-type StreamBackend interface {
-	OpenTerminalStream(ctx context.Context, id string, cols, rows int) (session.TerminalStream, error)
-}
-
-// entry is one agent's terminal: the widget, and what the Manager needs
-// to keep it honest.
-type entry struct {
-	agentID string
-	widget  pty.Model
-	// tap marks tmux-hosted terminals, whose real pane size an attached
-	// client can hold apart from the box — the Manager re-adopts it.
-	tap     bool
-	backend Backend
-
-	mu        sync.Mutex
-	lastAdopt time.Time
-}
-
-// adoptPaneSize mirrors the pane's actual size into the widget's emulator
-// (tap only; a native stream's terminal always follows the box). An
-// attached client can refuse resizes and hold the pane wide, and replaying
-// a wide pane through a narrow emulator re-wraps every row into soup.
-func (e *entry) adoptPaneSize(ctx context.Context) {
-	if !e.tap {
-		return
-	}
-	e.mu.Lock()
-	if time.Since(e.lastAdopt) < 2500*time.Millisecond {
-		e.mu.Unlock()
-		return
-	}
-	e.lastAdopt = time.Now()
-	e.mu.Unlock()
-	view, err := e.backend.PaneView(ctx, e.agentID)
-	if err != nil || view.Cols < 2 || view.Rows < 2 {
-		return
-	}
-	e.widget.SetTerminalSize(view.Cols, view.Rows)
+	AttachTerminal(ctx context.Context, id string, cols, rows int) (pty.Transport, error)
 }
 
 type Manager struct {
-	backend  any
-	stateDir string
+	backend Backend
 
 	mu       sync.Mutex
-	entries  map[string]*entry
+	entries  map[string]pty.Model
 	byWidget map[int64]string
 	// starting marks agents whose open is in flight, so overlapping
-	// reconciles never build two terminals over one pane.
+	// reconciles never build two terminals over one agent.
 	starting map[string]bool
 	draining bool
 	width    int
 	height   int
 }
 
-func NewManager(backend any, stateDir string) *Manager {
+func NewManager(backend Backend) *Manager {
 	return &Manager{
 		backend:  backend,
-		stateDir: stateDir,
-		entries:  make(map[string]*entry),
+		entries:  make(map[string]pty.Model),
 		byWidget: make(map[int64]string),
 		starting: make(map[string]bool),
 	}
 }
 
 // Ensure reconciles the terminals against the roster: agents without one
-// get one, departed agents lose theirs, boxes follow the grid, and tap
-// terminals re-adopt their pane's real size. The returned commands carry
-// transport resizes; run them like any tea.Cmd. Errors are logged and
-// retried on the next reconcile.
+// get one, departed agents lose theirs, and boxes follow the grid. The
+// returned commands carry transport resizes; run them like any tea.Cmd.
+// Errors are logged and retried on the next reconcile.
 func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height int) []tea.Cmd {
 	g.mu.Lock()
 	if g.draining {
@@ -111,17 +58,17 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	for _, id := range agentIDs {
 		wanted[id] = true
 	}
-	var closing []*entry
-	for id, e := range g.entries {
+	var closing []pty.Model
+	for id, widget := range g.entries {
 		if !wanted[id] {
-			closing = append(closing, e)
-			delete(g.byWidget, e.widget.ID())
+			closing = append(closing, widget)
+			delete(g.byWidget, widget.ID())
 			delete(g.entries, id)
 		}
 	}
-	existing := make([]*entry, 0, len(g.entries))
-	for _, e := range g.entries {
-		existing = append(existing, e)
+	existing := make([]pty.Model, 0, len(g.entries))
+	for _, widget := range g.entries {
+		existing = append(existing, widget)
 	}
 	missing := make([]string, 0, len(agentIDs))
 	for _, id := range agentIDs {
@@ -132,31 +79,30 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	}
 	g.mu.Unlock()
 
-	for _, e := range closing {
-		e.widget.Close()
+	for _, widget := range closing {
+		widget.Close()
 	}
 	var commands []tea.Cmd
-	for _, e := range existing {
-		e.adoptPaneSize(ctx)
-		if cols, rows := e.widget.Size(); cols != width || rows != height {
-			_, cmd := e.widget.SetSize(width, height)
+	for _, widget := range existing {
+		if cols, rows := widget.Size(); cols != width || rows != height {
+			_, cmd := widget.SetSize(width, height)
 			if cmd != nil {
 				commands = append(commands, cmd)
 			}
 		}
 	}
 	for _, id := range missing {
-		e, err := g.open(ctx, id, width, height)
+		widget, err := g.open(ctx, id, width, height)
 		g.mu.Lock()
 		delete(g.starting, id)
 		surplus := err == nil && g.draining
 		if err == nil && !g.draining {
-			g.entries[id] = e
-			g.byWidget[e.widget.ID()] = id
+			g.entries[id] = widget
+			g.byWidget[widget.ID()] = id
 		}
 		g.mu.Unlock()
 		if surplus {
-			e.widget.Close()
+			widget.Close()
 		}
 		if err != nil {
 			diagnostic.Logger().Warn("terminal open",
@@ -166,49 +112,21 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	return commands
 }
 
-// open builds an agent's terminal over the richest transport available.
-// The service exposes both method sets whichever runtime is behind it, so
-// capability is discovered by trying: native stream first, tap on refusal.
-func (g *Manager) open(ctx context.Context, id string, width, height int) (*entry, error) {
-	if streamer, ok := g.backend.(StreamBackend); ok {
-		stream, err := streamer.OpenTerminalStream(ctx, id, width, height)
-		if err == nil {
-			return &entry{
-				agentID: id,
-				widget:  pty.New(stream, width, height),
-			}, nil
-		}
-		if _, tappable := g.backend.(Backend); !tappable {
-			return nil, err
-		}
-	}
-	tap, ok := g.backend.(Backend)
-	if !ok {
-		return nil, fmt.Errorf("ptyview: backend offers no terminal transport")
-	}
-	transport, err := openTap(ctx, tap, id, g.stateDir, width, height)
+// open builds an agent's terminal over the runtime's attachment.
+func (g *Manager) open(ctx context.Context, id string, width, height int) (pty.Model, error) {
+	transport, err := g.backend.AttachTerminal(ctx, id, width, height)
 	if err != nil {
-		return nil, err
+		return pty.Model{}, err
 	}
-	e := &entry{
-		agentID: id,
-		widget:  pty.New(transport, width, height),
-		tap:     true,
-		backend: tap,
-	}
-	e.adoptPaneSize(ctx)
-	return e, nil
+	return pty.New(transport, width, height), nil
 }
 
 // Widget hands the UI an agent's terminal.
 func (g *Manager) Widget(id string) (pty.Model, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	e, ok := g.entries[id]
-	if !ok {
-		return pty.Model{}, false
-	}
-	return e.widget, true
+	widget, ok := g.entries[id]
+	return widget, ok
 }
 
 // AgentForWidget resolves a FrameMsg's widget ID back to its agent.
@@ -220,21 +138,21 @@ func (g *Manager) AgentForWidget(widgetID int64) (string, bool) {
 }
 
 // ResizeAll reasserts the grid on every terminal — the recovery move
-// after an external attach let a client resize the windows.
+// after an external attach let a client resize the terminals.
 func (g *Manager) ResizeAll(ctx context.Context) []tea.Cmd {
 	g.mu.Lock()
 	width, height := g.width, g.height
-	entries := make([]*entry, 0, len(g.entries))
-	for _, e := range g.entries {
-		entries = append(entries, e)
+	widgets := make([]pty.Model, 0, len(g.entries))
+	for _, widget := range g.entries {
+		widgets = append(widgets, widget)
 	}
 	g.mu.Unlock()
 	if width == 0 || height == 0 {
 		return nil
 	}
 	var commands []tea.Cmd
-	for _, e := range entries {
-		_, cmd := e.widget.SetSize(width, height)
+	for _, widget := range widgets {
+		_, cmd := widget.SetSize(width, height)
 		if cmd != nil {
 			commands = append(commands, cmd)
 		}
@@ -247,14 +165,14 @@ func (g *Manager) ResizeAll(ctx context.Context) []tea.Cmd {
 func (g *Manager) CloseAll() {
 	g.mu.Lock()
 	g.draining = true
-	entries := make([]*entry, 0, len(g.entries))
-	for _, e := range g.entries {
-		entries = append(entries, e)
+	widgets := make([]pty.Model, 0, len(g.entries))
+	for _, widget := range g.entries {
+		widgets = append(widgets, widget)
 	}
-	g.entries = make(map[string]*entry)
+	g.entries = make(map[string]pty.Model)
 	g.byWidget = make(map[int64]string)
 	g.mu.Unlock()
-	for _, e := range entries {
-		e.widget.Close()
+	for _, widget := range widgets {
+		widget.Close()
 	}
 }
