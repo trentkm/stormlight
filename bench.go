@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -55,11 +56,19 @@ func newBenchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := client.EnsureDaemon(
-				windrun.SocketPath(),
-				[]string{binPath, "_wrdaemon"},
-				5*time.Second,
-			)
+			// The daemon is a child, not an EnsureDaemon orphan: a bench
+			// daemon has no life after its sessions, and the wire protocol
+			// has no shutdown op to stop one any other way.
+			daemon := exec.Command(binPath, "_wrdaemon")
+			daemon.Env = os.Environ()
+			if err := daemon.Start(); err != nil {
+				return err
+			}
+			defer func() {
+				_ = daemon.Process.Kill()
+				_, _ = daemon.Process.Wait()
+			}()
+			c, err := dialUntil(windrun.SocketPath(), 5*time.Second)
 			if err != nil {
 				return err
 			}
@@ -115,6 +124,21 @@ func newBenchCommand() *cobra.Command {
 	command.Flags().DurationVar(&duration, "duration", 10*time.Second,
 		"how long to stream before reporting")
 	return command
+}
+
+// dialUntil retries the daemon socket until the child answers.
+func dialUntil(socketPath string, timeout time.Duration) (*client.Client, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		c, err := client.Dial(socketPath)
+		if err == nil {
+			return c, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("bench daemon did not answer: %w", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // benchStream adapts a windrunner attachment to the widget's transport.
