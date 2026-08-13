@@ -507,7 +507,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Opening " + msg.name
 			return m, tea.ExecProcess(msg.result.Command, func(err error) tea.Msg {
 				if err != nil {
-					diagnostic.Logger().Error("external tmux attach failed",
+					diagnostic.Logger().Error("external attach failed",
 						"agent", msg.name,
 						"error", err,
 					)
@@ -745,8 +745,8 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.normalPrefix = ","
 		return m, nil
 	case "q", "ctrl+c":
-		// No pane pipe or FIFO outlives the dashboard; the agents
-		// themselves live on in tmux, terminals intact for the next run.
+		// The agents themselves live on in the windrunner daemon,
+		// terminals intact for the next run.
 		return m, tea.Sequence(closeAllPTYCmd(m.ptyManager), tea.Quit)
 	case "t":
 		return m, m.togglePTY()

@@ -1,7 +1,6 @@
 // Package windrun hosts agents on windrunner sessions: PTYs owned by a
-// small daemon, with an authoritative terminal emulator per agent, instead
-// of tmux panes sampled through a tap. Each agent's terminal is a
-// persisted tab — the daemon outlives every dashboard, snapshots are
+// small daemon, with an authoritative terminal emulator per agent. Each
+// agent's terminal is a persisted tab — the daemon outlives every dashboard, snapshots are
 // exact, and attach is a byte stream, not a capture.
 //
 // Agent identity and state ride in the session's opaque metadata as one
@@ -33,13 +32,8 @@ import (
 // metadataKey holds the serialized agent.Agent in a session's metadata.
 const metadataKey = "stormlight_agent"
 
-// RuntimeEnv selects this runtime when set to "windrunner"; agents carry
-// it so their hook subprocesses build the same world.
-const RuntimeEnv = "STORMLIGHT_RUNTIME"
-
-// sendSubmitDelay separates pasted text from the Enter that submits it,
-// mirroring the tmux runtime: providers need a beat to register the paste
-// before the submit keypress.
+// sendSubmitDelay separates pasted text from the Enter that submits it:
+// providers need a beat to register the paste before the submit keypress.
 const sendSubmitDelay = 150 * time.Millisecond
 
 type Runtime struct {
@@ -160,12 +154,11 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	}
 	// The agent's own environment is how its hook subprocesses find their
 	// way back: the id names the session, the binary answers
-	// $STORMLIGHT_BIN, and the runtime selection plus socket dir rebuild
-	// this same service inside `stormlight _provider-event`.
+	// $STORMLIGHT_BIN, and the socket dir rebuilds this same service
+	// inside `stormlight _provider-event`.
 	env := append(os.Environ(),
 		"STORMLIGHT_ID="+managedAgent.ID,
 		"STORMLIGHT_BIN="+binPath,
-		RuntimeEnv+"=windrunner",
 		"WINDRUNNER_DIR="+SocketDir(),
 	)
 	info, err := r.client.Spawn(wire.Request{
@@ -220,8 +213,7 @@ func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, er
 
 // Attach hands back the command that becomes the agent's real terminal:
 // an interactive windrunner attachment in the caller's own terminal,
-// ctrl+q to return. No tmux client, no window switching — the terminal
-// comes to you.
+// ctrl+q to return. The terminal comes to you.
 func (r *Runtime) Attach(ctx context.Context, id string) (session.AttachResult, error) {
 	sessionID, err := r.sessionIDFor(id)
 	if err != nil {

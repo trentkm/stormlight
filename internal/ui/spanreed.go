@@ -327,7 +327,7 @@ func normalizeTerminalLine(line string) string {
 // hanging indent: continuation rows inherit the line's leading whitespace,
 // so indented agent output keeps its shape instead of snapping back to
 // column zero every time the Spanreed pane is narrower than the agent's
-// tmux pane.
+// terminal.
 func wrapTranscriptLine(line string, width int) string {
 	stripped := ansi.Strip(line)
 	if ansi.StringWidth(stripped) <= width {

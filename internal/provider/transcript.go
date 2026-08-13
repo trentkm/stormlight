@@ -15,7 +15,7 @@ import (
 // transcript (reported by its hooks as transcript_path). Rendering the
 // conversation from that file gives Spanreed the entire session history —
 // the terminal screen alone cannot: Claude runs in the alternate screen,
-// so tmux never accumulates scrollback for it.
+// so the terminal never accumulates scrollback for it.
 //
 // The file carries no styling, so the renderer supplies it: a transcript
 // that reads as one gray slab is a worse trade than the scrollback it buys.

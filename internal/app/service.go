@@ -311,7 +311,7 @@ func (s *Service) Capture(ctx context.Context, id string, lines int) (string, er
 
 // transcriptCapture renders the conversation from the provider's own
 // transcript file when the agent's hooks have reported one. The terminal
-// screen is all tmux can see of an alternate-screen agent, so the
+// screen is all a capture can see of an alternate-screen agent, so the
 // transcript file is the only complete history; the live screen is
 // appended while a turn is in flight so streaming output stays visible.
 func (s *Service) transcriptCapture(ctx context.Context, id string, lines int) (string, bool) {

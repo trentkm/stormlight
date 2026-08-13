@@ -8,7 +8,7 @@ import (
 	"github.com/trentkm/stormlight/internal/session"
 )
 
-// applyUpdate merges a session.Update into an agent, mirroring the tmux
+// applyUpdate merges a session.Update into an agent, mirroring the
 // runtime's rules (runtime.go Update); the two should collapse into one
 // shared function once this runtime has proven the shape. The rules that
 // matter:

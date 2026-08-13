@@ -33,7 +33,7 @@ func (c Context) IsZero() bool {
 // resolver-supplied component, or the worktree directory when the agent runs
 // outside the main checkout. It is empty when neither says anything the
 // workspace name does not already say. The dashboard's workspace subtitle and
-// the managed session's tmux status bar both read it, so the rule lives here
+// other surfaces read it too, so the rule lives here
 // rather than in either renderer.
 func (c Context) Tail() string {
 	tail := c.ComponentName
