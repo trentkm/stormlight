@@ -39,48 +39,6 @@ type TerminalStream interface {
 	Close()
 }
 
-// Restorer is an optional runtime capability: a runtime whose agent records
-// live and die with the runtime itself, and which can therefore be handed a
-// record from before it started and asked to build the agent back.
-//
-// It is separate from Runtime because it is about the runtime's own
-// mortality rather than about agents: a runtime that persists its roster by
-// construction has nothing to restore, and callers treat its absence as
-// "this roster cannot be lost".
-type Restorer interface {
-	// SessionName identifies the world a roster belongs to, so a record
-	// written by one can say which one it came from.
-	SessionName() string
-	// RosterLive reports whether the runtime's agent listing is
-	// authoritative right now. An empty listing is ambiguous — it reads the
-	// same whether the last agent was deleted or the whole session is gone —
-	// and the difference decides whether a snapshot may be overwritten with
-	// nothing. False means the roster is not there to be believed.
-	RosterLive(context.Context) (bool, error)
-	// Restore builds an agent back from a record, preserving its identity so
-	// continuity holds across the gap.
-	Restore(context.Context, RestoreRequest) (agent.Agent, error)
-}
-
-// RestoreRequest is a dispatch whose identity and history already exist. The
-// runtime is being told what the agent was, not asked to invent one.
-type RestoreRequest struct {
-	Agent  agent.Agent
-	Launch Launch
-}
-
-// StatusPublisher is an optional runtime capability: a runtime whose
-// terminal has chrome of its own can carry Stormlight's tally on it, so the
-// count of what is working and what is waiting stays readable from inside an
-// agent rather than only from the dashboard.
-//
-// It is separate from Runtime because it is presentation, not agent
-// semantics: a runtime with nowhere to put a status line is complete without
-// it, and callers treat its absence as "nothing to show it on".
-type StatusPublisher interface {
-	PublishStatus(context.Context, agent.Stats) error
-}
-
 type DispatchRequest struct {
 	Provider  agent.Provider
 	Name      string

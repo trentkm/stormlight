@@ -18,7 +18,6 @@ import (
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/ptyview"
-	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/theme"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -45,11 +44,6 @@ type Backend interface {
 	Providers() []provider.Info
 	SessionHistory(context.Context) ([]history.Record, error)
 	Resume(context.Context, history.Record) (agent.Agent, error)
-	// RestoreCandidates reads the agents remembered from before the runtime
-	// that is hosting this dashboard existed, and Restore brings them back.
-	RestoreCandidates(context.Context) ([]resurrect.Candidate, error)
-	Restore(context.Context, ...string) ([]app.RestoreResult, error)
-	Forget(context.Context, ...string) error
 }
 
 type mode int
@@ -66,7 +60,6 @@ const (
 	modeInfo
 	modeHelp
 	modeHistory
-	modeRestore
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -189,11 +182,6 @@ type Model struct {
 	shimmerPhase        int
 	shimmerRunning      bool
 
-	restoreCandidates []resurrect.Candidate
-	restoreChosen     map[string]bool
-	restoreCursor     int
-	restoreOffered    bool
-
 	normalPrefix   string
 	sortMode       sortMode
 	dispatchPrefix string
@@ -255,14 +243,6 @@ type workspaceAddedMsg struct {
 type historyMsg struct {
 	records []history.Record
 	err     error
-}
-
-type restoreCandidatesMsg struct {
-	candidates []resurrect.Candidate
-	// offer marks the unprompted reading taken at startup, which opens the
-	// picker on its own if there is something worth opening it for.
-	offer bool
-	err   error
 }
 
 type tickMsg time.Time
@@ -365,10 +345,6 @@ func (m Model) Init() tea.Cmd {
 		m.refreshCmd(),
 		tickCmd(),
 		shimmerTickCmd(),
-		// Read the snapshot once at startup. Whether it opens the picker
-		// depends on what the first listing finds; asking now means the
-		// answer is already in hand when that lands.
-		restoreCandidatesCmd(m.backend, false),
 		// Ask the terminal what it is painted on. Lip Gloss v1 answered this
 		// itself by querying behind the program's back on first use; v2 does
 		// not, so the palette runs on its dark default until this comes back.
@@ -480,16 +456,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Process exited — terminal view frozen"
 			}
 		}
-		if !m.restoreOffered && msg.err == nil {
-			// An empty roster on the first listing is the shape a lost tmux
-			// server leaves behind. Ask the snapshot whether it agrees, once:
-			// the offer is for the dashboard you open after the reboot, not
-			// for every moment you happen to have no agents running.
-			m.restoreOffered = true
-			if len(m.agents) == 0 && m.mode == modeNormal {
-				cmds = append(cmds, restoreCandidatesCmd(m.backend, true))
-			}
-		}
 		return m, tea.Batch(cmds...)
 
 	case historyMsg:
@@ -500,10 +466,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.historyRecords = msg.records
 		m.historyCursor = clamp(m.historyCursor, 0, max(0, len(msg.records)-1))
-		return m, nil
-
-	case restoreCandidatesMsg:
-		m.applyRestoreCandidates(msg)
 		return m, nil
 
 	case ptyEnsuredMsg:
@@ -684,8 +646,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateMark(msg)
 		case modeHistory:
 			return m.updateHistory(msg)
-		case modeRestore:
-			return m.updateRestore(msg)
 		case modeInfo, modeHelp:
 			// Any key dismisses an informational overlay.
 			m.mode = modeNormal
@@ -991,8 +951,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
-	case "ctrl+r":
-		return m.beginRestore()
 	case "m":
 		return m.beginMark()
 	case "M":

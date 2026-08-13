@@ -148,13 +148,10 @@ func sortAgentList(agents []agent.Agent, mode sortMode) {
 	}
 }
 
-// newestFirst orders by creation time; window index breaks same-second
-// ties deterministically (later windows are newer within a session).
+// newestFirst orders by creation time; same-second ties keep the
+// roster's own order, which the stable sort preserves.
 func newestFirst(a, b agent.Agent) int {
-	if d := b.CreatedAt.Compare(a.CreatedAt); d != 0 {
-		return d
-	}
-	return b.WindowIndex - a.WindowIndex
+	return b.CreatedAt.Compare(a.CreatedAt)
 }
 
 func buildWorkspaceGroups(

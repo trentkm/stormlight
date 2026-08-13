@@ -21,7 +21,6 @@ import (
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/pty"
-	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -2427,23 +2426,6 @@ func (stubBackend) SessionHistory(context.Context) ([]history.Record, error) {
 
 func (stubBackend) Resume(context.Context, history.Record) (agent.Agent, error) {
 	return agent.Agent{}, nil
-}
-
-func (stubBackend) RestoreCandidates(
-	context.Context,
-) ([]resurrect.Candidate, error) {
-	return nil, nil
-}
-
-func (stubBackend) Restore(
-	context.Context,
-	...string,
-) ([]app.RestoreResult, error) {
-	return nil, nil
-}
-
-func (stubBackend) Forget(context.Context, ...string) error {
-	return nil
 }
 
 type recordingBackend struct {

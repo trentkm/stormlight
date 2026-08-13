@@ -14,7 +14,6 @@ import (
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/pty"
-	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -38,10 +37,7 @@ type Service struct {
 	// providers ever reported, kept so a conversation can be reopened long
 	// after its window is gone.
 	sessions *history.Log
-	// store keeps the roster on disk so it outlives the runtime hosting it.
-	// A nil store is a service that does not remember, which is what tests
 	// and one-shot commands want.
-	store *resurrect.Store
 
 	// resolved caches catalog-path resolution (one git spawn per path per
 	// call otherwise); the dashboard polls fast, directories change slowly.
@@ -99,15 +95,6 @@ func NewServiceWithCatalog(
 	}
 }
 
-// Remembering gives the service a snapshot store, which is what turns a
-// roster into something that survives its runtime. It is opt-in because
-// remembering means writing to the user's state directory, and a service
-// built for a test or a single query has no business doing that.
-func (s *Service) Remembering(store *resurrect.Store) *Service {
-	s.store = store
-	return s
-}
-
 func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	agents, err := s.runtime.ListAgents(ctx)
 	if err != nil {
@@ -146,25 +133,7 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	for index := range agents {
 		agents[index].Workspace = contexts[index]
 	}
-	s.publishStatus(ctx, agents)
-	s.snapshot(ctx, agents)
 	return agents, nil
-}
-
-// publishStatus hands the runtime's own chrome the tally the dashboard is
-// about to draw. It rides on the listing rather than on state changes
-// because a listing is the only thing that notices a pane dying, and the
-// dashboard polls it — so whatever the dashboard knows, the status bar
-// knows a moment later. Best-effort: a bar that cannot be written is not a
-// reason to fail the listing behind it.
-func (s *Service) publishStatus(ctx context.Context, agents []agent.Agent) {
-	publisher, ok := s.runtime.(session.StatusPublisher)
-	if !ok {
-		return
-	}
-	if err := publisher.PublishStatus(ctx, agent.Count(agents)); err != nil {
-		diagnostic.Logger().Debug("status bar tally not published", "error", err)
-	}
 }
 
 func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agent, error) {
@@ -198,7 +167,6 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 			"error", err,
 		)
 	}
-	s.resnapshot(ctx)
 	return managedAgent, nil
 }
 
@@ -404,26 +372,8 @@ func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error
 	})
 }
 
-// Delete removes an agent and forgets it. Deleting is the human saying they
-// are done with this one, and that has to be recorded here — a later listing
-// cannot tell an agent someone dismissed from one whose window went down with
-// its server, and guessing wrong either resurrects the dead or buries the
-// living.
 func (s *Service) Delete(ctx context.Context, id string) error {
-	managedAgent, findErr := s.find(ctx, id)
-	if err := s.runtime.Delete(ctx, id); err != nil {
-		return err
-	}
-	if s.store != nil && findErr == nil {
-		if err := s.store.Forget(managedAgent.ID); err != nil {
-			diagnostic.Logger().Warn("agent not forgotten",
-				"agent_id", managedAgent.ID,
-				"error", err,
-			)
-		}
-	}
-	s.resnapshot(ctx)
-	return nil
+	return s.runtime.Delete(ctx, id)
 }
 
 func (s *Service) Update(ctx context.Context, id string, update session.Update) error {
@@ -431,7 +381,6 @@ func (s *Service) Update(ctx context.Context, id string, update session.Update) 
 		return err
 	}
 	s.recordHistory(ctx, id)
-	s.resnapshot(ctx)
 	return nil
 }
 

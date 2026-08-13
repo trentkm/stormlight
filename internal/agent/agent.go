@@ -168,9 +168,7 @@ type Agent struct {
 	// the back of a line it has been in the whole time.
 	AttentionAt time.Time      `json:"attention_at,omitempty"`
 	Mark        Mark           `json:"mark,omitempty"`
-	TmuxSession string         `json:"tmux_session"`
 	WindowID    string         `json:"window_id"`
-	WindowIndex int            `json:"window_index"`
 	PaneID      string         `json:"pane_id"`
 	PaneTitle   string         `json:"pane_title,omitempty"`
 	Command     string         `json:"command,omitempty"`
