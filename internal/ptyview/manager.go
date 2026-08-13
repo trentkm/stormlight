@@ -22,10 +22,12 @@ type Backend interface {
 
 type Manager struct {
 	backend Backend
+	// gate coalesces every terminal's output into one redraw stream; the
+	// dashboard keeps a single listener on it however many terminals run.
+	gate *pty.Gate
 
-	mu       sync.Mutex
-	entries  map[string]pty.Model
-	byWidget map[int64]string
+	mu      sync.Mutex
+	entries map[string]pty.Model
 	// starting marks agents whose open is in flight, so overlapping
 	// reconciles never build two terminals over one agent.
 	starting map[string]bool
@@ -37,9 +39,28 @@ type Manager struct {
 func NewManager(backend Backend) *Manager {
 	return &Manager{
 		backend:  backend,
+		gate:     pty.NewGate(),
 		entries:  make(map[string]pty.Model),
-		byWidget: make(map[int64]string),
 		starting: make(map[string]bool),
+	}
+}
+
+// Wait hands the dashboard the herd's shared frame listener.
+func (g *Manager) Wait() tea.Cmd {
+	return g.gate.Wait()
+}
+
+// SetVisible marks which agents' terminals are on screen; only those
+// request redraws when output arrives.
+func (g *Manager) SetVisible(ids ...string) {
+	visible := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		visible[id] = true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for id, widget := range g.entries {
+		widget.SetVisible(visible[id])
 	}
 }
 
@@ -62,7 +83,6 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	for id, widget := range g.entries {
 		if !wanted[id] {
 			closing = append(closing, widget)
-			delete(g.byWidget, widget.ID())
 			delete(g.entries, id)
 		}
 	}
@@ -98,7 +118,6 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 		surplus := err == nil && g.draining
 		if err == nil && !g.draining {
 			g.entries[id] = widget
-			g.byWidget[widget.ID()] = id
 		}
 		g.mu.Unlock()
 		if surplus {
@@ -118,7 +137,7 @@ func (g *Manager) open(ctx context.Context, id string, width, height int) (pty.M
 	if err != nil {
 		return pty.Model{}, err
 	}
-	return pty.New(transport, width, height), nil
+	return pty.New(transport, g.gate, width, height), nil
 }
 
 // Widget hands the UI an agent's terminal.
@@ -127,14 +146,6 @@ func (g *Manager) Widget(id string) (pty.Model, bool) {
 	defer g.mu.Unlock()
 	widget, ok := g.entries[id]
 	return widget, ok
-}
-
-// AgentForWidget resolves a FrameMsg's widget ID back to its agent.
-func (g *Manager) AgentForWidget(widgetID int64) (string, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	id, ok := g.byWidget[widgetID]
-	return id, ok
 }
 
 // ResizeAll reasserts the grid on every terminal — the recovery move
@@ -170,9 +181,11 @@ func (g *Manager) CloseAll() {
 		widgets = append(widgets, widget)
 	}
 	g.entries = make(map[string]pty.Model)
-	g.byWidget = make(map[int64]string)
 	g.mu.Unlock()
 	for _, widget := range widgets {
 		widget.Close()
 	}
+	// Release the dashboard's last outstanding Wait so its goroutine does
+	// not outlive the herd.
+	g.gate.Notify()
 }

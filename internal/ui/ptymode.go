@@ -93,32 +93,27 @@ func (m Model) ensurePTYCmd() tea.Cmd {
 	}
 }
 
-// armPTYWait starts (at most) one frame listener for the selected agent's
-// widget. The armed set is the dedup: doubling the listeners would double
-// the redraw messages.
+// armPTYWait keeps exactly one listener on the terminal herd's shared
+// frame gate, and re-asserts which terminal is on screen — only visible
+// terminals knock on that gate. The armed flag is the dedup: doubling
+// the listeners would double the redraw messages.
 func (m *Model) armPTYWait() tea.Cmd {
-	if !m.ptyEnabled {
+	if !m.ptyEnabled || m.ptyManager == nil {
 		return nil
 	}
-	widget, ok := m.selectedPTY()
-	if !ok || m.ptyArmed[widget.ID()] {
+	m.ptyManager.SetVisible(m.selectedAgentID())
+	if m.ptyWaiting {
 		return nil
 	}
-	m.ptyArmed[widget.ID()] = true
-	return widget.Init()
+	m.ptyWaiting = true
+	return m.ptyManager.Wait()
 }
 
-// handlePTYFrame routes a widget's wake-up: the listener that produced it
-// is spent, and only the selected agent's widget earns a replacement.
-func (m Model) handlePTYFrame(msg pty.FrameMsg) (tea.Model, tea.Cmd) {
-	delete(m.ptyArmed, msg.ID)
-	if !m.ptyEnabled || m.ptyManager == nil {
-		return m, nil
-	}
-	agentID, ok := m.ptyManager.AgentForWidget(msg.ID)
-	if !ok || agentID != m.selectedAgentID() {
-		return m, nil
-	}
+// handlePTYFrame is the gate's wake-up: the listener that produced it is
+// spent, the render pass that follows repaints whatever changed, and one
+// replacement listener re-arms.
+func (m Model) handlePTYFrame(pty.FrameMsg) (tea.Model, tea.Cmd) {
+	m.ptyWaiting = false
 	return m, m.armPTYWait()
 }
 

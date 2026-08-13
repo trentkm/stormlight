@@ -188,16 +188,15 @@ type Model struct {
 	// The PTY Spanreed. The manager keeps one live terminal session per
 	// agent for the agent's whole life; ptyEnabled says which view the
 	// Spanreed renders (terminal by default, transcript after `t`), and
-	// ptyArmed tracks which widgets already have a frame listener so
-	// redraw wake-ups never double up. Pointers and maps on purpose: they
-	// must survive the Model's value copies.
+	// ptyWaiting reports one outstanding frame-gate listener so
+	// redraw wake-ups never double up.
 	ptyEnabled bool
 	// ptyZoom collapses the sidebars so the portal spans the full body —
 	// still the same layout pipeline, not a separate mode. It survives a
 	// trip through the transcript view: t out, t back, still zoomed.
 	ptyZoom    bool
 	ptyManager *ptyview.Manager
-	ptyArmed   map[int64]bool
+	ptyWaiting bool
 }
 
 type dashboardMsg struct {
@@ -317,7 +316,6 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		columns:            options.Columns,
 		ptyEnabled:         true,
 		ptyManager:         ptyview.NewManager(backend),
-		ptyArmed:           make(map[int64]bool),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {

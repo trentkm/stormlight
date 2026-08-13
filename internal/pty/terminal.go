@@ -22,9 +22,60 @@ const (
 
 var lastID atomic.Int64
 
-// FrameMsg asks the dashboard to redraw a terminal with new output.
-type FrameMsg struct{ ID int64 }
+// FrameMsg asks the dashboard to redraw: some visible terminal received
+// output since the last frame.
+type FrameMsg struct{}
 type scrollMsg struct{ ID int64 }
+
+// Gate coalesces every visible terminal's output into at most one redraw
+// per frame period. One Gate serves a whole herd of terminals: however
+// many are streaming, the event loop sees ~30 messages a second, and one
+// render pass repaints everything that changed.
+type Gate struct {
+	mu         sync.Mutex
+	frames     chan struct{}
+	lastNotify time.Time
+	pending    *time.Timer
+}
+
+func NewGate() *Gate {
+	return &Gate{frames: make(chan struct{}, 1)}
+}
+
+// Notify requests a redraw, immediately if a frame period has passed and
+// on a trailing timer otherwise, so bursts coalesce without the final
+// chunk going unpainted.
+func (g *Gate) Notify() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now()
+	if now.Sub(g.lastNotify) >= framePeriod {
+		g.lastNotify = now
+		select {
+		case g.frames <- struct{}{}:
+		default:
+		}
+		return
+	}
+	if g.pending != nil {
+		return
+	}
+	g.pending = time.AfterFunc(framePeriod-now.Sub(g.lastNotify), func() {
+		g.mu.Lock()
+		g.pending, g.lastNotify = nil, time.Now()
+		g.mu.Unlock()
+		select {
+		case g.frames <- struct{}{}:
+		default:
+		}
+	})
+}
+
+// Wait is the dashboard's single listener: one outstanding Wait per Gate,
+// re-armed on every FrameMsg.
+func (g *Gate) Wait() tea.Cmd {
+	return func() tea.Msg { <-g.frames; return FrameMsg{} }
+}
 
 // Model is a terminal box. Copies share its emulator and transport.
 type Model struct {
@@ -34,14 +85,16 @@ type Model struct {
 
 type state struct {
 	transport                      Transport
+	gate                           *Gate
 	mu                             sync.Mutex
 	emu                            *vt.Emulator
 	cols, rows, termCols, termRows int
 	scroll, scrollDelta            int
 	scrollPending, closed          bool
-	frames                         chan struct{}
-	lastNotify                     time.Time
-	pending                        *time.Timer
+	// visible marks the terminal as on screen: only visible terminals
+	// knock on the gate, so a busy agent nobody is looking at costs no
+	// render passes.
+	visible atomic.Bool
 	// view caches the serialized grid between changes, so a dashboard
 	// render pass touching every visible terminal only walks the grids
 	// that actually received bytes. viewDirty marks it stale; both are
@@ -51,11 +104,14 @@ type state struct {
 }
 
 // New replays the terminal's seed and starts consuming its output stream.
-func New(transport Transport, cols, rows int) Model {
+// Frames knock on the shared gate; visibility starts false and the owner
+// flips it for whichever terminals are on screen.
+func New(transport Transport, gate *Gate, cols, rows int) Model {
 	cols, rows = max(2, cols), max(2, rows)
 	s := &state{
-		transport: transport, cols: cols, rows: rows, termCols: cols, termRows: rows,
-		frames: make(chan struct{}, 1), viewDirty: true,
+		transport: transport, gate: gate,
+		cols: cols, rows: rows, termCols: cols, termRows: rows,
+		viewDirty: true,
 	}
 	s.emu = vt.NewEmulator(cols, rows)
 	s.emu.Scrollback().SetMaxLines(DefaultScrollback)
@@ -76,42 +132,19 @@ func (s *state) pump() {
 		}
 		s.viewDirty = true
 		s.mu.Unlock()
-		s.notify()
+		if s.visible.Load() {
+			s.gate.Notify()
+		}
 	}
-	s.notify()
+	if s.visible.Load() {
+		s.gate.Notify()
+	}
 }
 
-func (s *state) notify() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	if now.Sub(s.lastNotify) >= framePeriod {
-		s.lastNotify = now
-		select {
-		case s.frames <- struct{}{}:
-		default:
-		}
-		return
-	}
-	if s.pending != nil {
-		return
-	}
-	s.pending = time.AfterFunc(framePeriod-now.Sub(s.lastNotify), func() {
-		s.mu.Lock()
-		s.pending, s.lastNotify = nil, time.Now()
-		s.mu.Unlock()
-		select {
-		case s.frames <- struct{}{}:
-		default:
-		}
-	})
-}
-
-// Init waits for a rendered frame.
-func (m Model) Init() tea.Cmd { return m.wait() }
-func (m Model) wait() tea.Cmd {
-	return func() tea.Msg { <-m.state.frames; return FrameMsg{ID: m.id} }
-}
+// SetVisible marks the terminal on or off screen; only visible terminals
+// request redraws. Flipping to visible needs no catch-up knock — the
+// render pass that follows the flip paints the emulator's current state.
+func (m Model) SetVisible(visible bool) { m.state.visible.Store(visible) }
 
 // Write delivers bytes to the hosted terminal.
 func (m Model) Write(data []byte) error { return m.state.transport.Write(data) }
@@ -290,11 +323,8 @@ func (m Model) Close() {
 		return
 	}
 	s.closed, s.scrollDelta = true, 0
-	if s.pending != nil {
-		s.pending.Stop()
-		s.pending = nil
-	}
 	s.mu.Unlock()
+	s.visible.Store(false)
 	s.transport.Close()
 	if pipe, ok := s.emu.InputPipe().(io.Closer); ok {
 		_ = pipe.Close()

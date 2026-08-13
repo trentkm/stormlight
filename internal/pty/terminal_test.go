@@ -27,7 +27,7 @@ func (t *fakeTransport) Close()                                 { close(t.output
 
 func TestTerminalRendersSeedAndScrollback(t *testing.T) {
 	transport := newFakeTransport("first\r\nsecond\r\nthird\r\nfourth")
-	terminal := New(transport, 12, 2)
+	terminal := New(transport, NewGate(), 12, 2)
 	defer terminal.Close()
 
 	if got := terminal.View(); !strings.Contains(got, "third") || !strings.Contains(got, "fourth") {
@@ -44,7 +44,7 @@ func TestTerminalRendersSeedAndScrollback(t *testing.T) {
 
 func TestTerminalCursorAndKeyEncoding(t *testing.T) {
 	transport := newFakeTransport("one\r\ntwo")
-	terminal := New(transport, 8, 3)
+	terminal := New(transport, NewGate(), 8, 3)
 	defer terminal.Close()
 
 	x, y, ok := terminal.Cursor()
@@ -68,7 +68,7 @@ func TestTerminalCursorAndKeyEncoding(t *testing.T) {
 
 func TestViewIsCachedUntilTheTerminalChanges(t *testing.T) {
 	transport := newFakeTransport("hello")
-	terminal := New(transport, 12, 2)
+	terminal := New(transport, NewGate(), 12, 2)
 	defer terminal.Close()
 
 	first := terminal.View()
@@ -79,14 +79,36 @@ func TestViewIsCachedUntilTheTerminalChanges(t *testing.T) {
 		t.Fatalf("idle views differ:\n%q\n%q", first, second)
 	}
 
-	// The frame notification is sent after the write lands, so receiving
-	// it proves the emulator has the new bytes.
+	// The gate knock is sent after the write lands, so receiving it
+	// proves the emulator has the new bytes.
+	terminal.SetVisible(true)
 	transport.output <- []byte(" world")
-	<-terminal.state.frames
+	<-terminal.state.gate.frames
 	if !terminal.state.viewDirty {
 		t.Fatal("streamed bytes did not invalidate the cache")
 	}
 	if got := terminal.View(); !strings.Contains(got, "hello world") {
 		t.Fatalf("view missing streamed bytes:\n%s", got)
 	}
+}
+
+func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
+	gate := NewGate()
+	transport := newFakeTransport("quiet")
+	terminal := New(transport, gate, 12, 2)
+	defer terminal.Close()
+
+	// The output channel is unbuffered, so each send proves the pump
+	// finished the previous chunk — gate decision included.
+	transport.output <- []byte("a")
+	transport.output <- []byte("b")
+	select {
+	case <-gate.frames:
+		t.Fatal("an invisible terminal requested a redraw")
+	default:
+	}
+
+	terminal.SetVisible(true)
+	transport.output <- []byte("c")
+	<-gate.frames
 }

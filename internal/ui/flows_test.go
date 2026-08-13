@@ -907,4 +907,3 @@ func drainCmd(cmd tea.Cmd) {
 		}
 	}
 }
-

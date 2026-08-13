@@ -4,7 +4,6 @@ package agent
 // buckets partition the set — every agent lands in exactly one, chosen by
 // the same precedence the dashboard's row glyph uses — so a summary built
 // from them adds up to the agents it describes.
-//
 type Stats struct {
 	// Working is running, by Stormlight's reading or the human's.
 	Working int
