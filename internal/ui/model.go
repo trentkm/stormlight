@@ -18,7 +18,6 @@ import (
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/ptyview"
-	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/theme"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -124,7 +123,6 @@ const (
 
 type Model struct {
 	backend Backend
-	surface surface.Surface
 
 	agents            []agent.Agent
 	catalogWorkspaces []workspace.Context
@@ -249,7 +247,7 @@ type tickMsg time.Time
 type shimmerTickMsg time.Time
 
 func NewModel(backend Backend) Model {
-	return NewModelWithSurface(backend, surface.NewDirect())
+	return NewModelWithOptions(backend, Options{})
 }
 
 // Options carries user-configuration defaults into the dashboard. Zero
@@ -269,11 +267,7 @@ type Options struct {
 	Columns ColumnPrefs
 }
 
-func NewModelWithSurface(backend Backend, current surface.Surface) Model {
-	return NewModelWithOptions(backend, current, Options{})
-}
-
-func NewModelWithOptions(backend Backend, current surface.Surface, options Options) Model {
+func NewModelWithOptions(backend Backend, options Options) Model {
 	cwd, _ := os.Getwd()
 	yaziPath := options.YaziPath
 	if yaziPath == "" {
@@ -287,10 +281,6 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 	if dispatchMode == "" {
 		dispatchMode = agent.DefaultMode
 	}
-	if current == nil {
-		current = surface.NewDirect()
-	}
-
 	cwdInput := newLineInput("")
 	cwdInput.SetValue(cwd)
 
@@ -308,7 +298,6 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 
 	model := Model{
 		backend:            backend,
-		surface:            current,
 		providers:          backend.Providers(),
 		cwdInput:           cwdInput,
 		nameInput:          nameInput,

@@ -20,7 +20,6 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/session"
-	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/windrun"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -296,7 +295,7 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 	// SGR report cut at three different points and getting a single clean
 	// wheel event and no stray keys each time.
 	program := tea.NewProgram(
-		ui.NewModelWithOptions(service, surface.NewDirect(), options),
+		ui.NewModelWithOptions(service, options),
 	)
 	if _, err = program.Run(); err != nil {
 		return err

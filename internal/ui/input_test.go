@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/pty"
-	"github.com/trentkm/stormlight/internal/surface"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -1159,11 +1157,9 @@ func TestTaskComposerWrapsLongPrompts(t *testing.T) {
 	}
 }
 
-func TestTaskEditorDelegatesPresentationToSurface(t *testing.T) {
+func TestTaskEditorRoundTripsThroughTheHandoffFile(t *testing.T) {
 	start := t.TempDir()
-	current := &recordingSurface{popups: true}
-	command, err := taskEditorCmd(
-		current,
+	command, result, err := taskEditorCmd(
 		"/usr/local/bin/nvim",
 		start,
 		"Review this workspace",
@@ -1172,22 +1168,17 @@ func TestTaskEditorDelegatesPresentationToSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if current.request.Command.Path != "/usr/local/bin/nvim" ||
-		current.request.Command.Dir != start ||
-		len(current.request.Command.Args) != 1 ||
-		!strings.HasSuffix(current.request.Command.Args[0], ".md") {
-		t.Fatalf("editor command request = %#v", current.request.Command)
-	}
-	if current.request.Popup == nil ||
-		current.request.Popup.Width != "82%" ||
-		current.request.Popup.Height != "76%" ||
-		!strings.Contains(current.request.Popup.Title, "Edit task") {
-		t.Fatalf("editor popup request = %#v", current.request.Popup)
+	if command.Path != "/usr/local/bin/nvim" || command.Dir != start ||
+		len(command.Args) != 2 ||
+		!strings.HasSuffix(command.Args[1], ".md") {
+		t.Fatalf("editor command = %#v", command.Args)
 	}
 
-	message := command()
-	result, ok := message.(taskEditedMsg)
-	if !ok || result.err != nil || result.task != "Review this workspace" {
+	// The editor "session": what is in the handoff when it exits is the
+	// task that comes back.
+	message := result(nil)
+	edited, ok := message.(taskEditedMsg)
+	if !ok || edited.err != nil || edited.task != "Review this workspace" {
 		t.Fatalf("editor result = %#v", message)
 	}
 }
@@ -1394,66 +1385,28 @@ func TestResolveYaziDirectory(t *testing.T) {
 	}
 }
 
-type recordingSurface struct {
-	request surface.Request
-	popups  bool
-}
-
-func (s *recordingSurface) Capabilities() surface.Capabilities {
-	return surface.Capabilities{Popups: s.popups}
-}
-
-func (s *recordingSurface) Present(
-	request surface.Request,
-) (surface.Presentation, error) {
-	s.request = request
-	return surface.Presentation{
-		Command: exec.Command("true"),
-		Mode:    surface.PresentationOverlay,
-	}, nil
-}
-
-func TestYaziPickerDelegatesPresentationToSurface(t *testing.T) {
+func TestYaziPickerBuildsHandoffsAndResolvesTheChoice(t *testing.T) {
 	start := t.TempDir()
-	current := &recordingSurface{popups: true}
-	command, err := yaziPickerCmd(current, "/usr/local/bin/yazi", start)
+	command, result, err := yaziPickerCmd("/usr/local/bin/yazi", start)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if current.request.Command.Path != "/usr/local/bin/yazi" ||
-		current.request.Command.Dir != start {
-		t.Fatalf("command request = %#v", current.request.Command)
+	if command.Path != "/usr/local/bin/yazi" || command.Dir != start {
+		t.Fatalf("picker command = %#v", command)
 	}
-	if current.request.Popup == nil ||
-		current.request.Popup.Width != "78%" ||
-		current.request.Popup.Height != "76%" {
-		t.Fatalf("popup request = %#v", current.request.Popup)
-	}
-	args := strings.Join(current.request.Command.Args, " ")
+	args := strings.Join(command.Args, " ")
 	if !strings.Contains(args, "--chooser-file") ||
 		!strings.Contains(args, "--cwd-file") {
-		t.Fatalf("Yazi handoff args = %#v", current.request.Command.Args)
+		t.Fatalf("Yazi handoff args = %#v", command.Args)
 	}
 
-	message := command()
-	result, ok := message.(directoryPickedMsg)
-	if !ok || result.err != nil {
+	// Empty handoffs are a cancelled pick, which completes cleanly with
+	// no path.
+	message := result(nil)
+	picked, ok := message.(directoryPickedMsg)
+	if !ok || picked.err != nil || picked.path != "" {
 		t.Fatalf("picker result = %#v", message)
-	}
-}
-
-func TestYaziPickerOmitsPopupForDirectSurface(t *testing.T) {
-	current := &recordingSurface{}
-	command, err := yaziPickerCmd(current, "/usr/local/bin/yazi", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.request.Popup != nil {
-		t.Fatalf("unsupported popup was requested: %#v", current.request.Popup)
-	}
-	if result, ok := command().(directoryPickedMsg); !ok || result.err != nil {
-		t.Fatalf("picker did not complete cleanly: %#v", result)
 	}
 }
 
@@ -1618,7 +1571,7 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 func TestFirstRefreshLandsOnRequestedWorkspace(t *testing.T) {
 	first := workspace.DirectoryContext("/workspace/first")
 	second := workspace.DirectoryContext("/workspace/second")
-	model := NewModelWithOptions(stubBackend{}, nil, Options{
+	model := NewModelWithOptions(stubBackend{}, Options{
 		SelectWorkspaceID: second.ID,
 	})
 

@@ -6,28 +6,12 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/trentkm/stormlight/internal/surface"
 )
-
-// overlayPopup is the frame every Stormlight overlay wears. A tmux popup and
-// a lipgloss modal are drawn by different things but mean the same thing to
-// whoever is looking at them, so they share a curve and the dashboard's amber
-// (theme.Waiting's dark value — tmux styles take a literal color, not an
-// adaptive one). Only the title and how much room the hosted program wants
-// vary between overlays.
-func overlayPopup(title, width string) *surface.Popup {
-	return &surface.Popup{
-		Width:       width,
-		Height:      "76%",
-		Title:       title,
-		BorderStyle: "fg=#e5c07b",
-		BorderLines: "rounded",
-	}
-}
 
 func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if m.nvimPath == "" {
@@ -39,30 +23,27 @@ func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if !isDirectory(cwd) {
 		cwd = m.initialCwd
 	}
-	command, err := taskEditorCmd(
-		m.surface,
-		m.nvimPath,
-		cwd,
-		m.taskInput.Value(),
-	)
+	command, result, err := taskEditorCmd(m.nvimPath, cwd, m.taskInput.Value())
 	if err != nil {
 		m.err = err
 		m.status = "Action failed"
 		return m, nil
 	}
 	m.status = "Opening Neovim"
-	return m, command
+	return m, tea.ExecProcess(command, result)
 }
 
+// taskEditorCmd builds the editor invocation and the completion handler
+// that reads the edited task back; the caller suspends the dashboard
+// around it with tea.ExecProcess.
 func taskEditorCmd(
-	current surface.Surface,
 	binary string,
 	cwd string,
 	task string,
-) (tea.Cmd, error) {
+) (*exec.Cmd, func(error) tea.Msg, error) {
 	handoff, err := os.CreateTemp("", "stormlight-task-*.md")
 	if err != nil {
-		return nil, fmt.Errorf("create task editor file: %w", err)
+		return nil, nil, fmt.Errorf("create task editor file: %w", err)
 	}
 	handoffPath := handoff.Name()
 	cleanup := func() {
@@ -71,11 +52,11 @@ func taskEditorCmd(
 	if _, err := handoff.WriteString(task); err != nil {
 		_ = handoff.Close()
 		cleanup()
-		return nil, fmt.Errorf("write task editor file: %w", err)
+		return nil, nil, fmt.Errorf("write task editor file: %w", err)
 	}
 	if err := handoff.Close(); err != nil {
 		cleanup()
-		return nil, fmt.Errorf("close task editor file: %w", err)
+		return nil, nil, fmt.Errorf("close task editor file: %w", err)
 	}
 
 	result := func(runErr error) tea.Msg {
@@ -95,40 +76,9 @@ func taskEditorCmd(
 		}
 	}
 
-	var popup *surface.Popup
-	if current.Capabilities().Popups {
-		popup = overlayPopup(" Stormlight · Edit task ", "82%")
-	}
-	presentation, err := current.Present(surface.Request{
-		Command: surface.Command{
-			Path: binary,
-			Args: []string{handoffPath},
-			Dir:  cwd,
-		},
-		Popup: popup,
-	})
-	if err != nil {
-		cleanup()
-		return nil, err
-	}
-	if presentation.Command == nil {
-		cleanup()
-		return nil, fmt.Errorf("surface returned an empty Neovim command")
-	}
-	switch presentation.Mode {
-	case surface.PresentationOverlay:
-		return func() tea.Msg {
-			return result(presentation.Command.Run())
-		}, nil
-	case surface.PresentationSuspend:
-		return tea.ExecProcess(presentation.Command, result), nil
-	default:
-		cleanup()
-		return nil, fmt.Errorf(
-			"surface returned unsupported presentation mode %d",
-			presentation.Mode,
-		)
-	}
+	command := exec.Command(binary, handoffPath)
+	command.Dir = cwd
+	return command, result, nil
 }
 
 func (m Model) openYazi() (tea.Model, tea.Cmd) {
@@ -144,29 +94,31 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	if !isDirectory(start) {
 		start = m.initialCwd
 	}
-	command, err := yaziPickerCmd(m.surface, m.yaziPath, start)
+	command, result, err := yaziPickerCmd(m.yaziPath, start)
 	if err != nil {
 		m.err = err
 		m.status = "Action failed"
 		return m, nil
 	}
 	m.status = "Opening Yazi"
-	return m, command
+	return m, tea.ExecProcess(command, result)
 }
 
+// yaziPickerCmd builds the picker invocation and the completion handler
+// that resolves the chosen directory; the caller suspends the dashboard
+// around it with tea.ExecProcess.
 func yaziPickerCmd(
-	current surface.Surface,
 	binary string,
 	start string,
-) (tea.Cmd, error) {
+) (*exec.Cmd, func(error) tea.Msg, error) {
 	choiceHandoff, err := createYaziHandoff("choice")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cwdHandoff, err := createYaziHandoff("cwd")
 	if err != nil {
 		_ = os.Remove(choiceHandoff)
-		return nil, err
+		return nil, nil, err
 	}
 
 	pickerArgs := []string{
@@ -198,43 +150,9 @@ func yaziPickerCmd(
 		return directoryPickedMsg{path: selected}
 	}
 
-	var popup *surface.Popup
-	if current.Capabilities().Popups {
-		popup = overlayPopup(" Stormlight · Choose directory ", "78%")
-	}
-	presentation, err := current.Present(surface.Request{
-		Command: surface.Command{
-			Path: binary,
-			Args: pickerArgs,
-			Dir:  start,
-		},
-		Popup: popup,
-	})
-	if err != nil {
-		_ = os.Remove(choiceHandoff)
-		_ = os.Remove(cwdHandoff)
-		return nil, err
-	}
-	if presentation.Command == nil {
-		_ = os.Remove(choiceHandoff)
-		_ = os.Remove(cwdHandoff)
-		return nil, fmt.Errorf("surface returned an empty Yazi command")
-	}
-	switch presentation.Mode {
-	case surface.PresentationOverlay:
-		return func() tea.Msg {
-			return result(presentation.Command.Run())
-		}, nil
-	case surface.PresentationSuspend:
-		return tea.ExecProcess(presentation.Command, result), nil
-	default:
-		_ = os.Remove(choiceHandoff)
-		_ = os.Remove(cwdHandoff)
-		return nil, fmt.Errorf(
-			"surface returned unsupported presentation mode %d",
-			presentation.Mode,
-		)
-	}
+	command := exec.Command(binary, pickerArgs...)
+	command.Dir = start
+	return command, result, nil
 }
 
 func createYaziHandoff(kind string) (string, error) {
