@@ -42,6 +42,12 @@ type state struct {
 	frames                         chan struct{}
 	lastNotify                     time.Time
 	pending                        *time.Timer
+	// view caches the serialized grid between changes, so a dashboard
+	// render pass touching every visible terminal only walks the grids
+	// that actually received bytes. viewDirty marks it stale; both are
+	// guarded by mu.
+	view      string
+	viewDirty bool
 }
 
 // New replays the terminal's seed and starts consuming its output stream.
@@ -49,7 +55,7 @@ func New(transport Transport, cols, rows int) Model {
 	cols, rows = max(2, cols), max(2, rows)
 	s := &state{
 		transport: transport, cols: cols, rows: rows, termCols: cols, termRows: rows,
-		frames: make(chan struct{}, 1),
+		frames: make(chan struct{}, 1), viewDirty: true,
 	}
 	s.emu = vt.NewEmulator(cols, rows)
 	s.emu.Scrollback().SetMaxLines(DefaultScrollback)
@@ -68,6 +74,7 @@ func (s *state) pump() {
 		if s.emu.IsAltScreen() {
 			s.scroll, s.scrollDelta = 0, 0
 		}
+		s.viewDirty = true
 		s.mu.Unlock()
 		s.notify()
 	}
@@ -118,6 +125,7 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	if cols != s.cols || rows != s.rows {
 		s.emu.Resize(cols, rows)
 		s.cols, s.rows, s.termCols, s.termRows = cols, rows, cols, rows
+		s.viewDirty = true
 	}
 	s.mu.Unlock()
 	return m, func() tea.Msg {
@@ -169,7 +177,7 @@ func (m Model) FlushScroll(msg tea.Msg) bool {
 	delta := s.scrollDelta
 	s.scrollDelta, s.scrollPending = 0, false
 	if !s.closed && !s.emu.IsAltScreen() {
-		s.scroll = clamp(s.scroll+delta, 0, s.emu.ScrollbackLen())
+		s.setScroll(clamp(s.scroll+delta, 0, s.emu.ScrollbackLen()))
 	}
 	return true
 }
@@ -184,14 +192,24 @@ func (m Model) ScrollBy(delta int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.emu.IsAltScreen() {
-		s.scroll = clamp(s.scroll+delta, 0, s.emu.ScrollbackLen())
+		s.setScroll(clamp(s.scroll+delta, 0, s.emu.ScrollbackLen()))
 	}
 }
 func (m Model) ScrollToBottom() {
 	s := m.state
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.scroll, s.scrollDelta = 0, 0
+	s.setScroll(0)
+	s.scrollDelta = 0
+}
+
+// setScroll moves the scroll position and invalidates the cached view when
+// it actually moved. Callers hold mu.
+func (s *state) setScroll(scroll int) {
+	if scroll != s.scroll {
+		s.scroll = scroll
+		s.viewDirty = true
+	}
 }
 func (m Model) Scrolled() int {
 	s := m.state
@@ -200,11 +218,16 @@ func (m Model) Scrolled() int {
 	return s.scroll
 }
 
-// View renders exactly the terminal box's dimensions.
+// View renders exactly the terminal box's dimensions. The serialization
+// is cached between changes: an idle terminal answers with the previous
+// string instead of walking its grid again.
 func (m Model) View() string {
 	s := m.state
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.viewDirty {
+		return s.view
+	}
 	var lines []string
 	if s.scroll == 0 || s.emu.IsAltScreen() {
 		lines = strings.Split(s.emu.Render(), "\n")
@@ -229,7 +252,9 @@ func (m Model) View() string {
 			}
 		}
 	}
-	return fit(lines, s.cols, s.rows)
+	s.view = fit(lines, s.cols, s.rows)
+	s.viewDirty = false
+	return s.view
 }
 
 // Cursor reports a visible cursor relative to this terminal's box.

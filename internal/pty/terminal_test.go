@@ -65,3 +65,28 @@ func TestTerminalCursorAndKeyEncoding(t *testing.T) {
 		t.Fatalf("up key = %q, want CSI up", got)
 	}
 }
+
+func TestViewIsCachedUntilTheTerminalChanges(t *testing.T) {
+	transport := newFakeTransport("hello")
+	terminal := New(transport, 12, 2)
+	defer terminal.Close()
+
+	first := terminal.View()
+	if terminal.state.viewDirty {
+		t.Fatal("render left the cache dirty")
+	}
+	if second := terminal.View(); second != first {
+		t.Fatalf("idle views differ:\n%q\n%q", first, second)
+	}
+
+	// The frame notification is sent after the write lands, so receiving
+	// it proves the emulator has the new bytes.
+	transport.output <- []byte(" world")
+	<-terminal.state.frames
+	if !terminal.state.viewDirty {
+		t.Fatal("streamed bytes did not invalidate the cache")
+	}
+	if got := terminal.View(); !strings.Contains(got, "hello world") {
+		t.Fatalf("view missing streamed bytes:\n%s", got)
+	}
+}
