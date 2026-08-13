@@ -8,13 +8,13 @@
 
 Provider adapters translate a task into an executable plus arguments. The
 built-ins are Claude and Codex; custom provider specs cover other agent CLIs.
-Adapters deliberately do not own tmux behavior.
+Adapters deliberately do not own process or terminal behavior.
 
 The CLI adapters currently add provider-native lifecycle callbacks:
 
 - Codex: per-launch prompt and stop hooks report state, passed as a `-c`
   config override, over the external completion notifier. The notifier alone
-  carried only turn ends, so a turn begun in the agent's own pane was
+  carried only turn ends, so a turn begun in the agent's own terminal was
   invisible; it is retained because Codex holds injected hooks inert behind
   a one-time trust review, and an agent reporting nothing would sit at
   `working` until its process exited. The notifier has no trust gate, so it
@@ -55,139 +55,117 @@ and optional component metadata. External executable resolvers run before the
 built-in Git resolver, followed by a canonical-directory fallback. This keeps
 environment-specific workspace semantics outside the public runtime.
 
-### tmux runtime
+### windrunner runtime
 
-tmux is the process supervisor and terminal transport, run as a private
-appliance: agents and the hosted dashboard live on a dedicated Stormlight
-server (`tmux -L stormlight`) that boots with Stormlight's own configuration
-and never loads user dotfiles. User tmux sessions, plugins, and
-session-restore tools cannot observe or disturb Stormlight, and Stormlight
-behaves identically on every machine. The managed configuration is rewritten
-at startup under the user config directory (`stormlight/tmux.conf`).
+Process and terminal ownership live in a daemon built on the
+[windrunner](https://github.com/trentkm/windrunner) session engine. Each
+session the daemon holds is one PTY plus an authoritative terminal
+emulator, so a snapshot of an agent's screen and scrollback is exact
+serialized state, and attaching is a byte stream from that state forward —
+never a capture of whatever happened to be visible.
 
-When launched from a regular shell, the dashboard re-enters a uniquely named
-temporary session on the Stormlight server. That gives overlays and agent
-switching the same semantics as an inside-tmux launch. The supervising process
-removes the temporary session when its client exits; managed agent sessions
-remain independent. When launched from inside the user's own tmux, the
-dashboard runs directly in that pane and reaches agents on the Stormlight
-server through a nested client with `$TMUX` stripped.
+The daemon is Stormlight itself: `internal/windrun.NewRuntime` connects to
+a unix socket (`daemon.sock` under `$WINDRUNNER_DIR`, else
+`$XDG_STATE_HOME/windrunner`, else `~/.local/state/windrunner` — the
+windrunner library's own default, so `windrunner ls` lists Stormlight's
+agents too) and, when nothing answers, starts `stormlight _wrdaemon` from
+the running binary's resolved path (`internal/selfpath`) and waits for it
+to come up. The daemon outlives every dashboard: agents, their terminals,
+and their scrollback persist across dashboard restarts, and the daemon's
+sessions are the roster — there is no second record to reconcile.
 
-The application layer depends on `session.Runtime`, not the tmux implementation.
-That contract owns conversation dispatch, discovery, capture, input, lifecycle,
-metadata updates, and terminal attachment. tmux is the first implementation;
-other runtimes can provide the same agent model without entering the UI or
-provider packages. The stable agent ID is the only runtime handle passed back
-through the application layer; tmux session, window, and pane fields remain
-transport-specific compatibility metadata.
+The daemon never learns what an agent is; that is the library's boundary.
+Agent identity and state ride in the session's opaque metadata as one JSON
+document under the `stormlight_agent` key — the serialized `agent.Agent`:
+id, provider, task, name, workspace context, permission mode, activity,
+attention, mark, session id, and transcript path. Two rules keep the
+document honest:
 
-External interactive presentation is a separate `surface.Surface` contract.
-The tmux surface advertises popup and client-switch capabilities and translates
-generic commands into `display-popup`; the direct surface suspends Bubble Tea
-and runs the command in the current terminal. The UI requests a capability and
-does not inspect `$TMUX` or construct multiplexer commands. Yazi directory
-selection and Neovim task editing both use this contract and return their
-results through permission-restricted temporary handoff files.
+- Liveness and exit are the daemon's facts. Listing decodes the document
+  and then overwrites process state from the session itself — `Alive`,
+  `ExitCode` — so stale metadata can never claim a dead agent is working.
+  An exited process with no recorded completion is classified from its
+  exit code.
+- Updates are read-modify-write on the whole document
+  (`Runtime.mutateAgent`). Two near-simultaneous writers — a hook event
+  racing the dashboard — can lose one update; events are sparse enough
+  that the next one repairs it, and a daemon-side compare-and-swap is
+  noted for later.
 
-Each dispatch creates one window in a managed tmux session. Window options hold
-the durable metadata:
+Dispatch spawns the provider directly: the adapter's launch command becomes
+the session's process, with `STORMLIGHT_ID` (how hook subprocesses name
+their agent), `STORMLIGHT_BIN` (how they find Stormlight across upgrades),
+and `WINDRUNNER_DIR` (how a hook's own `stormlight _provider-event`
+invocation reaches the same daemon) in its environment. There is no
+supervisor process between the daemon and the provider; exit state is read
+from the daemon. The daemon names the session; that id is not adopted as
+the agent's id — the metadata carries Stormlight's id, and the session id
+fills the display fields that expect a pane handle.
 
-| Option | Purpose |
-|---|---|
-| `@stormlight_id` | Stable agent identifier |
-| `@stormlight_provider` | Provider adapter |
-| `@stormlight_task` | Original task |
-| `@stormlight_summary` | Current one-line summary |
-| `@stormlight_cwd` | Working directory |
-| `@stormlight_created_at` | Unix creation timestamp |
-| `@stormlight_activity` | Normalized activity state |
-| `@stormlight_attention` | Pending human-attention type |
-| `@stormlight_attention_at` | When the agent joined the attention queue |
-| `@stormlight_mark` | Human's manual override of the derived state |
-| `@stormlight_pane` | Original agent pane |
-| `@stormlight_workspace_id` | Stable workspace group identifier |
-| `@stormlight_workspace_kind` | Resolver-defined workspace type |
-| `@stormlight_workspace_name` | Human-readable group name |
-| `@stormlight_workspace_root` | Canonical group root |
-| `@stormlight_execution_root` | Checkout or runnable workspace root |
-| `@stormlight_component_name` | Optional package or component name |
-| `@stormlight_component_root` | Optional package or component root |
-| `@stormlight_workspace_metadata` | Encoded resolver metadata |
-| `@stormlight_return_target` | Source session for the current attach, or empty to detach |
+Messages are delivered as terminal input: multi-line messages inside a
+bracketed paste so they arrive as one message, slash commands typed
+verbatim (providers ignore pasted slash commands), then a beat later the
+Enter that submits. Nothing is ever interpolated into a shell command
+string.
 
-The tmux session itself carries `@stormlight_managed=1`. An existing session
-without that marker is never reused.
+#### The terminal seam
 
-The window uses `remain-on-exit`, allowing completed output and exit status to
-remain reviewable. Messages are loaded into tmux buffers and pasted into the
-target pane; they are not interpolated into shell command strings.
+Live terminals reach the dashboard through one narrow seam, declared as an
+optional runtime capability:
 
-The Spanreed pane shows the normalized transcript and composer, with the
-native terminal as the fallback. Transcript rendering retains only SGR
-styling from tmux capture
-output; other terminal control sequences are discarded. A session rendered
-from a provider's own JSONL transcript arrives unstyled, so the renderer
-paints it: prompts, replies, tool calls, and trimmed results take the
-palette in `internal/theme`, and the markdown Claude writes is read back as
-styling by Glamour, against a stylesheet built from that same palette in
+- `session.TerminalStreamer` (`internal/session`) is the contract: attach
+  to an agent's terminal at a size and get a `TerminalStream` — an exact
+  snapshot seed, a channel of everything after it, and input and resize
+  flowing back.
+- `windrun.Runtime.AttachTerminal` implements it over one dedicated daemon
+  connection per attachment, resizing first so the snapshot arrives
+  pre-wrapped for the view it is about to fill.
+- `app.Service.AttachTerminal` surfaces the capability to the UI as a
+  `pty.Transport`, failing cleanly when a runtime cannot stream.
+- `ptyview.Manager` keeps one live terminal per agent for the agent's
+  whole life, reconciling the set against the roster on every refresh:
+  agents without a terminal get one, departed agents lose theirs, and all
+  of them follow the pane's dimensions. Selecting an agent switches which
+  terminal is rendered; it never starts one.
+- `pty.Model` (`internal/pty`) is the widget: a `charmbracelet/x/vt`
+  emulator fed by the transport, with scrollback, coalesced frame
+  notifications (~30fps) so a chatty agent cannot flood the event loop,
+  and wheel-burst batching for high-resolution scrolling.
+
+The Spanreed pane renders the selected agent's widget. While the pane holds
+focus the keyboard belongs to the agent's terminal byte for byte, and the
+real terminal cursor is placed where the agent's program put it — the pane
+is the terminal, not a picture of one. The dashboard's own keys in that
+mode are modifier chords the hosted TUIs don't bind: `ctrl+space` steps
+out, `alt+j`/`k` moves the roster cursor so the portal swaps terminals
+under the keyboard, `alt+z` zooms the grid over the full body, and `alt+t`
+flips to the transcript reading view. Typing into an agent's terminal is
+the strongest form of having seen its result, so attention clears on the
+way through.
+
+`F` is the full-screen escape hatch: the runtime's `Attach` returns a
+command (`stormlight _wrattach <session>`) that the dashboard runs through
+`tea.ExecProcess`, suspending itself while the attachment owns the whole
+terminal; `ctrl+q` detaches and the dashboard returns, reasserting every
+widget's size because the attached client resized the daemon's sessions.
+
+The transcript view renders the conversation from the provider's own JSONL
+transcript once hooks have reported its path — the terminal screen is all a
+snapshot can see of an alternate-screen agent, so the transcript file is
+the only complete history. The renderer paints it: prompts, replies, tool
+calls, and trimmed results take the palette in `internal/theme`, and the
+markdown Claude writes is read back as styling by Glamour, against a
+stylesheet built from that same palette in
 `internal/provider/markdown.go`. Glamour's own wrapping is switched off —
-the pane is resizable, so line breaking belongs to the pane, which knows the
-current width. Wrapping replays the styling in
-effect at the head of every continuation row and closes it at the row's end,
-so no color runs into the neighboring pane. Claude and Codex
-interactions focus on content from the first populated prompt and remove only
-the trailing empty composer/status block. The tmux capture remains the
-provider-neutral fallback. Messages
-composed in the pane are pasted into the selected tmux pane.
+the pane is resizable, so line breaking belongs to the pane, which knows
+the current width. While a turn is in flight the live screen is appended
+under a divider so streaming output stays visible; an agent with no
+transcript falls back to its terminal snapshot.
 
-On first attach, the runtime reserves `Q` in tmux's prefix key table and marks
-the binding with the `Return from Stormlight` key note. The binding recognizes
-Stormlight windows. Stormlight refreshes a binding carrying its note but
-refuses to replace a user-owned `Q` binding. The
-managed session preserves the global tmux status formats and uses
-`client_prefix` to temporarily switch to a high-contrast status style with the
-available return and help keys.
-
-The same attach reserves the queue keys — `C-]` and `C-\` in the root table,
-`N` and `P` under the prefix — which step the client through the agents
-waiting on a human. Unlike the return key these are not essential to escaping
-an agent, so a foreign binding is left in place with a warning rather than
-failing the attach. The binding re-invokes Stormlight rather than expressing
-the choice as a tmux format: the order depends on marks and on when each
-agent entered the queue, which is inference no format language carries. The
-window arrived in inherits the return target of the one left behind.
-
-Each queue hint on the bar carries a tmux user range, so a click on it does
-what it says rather than inheriting the return region that surrounds it. A
-click is dispatched on `#{mouse_status_range}`, which is a different key
-(`MouseDown1Status`) from the one the return region answers to
-(`MouseDown1StatusRight`), so the two coexist. Two tmux details are load
-bearing: a range name is stored in a fixed 16-byte field and silently cut, so
-two names sharing a long prefix arrive identical and match neither branch;
-and a range is recorded one column right of where its text is drawn, so each
-range opens on the space before its hint to land on the glyphs.
-
-Arriving deliberately does not clear attention. Landing in a window answers
-nothing the agent is asking, and a cycle that marked rows seen on the way
-past would empty the inbox with nothing done about it. So the queue holds
-still and only the human's place in it moves — which is why a step is
-relative and reversible rather than a repeated pop of the head, and why the
-ring is circular.
-
-The right of the managed session's status bar carries the dashboard's own
-tally, written into a session option the bar expands, then a divider and the
-hints for the two keys that leave the window. It is published from the
-application service's listing rather than from each state change, because a
-listing is the only thing that notices a pane dying — whatever the dashboard
-knows, the bar knows a poll later — and a tally that has not moved is not
-rewritten.
-
-The tally is published as a width conditional: spelled out where the lineage
-still has room for its own, glyph and number below that. Both renderings are
-built in Go, and so is the column budget `status-left` yields to them, which
-is published alongside as a second conditional. `status-right-length` cannot
-serve as that budget — it is a cap on the widest form, and reserving it on a
-narrow client cuts the agent's name for space nothing occupies.
+External overlays — the Yazi directory picker and the Neovim task editor —
+always suspend the dashboard with `tea.ExecProcess` and run full-screen in
+the terminal, returning their results through permission-restricted
+temporary handoff files.
 
 ## State model
 
@@ -207,24 +185,24 @@ and "asked a question", so content is the only instant discriminator): a
 closing question is urgent, anything else is an unseen result. The
 provider's delayed idle notification is deliberately ignored — it would
 re-raise attention the human already cleared. Attention clears on
-engagement: a new prompt, opening the terminal, replying, interrupting,
-paging through the result while it is on screen, or an explicit mark-seen.
-Navigating between panes and rows is deliberately not engagement — those
-are the keys a human presses on the way past a result, and counting them
-cleared the amber before it was ever read. The runtime refuses to let a
-soft signal downgrade an urgent state. Dead panes carry no attention —
-their exit status is the story.
+engagement: a new prompt, typing into the agent's terminal, replying,
+interrupting, paging through the result while it is on screen, or an
+explicit mark-seen. Navigating between panes and rows is deliberately not
+engagement — those are the keys a human presses on the way past a result,
+and counting them cleared the amber before it was ever read. The runtime
+refuses to let a soft signal downgrade an urgent state. Exited agents
+carry no attention — their exit status is the story.
 
 This prevents a resumable completed conversation from being conflated with a
 currently running process, and keeps "needs me now" distinct from "idle on
 me" and from "just idle".
 
 Entry into the amber inbox is stamped, by either route, and the stamp is
-what orders the queue the tmux keys cycle: first in, first out. It records
-entry rather than the latest signal, so a summary or an escalation arriving
-mid-wait does not send an agent to the back of a line it never left. Cycling
-reads that order and nothing else — it never writes attention, so an agent
-leaves the queue only the way it always has.
+what the attention sort orders by: first in, first out. It records entry
+rather than the latest signal, so a summary or an escalation arriving
+mid-wait does not send an agent to the back of a line it never left. An
+agent leaves the inbox only through engagement, never through mere
+navigation.
 
 A mark is the one signal nothing derives. Everything above is inference, and
 inference is sometimes wrong, so a human can say otherwise (`m` in the
@@ -235,47 +213,31 @@ the agent is still running, which the agent settles as soon as it reports
 anything, so the next state-bearing update retires it; an attention mark
 claims the human has something to return to, which no provider event can
 answer, so only an explicit clear or the same engagement that clears amber
-takes it down. Like attention, a mark stops applying once the pane is dead.
+takes it down. Like attention, a mark stops applying once the process has
+exited.
 
 ## Persistence
 
-tmux options are the source of truth for a running roster, because managed
-processes cannot outlive the tmux server. The workspace catalog is an atomic
-JSON file independent of tmux, as are the dashboard's column preferences.
+Session metadata in the daemon is the source of truth for the running
+roster, and the daemon's persistence is what makes it durable: agents
+outlive every dashboard because their PTYs and terminals never belonged to
+one. The workspace catalog is an atomic JSON file independent of the
+daemon, as are the dashboard's column preferences.
 
-Alongside them, `internal/resurrect` keeps `session.json` — a mirror of the
-roster written on every reconciling listing, so the record outlives the server
-that holds the truth. It is a mirror rather than a second source of truth:
-nothing reads it while tmux is up, and a restore rebuilds windows from it
-rather than reconciling against it.
-
-Two rules keep the mirror honest.
-
-The first is when it may forget. A listing is never trusted about absence,
-twice over. A listing from a runtime whose managed session is gone is not
-authoritative at all (`session.Restorer.RosterLive`) and may not write. And
-even an authoritative listing only refreshes the entries it contains: a
-save carries forward every stored entry the roster lacks, so dispatching
-new work or restoring a subset right after a server death cannot shrink the
-list restore is about to read. An entry leaves the record by deliberate act
-only — deleted (recorded as a Forget at the point of deletion), explicitly
-forgotten, or restored, at which point it is live and follows the roster
-again. The corollary is embraced: a window killed behind Stormlight's back
-stays remembered as a lost, restorable agent until a human says otherwise.
-
-The second is what restoring may do. A provider adapter's `Resume` maps a
-session id — the one the agent's hooks reported, or failing that the one the
-provider's transcript naming encodes — to a launch that reopens the
-conversation, and that launch carries no prompt: a restored agent idles at
-its composer. An agent with no session id and no transcript is not
-restorable at all, because there is nothing to reopen and re-dispatching its
-original task would be a materially different act performed under the same
-name. The same adapter surface serves the dashboard's session history
-browser, which reopens conversations recorded in the append-only session
-log long after their windows are deleted.
-
-A future daemon may still add an append-only event journal, for agents that
-run remotely rather than merely survive a restart.
+The daemon's lifetime bounds the roster's. A reboot or a killed daemon
+takes the processes and their terminals with it — but not the
+conversations. `internal/history` keeps an append-only session log
+(`sessions.jsonl`) recording every session id the providers ever report,
+with the task, workspace, and transcript path; the log is compacted once
+per dashboard launch, off every event path. A provider adapter's `Resume`
+maps a session id — the one the agent's hooks reported, or failing that
+the one the provider's transcript naming encodes — to a launch that
+reopens the conversation, and that launch carries no prompt: a resumed
+agent idles at its composer. Nothing resumes work by itself. An agent that
+never reported a turn has no session id and no transcript, so there is
+nothing to reopen — re-dispatching its original task would be a materially
+different act performed under the same name. The dashboard's history
+browser (`H`) serves the same records long after their agents are deleted.
 
 ## Workspace boundary
 

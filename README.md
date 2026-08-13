@@ -3,13 +3,13 @@
 A workspace-native control surface for coding agents.
 
 `stormlight` dispatches Claude, Codex, and custom-configured coding agents
-into isolated windows on a private, Stormlight-owned tmux server. Each agent is one provider
-conversation.
+onto a small daemon that owns each agent's PTY and terminal. Each agent is
+one provider conversation.
 The dashboard organizes them as `Workspaces | Agents | Spanreed`, showing
-live process state, recent interaction, and agents that need attention without
-nesting another tmux instance or owning your terminal. The Spanreed pane is
-your written link to the selected agent — its transcript, your replies, and
-its requests — named for the long-distance writing instrument in the books
+live process state, recent interaction, and agents that need attention,
+running directly in your own terminal. The Spanreed pane is your link to the
+selected agent — its live terminal, its transcript, your replies, and its
+requests — named for the long-distance writing instrument in the books
 Stormlight itself is named after.
 
 Workspace-aware grouping keeps agents from the same repository together while
@@ -17,72 +17,55 @@ preserving the checkout or worktree each agent is using.
 
 ## Design
 
-- tmux owns process and terminal lifetime, and nothing else.
-- Stormlight runs tmux as a private appliance: a dedicated server
-  (`tmux -L stormlight`) with Stormlight's own configuration. User dotfiles,
-  plugins, and session-restore tools never load there, so behavior is
-  identical on every machine.
-- Each agent is one tagged tmux window in the `stormlight-agents` session.
-- The dashboard can exit without stopping any agent.
-- Metadata is stored as tmux window options, not inferred from window names.
-- A record of the roster is kept on disk so agents outlive the tmux server,
-  and restoring one reopens its conversation without resuming its work.
-- Provider adapters construct commands; tmux lifecycle is provider-neutral.
-- Agent runtimes and dashboard presentation surfaces are separate interfaces.
-- Workspace resolvers are provider-neutral and external resolvers are supported.
-- Pane messages use tmux buffers, avoiding command interpolation.
-- The Spanreed pane combines structured actions with sampled terminal output.
+- A dedicated daemon owns process and terminal lifetime, and nothing else.
+  It is built on [windrunner](https://github.com/trentkm/windrunner), hosted
+  by the same `stormlight` binary (`stormlight _wrdaemon`), and started on
+  demand over a unix socket — nothing else needs installing or configuring.
+- Each agent is one daemon session; PTYs the daemon owns, with an
+  authoritative terminal emulator per agent, so a snapshot is exact and an
+  attach is a byte stream rather than a screen scrape.
+- The dashboard can exit without stopping any agent. Agents, their terminals,
+  and their scrollback persist in the daemon across dashboard restarts — the
+  daemon's sessions *are* the roster.
+- Metadata rides in the session itself, as one JSON document the daemon
+  stores without reading; liveness and exit status are the daemon's own
+  facts and always override what the document claims.
+- Provider adapters construct commands; the daemon spawns them directly and
+  is provider-neutral.
+- Messages are delivered into the agent's PTY as a bracketed paste, never
+  interpolated into shell command strings.
+- Every agent keeps a live terminal in the dashboard — seeded with an exact
+  snapshot, then fed the live byte stream — so selecting an agent switches
+  terminals rather than starting one. A transcript reading view sits behind
+  `t`.
 - Custom provider specs give unsupported agent CLIs a fallback.
+- Workspace resolvers are provider-neutral and external resolvers are
+  supported.
 
-An outside-tmux launch transparently hosts the dashboard in a temporary
-session on the Stormlight server; a launch from inside your own tmux uses the
-current pane directly and reaches agents through a nested client. Selecting an
-agent switches to its window, and that window's status bar names where you
-are — `workspace › worktree › agent` — rather than listing the session's other
-agents, which the dashboard is already for. A narrow terminal drops the outer
-segments first; the agent's own name always stays. The right of that bar
-carries the dashboard's own counters — working, waiting, needing input, and
-idle — behind a divider that separates them from the key hints, so the
-question that would otherwise send you back to the dashboard is answered
-where you already are. The counters keep their words while the lineage still
-has room for its own; below that they fall back to the glyph and the number,
-which the dashboard header is the legend for.
+The Spanreed pane shows the selected agent's real terminal, live. Walking
+into it (`Enter` or `Ctrl-space`) hands the keyboard to the agent, byte for
+byte; the same chord steps back out. From inside, `option`+`j`/`k` (`alt`
+outside macOS) switches agents without stepping out, `option`+`z` zooms the
+terminal over the whole body, and `option`+`t` flips to the transcript.
+These are modifier chords the hosted TUIs don't bind, so a focused terminal
+still receives every letter. When the embedded view is not enough, `F`
+attaches the same terminal full-screen in your own terminal — every column
+of the display — and `Ctrl-q` returns to the dashboard. Closing the
+dashboard stops nothing: agents keep running in the daemon, terminals
+intact for the next run.
 
-When something is waiting, `Ctrl-]` hands you the next one directly and
-`Ctrl-\` steps back: agents queue in the order they started waiting, and the
-ring is circular, so pressing forward walks the whole inbox and comes round
-again. Visiting an agent deliberately does not clear its amber — landing in
-a window is not an answer to what the agent is asking — so the queue holds
-still and your place in it is what moves. Attention comes down where it
-always has: from the dashboard, from `M`, or from the agent's own next
-report. Press the tmux prefix followed by `Q` to return to the dashboard, or
-`N` and `P` for the same queue. Stormlight installs these bindings only when
-the keys are unbound or already owned by Stormlight. While the prefix is
-active, the managed session highlights the tmux status bar and shows `Q` for
-return, `N` and `P` for the queue, and `?` for the full tmux key list. Both
-queue hints on the bar are clickable and do what they say; the rest of the
-bar returns to the dashboard.
-Closing the dashboard removes only its temporary session; agents keep
-running on the Stormlight server.
-
-Conversations outlive their windows. Both providers name every session with
+Conversations outlive their agents. Both providers name every session with
 an id their own `resume` command accepts, and Stormlight records it — with
 the task, workspace, and transcript path — in an append-only log at
-`$XDG_STATE_HOME/stormlight/sessions.jsonl`. Deleting an agent's window
-hands its session to that log rather than erasing it: `H` opens the history
-browser, and Enter reopens the selected conversation as a new managed agent
-in the workspace it left, with everything it had already said and done.
+`$XDG_STATE_HOME/stormlight/sessions.jsonl`. Deleting an agent hands its
+session to that log rather than erasing it: `H` opens the history browser,
+and Enter reopens the selected conversation as a new managed agent in the
+workspace it left, with everything it had already said and done.
 
 ## Requirements
 
-- tmux 3.3 or newer. tmux 3.7+ is strongly recommended: Yazi and Neovim
-  overlays open as tmux popups only on 3.7+, because `display-popup` in older
-  tmux crashes the whole tmux server when the hosted program queries cursor
-  state ([tmux/tmux#4942](https://github.com/tmux/tmux/issues/4942), fixed in
-  3.7). Stormlight detects the version and falls back to full-screen takeover
-  on older tmux instead of risking the server.
 - `yazi` for the directory picker (installed automatically by the Homebrew
-  formula). Optional: `nvim` for task editing.
+  cask). Optional: `nvim` for task editing.
 
 ## Install
 
@@ -90,17 +73,15 @@ in the workspace it left, with everything it had already said and done.
 brew install trentkm/stormlight/stormlight
 ```
 
-The formula declares `depends_on "tmux"`, so installs get a popup-safe tmux
-(>= 3.7) without thinking about any of this.
-
 ## Build from source
 
 ```bash
 go build -o stormlight .
 ```
 
-Install it somewhere on `PATH` before dispatching agents. Managed tmux windows
-invoke the same binary to track process lifecycle.
+Install it somewhere on `PATH` before dispatching agents. Provider hooks
+re-invoke Stormlight through `$STORMLIGHT_BIN` to report lifecycle state,
+and the daemon is this same binary.
 
 ```bash
 install -m 0755 stormlight ~/.local/bin/stormlight
@@ -122,7 +103,7 @@ stormlight .
 stormlight ~/src/project
 ```
 
-The dashboard refreshes all Stormlight-managed windows automatically, including
+The dashboard refreshes all Stormlight-managed agents automatically, including
 agents started by `stormlight dispatch` in another shell. It does not adopt
 Claude or Codex conversations that were started directly outside Stormlight.
 
@@ -145,8 +126,9 @@ flags — `auto` (the default and the recommended way to run: never asks),
 `ask` (approvals for consequential actions). In the New Agent form, press
 `m` to cycle the mode; `auto` agents are marked with an `AUTO` badge in the
 agent list. When an agent in a prompting mode does need an answer, the
-dashboard raises attention on it and `Enter` opens its terminal — prompts
-are answered in the agent's own pane, where the provider's real UI lives.
+dashboard raises attention on it and `Enter` walks into its terminal —
+prompts are answered in the agent's own terminal, where the provider's real
+UI lives.
 
 Inspect and control agents:
 
@@ -159,11 +141,10 @@ stormlight rename <id> "focused test fixer"
 stormlight mark <id> attention
 stormlight stop <id>
 stormlight delete <id>
-stormlight restore
 stormlight logs
 ```
 
-Agent renames set the tmux window name, which the dashboard prefers over the
+Agent renames set the stored name, which the dashboard prefers over the
 generated task title. Workspace renames (press `R` in the Workspaces pane)
 are display-name overrides stored in the workspace catalog; the directory on
 disk is untouched.
@@ -175,20 +156,22 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | Key | Action |
 |---|---|
 | `h` / `l` | Move between Workspaces, Agents, and Spanreed |
-| `j` / `k` | Move in the active pane; scroll Spanreed |
+| `j` / `k` | Move in the active pane; scroll the transcript |
 | `gg` / `G` | Move to the first or last item |
 | `Ctrl-d` / `Ctrl-u` | Move down or up half a page |
 | `Ctrl-f` / `Ctrl-b` | Move down or up a full page |
 | `<` / `>` | Narrow or widen the focused pane (persists across launches) |
 | `z` | Toggle compact and expanded list rows |
-| `Enter` | Enter Agents from Workspaces, or open the selected agent terminal |
-| `Ctrl-6` | Return from an agent to the dashboard (vim's alternate-buffer toggle; also shown in the agent status bar, which is clickable) |
-| tmux prefix, then `Q` | Return from an agent to the dashboard (tmux-native fallback) |
-| `Ctrl-]` / `Ctrl-\` | From an agent, step forward or back through the agents waiting on you, oldest first |
-| tmux prefix, then `N` / `P` | The same queue (tmux-native fallback) |
+| `Enter` | Enter Agents from Workspaces, or walk into the selected agent's terminal |
+| `Ctrl-space` | Walk into or out of the terminal — the seam key, symmetric from both sides |
+| `Z` | Zoom the terminal: the sidebars collapse and the keyboard walks in |
+| `t` | Toggle the live terminal and the transcript reading view |
+| `F` | Attach the selected agent full-screen in your terminal; `Ctrl-q` returns |
+| `option`+`j` / `k` (in the terminal) | Switch agents without stepping out (`alt` outside macOS) |
+| `option`+`z` / `option`+`t` (in the terminal) | Zoom; flip to the transcript |
 | `n` | Add a workspace in Workspaces; create an agent in the selected workspace elsewhere |
 | `o` | Create an agent with an explicit directory picker |
-| `i` / `s` | Write a reply in Spanreed |
+| `i` / `s` | Reply: the composer in transcript view, the terminal itself in terminal view |
 | `Ctrl-v` (while replying) | Paste a clipboard image as a file path |
 | `x` | Interrupt the selected agent |
 | `Ctrl-x`, then `x` / `y` / `Enter` | Remove a workspace or delete an agent |
@@ -198,22 +181,22 @@ IDs may be shortened as long as the prefix remains unambiguous.
 | `m` | Mark the selected agent in progress or needs-attention (your own reading, overriding Stormlight's) |
 | `M` | Mark the selected agent — or workspace — seen |
 | `K` | Workspace info popup (resolver, roots, metadata) |
-| `Ctrl-r` | Restore agents remembered from before the tmux server was lost |
+| `H` | Session history browser; Enter resumes a conversation |
 | `?` | Full keybinding reference |
 | `r` / `Ctrl-l` | Refresh |
 | `q` | Close the dashboard |
 
-In Spanreed, press `i` or `s` to open the reply box — it wraps and grows
-with your message, and stays open between messages. Press `Enter` to send,
-`Ctrl-j` for a newline, and `Esc` — or `Backspace` once the box is empty —
-to leave.
+The transcript view (`t`) is where written interaction lives. Press `i` or
+`s` to open the reply box — it wraps and grows with your message, and stays
+open between messages. Press `Enter` to send, `Ctrl-j` for a newline, and
+`Esc` — or `Backspace` once the box is empty — to leave.
 Press `/` to search the transcript (`n`/`N` between matches). Drag with the
-mouse to highlight transcript lines — releasing copies them to the tmux
-paste buffer and the system clipboard.
+mouse to highlight transcript lines — releasing copies them to the system
+clipboard.
 Provider slash commands (`/compact`, `/clear`, custom skills) work from the
 reply box too — a single-line message starting with `/` is typed into the
-agent as a command instead of pasted as text. Normal-mode `Enter` opens the
-complete provider terminal for controls that cannot be represented inline.
+agent as a command instead of pasted as text. In terminal view the agent's
+own composer is right there, so `i` / `s` simply walks in.
 
 Images paste too: press `Ctrl-v` while composing and Stormlight saves the
 clipboard image to a temp file and inserts its path at the cursor — Claude
@@ -223,12 +206,12 @@ Code and Codex read image files referenced by path. On macOS this uses
 `wl-paste` or `xclip`.
 
 Approval and authentication prompts are answered in the agent's own terminal:
-Stormlight raises attention and points at the pane rather than reimplementing
-the provider's prompt. While one is pending, the reply box stands down — `i` /
-`s` redirects you to `Enter`, and a prompt arriving mid-compose closes the
-composer and parks your draft for when you return. A plain question is
-different: the agent is idle at its own composer, so a Spanreed reply is the
-answer.
+Stormlight raises attention and points at the terminal rather than
+reimplementing the provider's prompt. While one is pending, the reply box
+stands down — `i` / `s` redirects you to `Enter`, and a prompt arriving
+mid-compose closes the composer and parks your draft for when you return. A
+plain question is different: the agent is idle at its own composer, so a
+Spanreed reply is the answer.
 
 Pressing `n` in Agents or Spanreed inherits the current workspace context.
 The centered form contains a vertical `Coding agent` picker, an optional name,
@@ -241,24 +224,21 @@ conversational coding agent.
 
 `Tab` reaches the name field, which `Enter` on the picker skips past. Leave it
 empty and the agent is named after its task; fill it in and that name is what
-the agent list and its tmux window carry (the same thing `R` sets afterward,
-and what `stormlight dispatch --name` has always taken). The field drops out
+the agent list carries (the same thing `R` sets afterward, and what
+`stormlight dispatch --name` has always taken). The field drops out
 of the form in panes too short to hold both it and the task composer.
 
 Press `e` from the coding-agent picker or `Ctrl-o` from the task composer to
-edit the task in Neovim. The saved text returns to the form. Neovim opens in a
-tmux popup when the current surface supports popups and otherwise temporarily
-takes over the terminal.
+edit the task in Neovim. The dashboard suspends, Neovim takes the terminal,
+and the saved text returns to the form.
 
 Press `o` when the agent should run somewhere else. This opens the full
 directory picker with known workspaces, worktrees, components, Yazi, and
 interactive path entry. Use `j` / `k` or `gg` / `G` to select a location.
 Pressing `e` on a location edits that path directly. In Yazi, `Enter` chooses
 the highlighted directory (or a highlighted file's parent), `q` chooses
-Yazi's current directory, and `Q` cancels. Yazi opens as a tmux popup over
-the dashboard, including when Stormlight was launched from a regular shell.
-Direct terminal takeover remains a fallback when the dashboard cannot be
-hosted in tmux.
+Yazi's current directory, and `Q` cancels. Yazi runs full-screen while the
+dashboard suspends, and the dashboard returns the moment it closes.
 
 `Enter a path` is an interactive `cd` from the current directory: type to
 filter its subdirectories, `Tab` descends into the best match (arrows pick
@@ -266,63 +246,11 @@ another, then `Enter` descends), `Backspace` on an empty filter goes up, a
 typed absolute or `~` path jumps there, and `Enter` with nothing highlighted
 chooses the directory you are in.
 
-The Spanreed pane retains provider terminal colors while removing startup
-chrome and the inactive prompt/status area for Claude and Codex. Shell agent
-output remains unfiltered.
-
-## Resurrect
-
-Everything Stormlight knows about an agent lives in tmux window options, next
-to the process it describes. That is the right home while the server is up and
-the wrong one the moment it is not: a reboot, a `kill-server`, or an OOM takes
-the roster with it — not only the processes, which were always going to die,
-but the record of which workspace each agent was in, what it was asked to do,
-and which of them was waiting on an answer.
-
-The providers keep their side. A Claude conversation is still sitting in its
-transcript file. So Stormlight keeps a record of its own, in
-`~/.local/state/stormlight/session.json` beside the workspace catalog, written
-whenever the roster changes. After the server is gone:
-
-```bash
-stormlight restore          # what is remembered, and what can come back
-stormlight restore --all    # bring all of it back
-stormlight restore <id>...  # or name them
-stormlight restore --forget <id>...
-```
-
-The dashboard offers the same thing on `Ctrl-r`, and offers it unprompted when
-it starts to an empty roster and a record that is not.
-
-**Restore brings the agent back, not the turn.** Each restored agent reopens
-its own conversation and idles at its composer — same id, same workspace, same
-task, and still holding its place in the amber inbox if it was waiting on you
-when the server died. Nothing starts working. A machine that reboots overnight
-must not wake up to a dozen agents spending tokens unattended, so restoring is
-always a deliberate act and never resumes work by itself.
-
-Not everything can come back, and the listing says which and why rather than
-dropping the row:
-
-- **An agent that never reported a turn** has no session id and no
-  transcript, so there is no conversation to reopen. Re-running its original
-  task from scratch is a different and far more dangerous act than the one
-  restore promises.
-- **Custom provider specs** cannot be reopened — reopening a conversation is
-  a capability a provider adapter declares, and a spec declares how to start
-  a conversation, not how to reopen one. Claude and Codex both declare it.
-- **An agent whose working directory is gone** — the worktree was torn down
-  while the agent was still in it — has nowhere to come back to.
-
-An empty agent list is never taken as "there are no agents" on its own. The
-managed tmux session is the arbiter: while it exists its windows are the
-truth and the record follows them, and while it does not the record is
-authoritative and nothing may overwrite it. That is what keeps a listing taken
-one second after the server died from erasing the very thing it is for. And
-absence alone never forgets: an agent leaves the record only when you delete
-it, forget it, or restore it — so dispatching new work or restoring only some
-of what was lost leaves the rest waiting under `Ctrl-r`, exactly where the
-crash left them.
+The transcript view renders the conversation from the provider's own
+transcript file once the agent's hooks have reported one — prompts, replies,
+tool calls, and trimmed results in Stormlight's palette — appending the live
+terminal screen while a turn is in flight so streaming output stays visible.
+An agent without a transcript falls back to its terminal screen as-is.
 
 ## Workspaces
 
@@ -365,15 +293,15 @@ Every finished turn is classified from its final message (providers emit
 the same event for "done" and "asked you something", so the content is the
 discriminator): a closing question goes loud, anything else is an unseen
 result. Amber is an inbox — it clears when you engage with the result:
-replying, interrupting, or opening the terminal clears any tier; paging
-through the transcript while it is on screen clears unseen; and `M` marks the
-selected agent — or every agent in the selected workspace — seen manually.
-Moving between panes and rows is not engagement — navigation is how you leave
-a result, so it leaves the amber where it is.
+replying, interrupting, or typing into the agent's terminal clears any tier;
+paging through the transcript while it is on screen clears unseen; and `M`
+marks the selected agent — or every agent in the selected workspace — seen
+manually. Moving between panes and rows is not engagement — navigation is
+how you leave a result, so it leaves the amber where it is.
 
 ### Marking an agent yourself
 
-Stormlight infers all of this from provider hooks and pane state, and it is
+Stormlight infers all of this from provider hooks and process state, and it is
 sometimes wrong: an agent grinding through a long tool call reads as idle, and
 a result you want to revisit reads as nothing at all. Press `m` on an agent to
 say otherwise. The picker offers two marks and a way out:
@@ -395,8 +323,8 @@ In-progress claims the agent is still running, which the agent settles the
 moment it reports anything — its next hook event retires the mark. Needs-
 attention claims *you* have something to come back to, which no provider event
 can answer, so only you take it down: `M`, or engaging with the row the same
-way engagement clears amber. A mark also stops applying when the pane dies,
-because an exit status is the whole story of a finished agent.
+way engagement clears amber. A mark also stops applying when the process
+exits, because an exit status is the whole story of a finished agent.
 
 The same override is available outside the dashboard:
 
@@ -490,12 +418,6 @@ stormlight config        # print the effective merged configuration
 provider = "claude"        # what the New Agent form starts on
 mode     = "edits"         # ask | edits | auto
 
-[tmux]
-socket      = "stormlight"
-return_keys = ["C-6", "C-^"]
-next_keys     = ["C-]"]    # step forward through the agents waiting on you
-previous_keys = ['C-\\']    # and back
-
 [workspaces."~/repos/trusted-project"]
 mode = "auto"              # per-directory dispatch defaults (matches subdirs)
 ```
@@ -538,23 +460,26 @@ stormlight --log-level debug
 
 Override the location with `--log-file` or `STORMLIGHT_LOG_FILE`.
 
-## The Stormlight tmux server
+## The windrunner daemon
 
-Stormlight talks to `tmux -L stormlight` by default and boots that server with
-its own managed configuration (rewritten at startup at
-`~/.config/stormlight/tmux.conf`). Power users can inspect it directly:
+Agents live in a daemon built on the
+[windrunner](https://github.com/trentkm/windrunner) session engine, hosted
+by the same binary as `stormlight _wrdaemon` and started automatically the
+first time anything needs it. It listens on a unix socket at
+`~/.local/state/windrunner/daemon.sock` (honoring `$XDG_STATE_HOME`) — the
+windrunner library's own default location, so the `windrunner` CLI's
+`windrunner ls` sees Stormlight's agents too. Power users can inspect
+sessions there directly.
+
+The daemon owns the agents' processes, so its lifetime is theirs: a reboot
+or a killed daemon takes the running processes and their terminals with it.
+The conversations survive regardless — the providers keep their transcripts,
+Stormlight keeps its session log — and the `H` history browser reopens any
+of them as a new agent, idling at its composer.
+
+Tests or parallel Stormlight instances can target an alternate daemon by
+pointing `WINDRUNNER_DIR` at a different socket directory:
 
 ```bash
-tmux -L stormlight list-sessions
-tmux -L stormlight attach -t stormlight-agents
+WINDRUNNER_DIR=/tmp/stormlight-test stormlight list
 ```
-
-Tests or parallel Stormlight instances can target an alternate server:
-
-```bash
-STORMLIGHT_TMUX_SOCKET=stormlight-test stormlight list
-```
-
-The value maps to `tmux -L <name>`. Setting `--tmux-socket ""` targets the
-default tmux server with your own configuration; Stormlight never applies its
-managed config there.

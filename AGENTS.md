@@ -14,7 +14,7 @@ the right way the first time:
   symptom.
 - Breaking refactors are welcome.
 - Verify real behavior empirically (run the thing, capture the bytes) rather
-  than building on assumptions about how tmux or a provider behaves.
+  than building on assumptions about how a provider or terminal behaves.
 
 ## Tracking work
 
@@ -93,14 +93,17 @@ everyday binary and to read from — nothing else.
 A worktree isolates the tree and nothing else. The rest is on you:
 
 - **The installed binary.** `~/.local/bin/stormlight` is a global singleton,
-  and managed tmux windows re-invoke `stormlight` from `PATH` — so an install
-  from one worktree silently changes what every other worktree's agents run.
-  Build into the worktree and prepend it to `PATH` for end-to-end runs;
-  install to `~/.local/bin` only when updating the everyday binary is the
-  point.
-- **The tmux server.** Parallel runs need separate sockets
-  (`STORMLIGHT_TMUX_SOCKET=stormlight-<branch>`), or they will list, resize,
-  and kill each other's agents.
+  and provider hooks re-invoke `stormlight` through `$STORMLIGHT_BIN`, which
+  names the launcher on `PATH` — so an install from one worktree silently
+  changes what every other worktree's agents run. Build into the worktree
+  and prepend it to `PATH` for end-to-end runs; install to `~/.local/bin`
+  only when updating the everyday binary is the point.
+- **The windrunner daemon.** Parallel runs need separate socket directories
+  (`WINDRUNNER_DIR=/tmp/stormlight-<branch>`), or they will list, resize,
+  and kill each other's agents. The daemon also keeps running the code it
+  started with: an already-running daemon serves your new build's dashboard
+  with old daemon-side behavior, so daemon-side changes need a scratch
+  `WINDRUNNER_DIR` — or a deliberately restarted daemon — to be seen at all.
 - **XDG state**, exactly as the headless testing section below requires.
 
 Linked worktrees share one `--git-common-dir`, so Stormlight groups them into
@@ -115,9 +118,9 @@ Inside a worktree, building the branch you are working on:
 go build -o stormlight . && install -m 0755 stormlight ~/.local/bin/stormlight
 ```
 
-Installing matters: managed tmux windows re-invoke `stormlight` from PATH for
-lifecycle tracking, so a stale installed binary means the dashboard and the
-agents disagree about the world.
+Installing matters: provider hooks re-invoke `stormlight` through
+`$STORMLIGHT_BIN`, which names the launcher on `PATH`, so a stale installed
+binary means the dashboard and the agents disagree about the world.
 
 Refreshing the everyday binary to current `main` is the one job the primary
 checkout still does, and it advances `main` read-only to do it:
@@ -207,16 +210,19 @@ number looks large.
 
 ## Headless TUI testing
 
-The dashboard and agent lifecycle can be exercised without a real terminal:
+The dashboard and agent lifecycle can be exercised without a real terminal.
+tmux is not something Stormlight runs on — agents live in the windrunner
+daemon — but a scratch tmux server remains the outer harness of choice: it
+provides a pane to launch the dashboard in, drive with `send-keys`, and
+read with `capture-pane`.
 
 - Start an isolated server:
   `tmux -L <scratch-socket> -f /dev/null new-session -d -x 120 -y 34`.
-- When an *attached client* is required (tmux popups only render for attached
-  clients): run `tail -f /dev/null | script -q <log> tmux -L <sock> attach`
+- When an *attached client* is required (glyph fidelity — see below): run
+  `tail -f /dev/null | script -q <log> tmux -L <sock> attach`
   in the background. The `tail` pipe is required — a closed stdin sends EOF
   into the pane shell, which kills the session and (via exit-empty) the
-  server. The `script` log captures the full client byte stream, including
-  popup contents that `capture-pane` can't see.
+  server. The `script` log captures the full client byte stream.
 - Drive the UI with `send-keys`; read it with `capture-pane -p`.
 - **Launch the binary by absolute path**, never by name off a `PATH` you
   set on the session:
@@ -233,10 +239,13 @@ The dashboard and agent lifecycle can be exercised without a real terminal:
   a fix passes its tests but the dashboard disagrees, confirm which binary is
   running before believing the screen: point `STORMLIGHT_LOG_FILE` at a
   scratch file and read the `command started` line, which names the version.
-- For server post-mortems, start tmux with `-vv` and read the
-  `tmux-server-*.log` it drops in the working directory.
-- **Isolate all state**: set both `XDG_CONFIG_HOME` and `XDG_STATE_HOME` for
-  every end-to-end run. The workspace catalog lives in
+- **Isolate all state**: set `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and
+  `WINDRUNNER_DIR` for every end-to-end run. `WINDRUNNER_DIR` gives the run
+  its own daemon socket directory: without it the test dashboard connects to
+  your real daemon, its dispatches land among your real agents, and your
+  real agents crowd every capture. The scratch daemon outlives the run —
+  auto-started daemons persist by design — so kill it when the test is done.
+  The workspace catalog lives in
   `$XDG_STATE_HOME/stormlight/workspaces.json` and is mutated by
   add/remove/rename flows — an unisolated test run will edit your real
   catalog. Seed it by copying a catalog the app itself wrote, not by
@@ -258,11 +267,3 @@ state from whatever you pressed earlier. And when a branch and `main` seem to
 differ, build both and diff their captures rather than reading one and
 reasoning about the other; `diff` on two `capture-pane` dumps settles in a
 second what a screenshot argues about for an hour.
-
-## tmux version notes
-
-tmux >= 3.3 is required; overlays (Yazi, Neovim) open as popups only on
-tmux >= 3.7 because `display-popup` on older tmux crashes the whole server
-when the hosted program queries cursor state
-([tmux/tmux#4942](https://github.com/tmux/tmux/issues/4942)). The gate lives
-in `internal/tmux/surface.go`.
