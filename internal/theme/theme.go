@@ -42,13 +42,6 @@ var (
 	// teal drawn from the wordmark's cool end so code reads as a different
 	// substance than prose without competing with the status colors.
 	Code = Pair{Light: "#0E7C6B", Dark: "#8FDCCB"}
-	// Recede is chrome stepping back: the pane seams while the Spanreed
-	// terminal holds the keyboard, receded so the portal is the subject.
-	Recede = Pair{Light: "#D6DCE0", Dark: "#383E44"}
-	// PortalInk is the window bar's text on its Accent-filled band while
-	// the terminal holds the keyboard. The Accent is identical on both
-	// grounds, so its ink is too.
-	PortalInk = Pair{Light: "#0F2338", Dark: "#0F2338"}
 )
 
 // dark records which background the palette resolves against.

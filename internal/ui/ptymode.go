@@ -205,10 +205,10 @@ func (m Model) terminalHints() string {
 // renderTerminalBar is the window bar over the terminal grid, and the only
 // dashboard chrome the terminal view keeps: the agent's status glyph and
 // name, the heading's meta line in words, and the terminal's real
-// dimensions, on a filled band spanning the pane. The band flips to accent
-// while the keyboard feeds the terminal — focus is painted, not implied —
-// and zoomed it carries the roster position, because alt+j/k still cycle
-// agents with the roster out of sight.
+// dimensions, on a filled band spanning the pane. The hint row below the
+// grid is the focus signal; the band stays one steady surface. Zoomed it
+// carries the roster position, because alt+j/k still cycle agents with the
+// roster out of sight.
 func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	symbol, statusStyle := statusVisual(managedAgent)
 	dims := ""
@@ -233,11 +233,6 @@ func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	band := lipgloss.NewStyle().Background(colorSelect())
 	glyph := statusStyle.Background(colorSelect()).Render(symbol)
 	text := band.Foreground(colorText())
-	if m.terminalFocused() {
-		band = lipgloss.NewStyle().Background(colorAccent())
-		glyph = band.Foreground(colorPortalInk()).Bold(true).Render(symbol)
-		text = band.Foreground(colorPortalInk())
-	}
 	return band.Render(" ") + glyph +
 		text.Render(" "+label+strings.Repeat(" ", gap)+dims+" ")
 }

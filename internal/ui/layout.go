@@ -182,7 +182,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			band:    headerBand{start: 0, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
-			dimSeam: m.terminalFocused(),
 		},
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
@@ -205,7 +204,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			band:    headerBand{start: workspaceWidth, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimAgents,
-			dimSeam: m.terminalFocused(),
 		},
 	)
 	interactionFrame := paneFrame{
@@ -749,9 +747,6 @@ type paneFrame struct {
 	// terminal view mounts its window bar there, so the portal starts on
 	// the frame's very first row. Called with the pane's content width.
 	header func(width int) string
-	// dimSeam recedes the pane's right seam: chrome stepping back while
-	// the Spanreed terminal holds the keyboard.
-	dimSeam bool
 }
 
 func (m Model) renderPane(
@@ -774,14 +769,10 @@ func (m Model) renderPane(
 		// inside it; innerWidth is what is left for content once the seam
 		// has taken its column.
 		innerWidth = max(1, width-1)
-		seamForeground := seamColor(edges.right, frame.band, width)
-		if frame.dimSeam {
-			seamForeground = colorRecede()
-		}
 		style = style.Width(max(1, width)).
 			BorderStyle(edges.right.border()).
 			BorderRight(true).
-			BorderForeground(seamForeground)
+			BorderForeground(seamColor(edges.right, frame.band, width))
 	}
 	// The gutter is the far half of a plane seam, so it comes out of this
 	// pane's own columns: the header rule and every body row start one cell
