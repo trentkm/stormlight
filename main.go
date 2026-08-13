@@ -113,6 +113,7 @@ func newRootCommand() *cobra.Command {
 		newConfigCommand(cfg),
 		newWindrunnerDaemonCommand(),
 		newWindrunnerAttachCommand(),
+		newBenchCommand(),
 	)
 	return root
 }
