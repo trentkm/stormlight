@@ -162,10 +162,15 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		"WINDRUNNER_DIR="+SocketDir(),
 	)
 	info, err := r.client.Spawn(wire.Request{
-		Command:  request.Launch.Path,
-		Args:     request.Launch.Args,
-		Dir:      request.Cwd,
-		Env:      env,
+		Command: request.Launch.Path,
+		Args:    request.Launch.Args,
+		Dir:     request.Cwd,
+		Env:     env,
+		// Peer input is how the dashboard and CLI speak to an agent
+		// without an attachment — Send, Interrupt, `stormlight send` —
+		// and how agents will speak to each other over the daemon's
+		// control plane.
+		Peer:     true,
 		Cols:     80,
 		Rows:     24,
 		Metadata: map[string]string{metadataKey: string(encoded)},
