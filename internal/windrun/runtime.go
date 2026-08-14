@@ -198,6 +198,13 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		// Off by default for hosted agents; harmless to providers that
 		// don't read it.
 		"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
+		// Claude Code's terminal-title machinery misbehaves under this
+		// emulator: after a turn, the conversation title lands in the
+		// input box as real buffer content (verified byte-for-byte — no
+		// stdin write carries it; CC inserts it itself). The title has no
+		// reader here anyway — the window bar carries agent identity —
+		// so the machinery is switched off rather than chased.
+		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
 	)
 	info, err := r.client.Spawn(wire.Request{
 		Command: request.Launch.Path,
