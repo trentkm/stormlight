@@ -160,6 +160,22 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		"STORMLIGHT_ID="+managedAgent.ID,
 		"STORMLIGHT_BIN="+binPath,
 		"WINDRUNNER_DIR="+SocketDir(),
+		// The terminal the agent runs in is the daemon's emulator, not
+		// whatever terminal the daemon was started from — and the daemon
+		// is auto-started from shells, scripts, and hooks, so the
+		// inherited TERM is junk as often as not. Under an impoverished
+		// TERM, TUIs drop styling: Claude Code renders its input-box
+		// prompt suggestions without the faint attribute, which makes
+		// hint text indistinguishable from typed input. Name the
+		// emulator's real capabilities.
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+		// Claude Code's input-box prompt suggestions render without their
+		// faint attribute under this emulator, which makes hint text
+		// pixel-identical to typed input — a day was lost to that ghost.
+		// Off by default for hosted agents; harmless to providers that
+		// don't read it.
+		"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
 	)
 	info, err := r.client.Spawn(wire.Request{
 		Command: request.Launch.Path,
