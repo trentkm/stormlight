@@ -112,3 +112,38 @@ func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
 	transport.output <- []byte("c")
 	<-gate.frames
 }
+
+type notifyingTransport struct {
+	*fakeTransport
+	handler func(cols, rows int)
+}
+
+func (t *notifyingTransport) OnResize(handler func(cols, rows int)) {
+	t.handler = handler
+}
+
+// Someone else moving the hosted terminal — another dashboard, an F
+// attach — reaches the widget as a resize notice: the emulator follows
+// the terminal's true size while the box keeps the pane's.
+func TestWidgetFollowsATerminalMovedBySomeoneElse(t *testing.T) {
+	transport := &notifyingTransport{fakeTransport: newFakeTransport("hi")}
+	terminal := New(transport, NewGate(), 100, 30)
+	defer terminal.Close()
+	if transport.handler == nil {
+		t.Fatal("widget did not register for resize notices")
+	}
+
+	transport.handler(34, 40)
+	if cols, rows := terminal.TerminalSize(); cols != 34 || rows != 40 {
+		t.Fatalf("terminal size = %dx%d, want 34x40", cols, rows)
+	}
+	if cols, rows := terminal.Size(); cols != 100 || rows != 30 {
+		t.Fatalf("box size changed to %dx%d; the pane owns the box", cols, rows)
+	}
+
+	// A deliberate SetSize re-asserts both.
+	terminal.SetSize(80, 24)
+	if cols, rows := terminal.TerminalSize(); cols != 80 || rows != 24 {
+		t.Fatalf("terminal size after SetSize = %dx%d", cols, rows)
+	}
+}

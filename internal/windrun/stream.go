@@ -35,6 +35,13 @@ func (t *terminalStream) Seed() []byte {
 	return t.attachment.Snapshot().ANSI
 }
 
+// OnResize relays the daemon's resize notices: the session's terminal
+// moved — whoever moved it — and the handler runs ahead of the repaint
+// that rides the same stream.
+func (t *terminalStream) OnResize(handler func(cols, rows int)) {
+	t.attachment.OnResize(handler)
+}
+
 func (t *terminalStream) Output() <-chan []byte {
 	return t.attachment.Output()
 }

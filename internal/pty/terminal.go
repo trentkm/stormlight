@@ -119,8 +119,33 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 	// those responses, so drain this end to keep a query from blocking paint.
 	go func() { _, _ = io.Copy(io.Discard, s.emu) }()
 	s.emu.Write(transport.Seed())
+	model := Model{id: lastID.Add(1), state: s}
+	if notifier, ok := transport.(ResizeNotifier); ok {
+		// The handler runs on the transport's read loop, ahead of the
+		// repaint riding the same stream: resize the replica, then the
+		// following bytes paint at the terminal's true size.
+		notifier.OnResize(model.setTerminalSize)
+	}
 	go s.pump()
-	return Model{id: lastID.Add(1), state: s}
+	return model
+}
+
+// setTerminalSize follows the hosted terminal when someone else moved it:
+// the emulator adopts the terminal's true size while the box keeps the
+// pane's, and View clips or pads the difference.
+func (m Model) setTerminalSize(cols, rows int) {
+	cols, rows = max(2, cols), max(2, rows)
+	s := m.state
+	s.mu.Lock()
+	if cols != s.termCols || rows != s.termRows {
+		s.emu.Resize(cols, rows)
+		s.termCols, s.termRows = cols, rows
+		s.viewDirty = true
+	}
+	s.mu.Unlock()
+	if s.visible.Load() {
+		s.gate.Notify()
+	}
 }
 
 func (s *state) pump() {
@@ -150,7 +175,10 @@ func (m Model) SetVisible(visible bool) { m.state.visible.Store(visible) }
 func (m Model) Write(data []byte) error { return m.state.transport.Write(data) }
 func (m Model) ID() int64               { return m.id }
 
-// SetSize resizes both the emulator and the hosted terminal.
+// SetSize is the deliberate resize: the dashboard's own window moved, a
+// zoom toggled, an attach returned. It asserts the new size on both the
+// replica and the hosted terminal — as opposed to setTerminalSize, which
+// follows a move someone else made.
 func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	cols, rows = max(2, cols), max(2, rows)
 	s := m.state
