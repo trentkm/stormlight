@@ -32,6 +32,21 @@ import (
 // metadataKey holds the serialized agent.Agent in a session's metadata.
 const metadataKey = "stormlight_agent"
 
+// scrubbedEnviron is os.Environ() without another Claude session's
+// identity. Deliberate CLAUDE_CODE_* values are re-added by the caller.
+func scrubbedEnviron() []string {
+	environ := os.Environ()
+	kept := environ[:0]
+	for _, entry := range environ {
+		if strings.HasPrefix(entry, "CLAUDE") ||
+			strings.HasPrefix(entry, "ANTHROPIC_") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
 // sendSubmitDelay separates pasted text from the Enter that submits it:
 // providers need a beat to register the paste before the submit keypress.
 const sendSubmitDelay = 150 * time.Millisecond
@@ -156,7 +171,14 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	// way back: the id names the session, the binary answers
 	// $STORMLIGHT_BIN, and the socket dir rebuilds this same service
 	// inside `stormlight _provider-event`.
-	env := append(os.Environ(),
+	//
+	// It starts from a scrubbed environment: the daemon is auto-started
+	// from whatever shell first needed it — including a Claude Code
+	// session's own tool shell — and the ambient CLAUDE*/ANTHROPIC_*
+	// variables would wire every agent into that session's identity:
+	// child-session mode, its messaging socket and token, its session id.
+	// An agent is nobody's child.
+	env := append(scrubbedEnviron(),
 		"STORMLIGHT_ID="+managedAgent.ID,
 		"STORMLIGHT_BIN="+binPath,
 		"WINDRUNNER_DIR="+SocketDir(),
