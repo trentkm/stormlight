@@ -14,7 +14,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/ptyview"
@@ -205,21 +204,8 @@ func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	if meta := terminalBarMeta(managedAgent); meta != "" {
 		label += "  ·  " + meta
 	}
-	// " ● " + label + gap + dims + " " fills the width exactly; the label
-	// yields first, the gap absorbs what remains.
-	dimsWidth := lipgloss.Width(dims)
-	label = truncate(label, max(1, width-dimsWidth-5))
-	gap := max(1, width-4-lipgloss.Width(label)-dimsWidth)
-	band := lipgloss.NewStyle().Background(colorSelect())
-	glyph := statusStyle.Background(colorSelect()).Render(symbol)
-	text := band.Foreground(colorText())
-	if m.terminalFocused() {
-		band = lipgloss.NewStyle().Background(colorAccent())
-		glyph = band.Foreground(colorPortalInk()).Bold(true).Render(symbol)
-		text = band.Foreground(colorPortalInk())
-	}
-	return band.Render(" ") + glyph +
-		text.Render(" "+label+strings.Repeat(" ", gap)+dims+" ")
+	return bandSegment(symbol, &statusStyle, label, dims,
+		m.terminalFocused(), width)
 }
 
 // terminalBarMeta is the heading's meta line as bar words: the derived

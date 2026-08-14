@@ -192,6 +192,9 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
 			dimSeam: m.terminalFocused(),
+			header: func(w int) string {
+				return m.renderWorkspacesBar("", w)
+			},
 		},
 	)
 	if workspaceRow, agentRow, ok := m.hierarchyConnectorRows(contentHeight); ok {
@@ -215,6 +218,9 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			margins: paneMargins{top: true, left: true},
 			dimming: dimAgents,
 			dimSeam: m.terminalFocused(),
+			header: func(w int) string {
+				return m.renderAgentsBar("", w)
+			},
 		},
 	)
 	interactionFrame := paneFrame{
@@ -234,6 +240,16 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			return m.renderTerminalBar(selected, w)
 		}
 		interactionFrame.margins = paneMargins{}
+	} else {
+		// No terminal to name: the band still runs to the right edge —
+		// quiet over the empty portal, labeled in the transcript view.
+		label := ""
+		if _, ok := m.selectedAgent(); ok && !m.ptyEnabled {
+			label = "Transcript"
+		}
+		interactionFrame.header = func(w int) string {
+			return m.renderQuietBar(label, "", w)
+		}
 	}
 	// The pane has no name row: with an agent the window bar is the title,
 	// and without one the empty state speaks for itself. "Spanreed" is a
@@ -571,6 +587,9 @@ func (m Model) renderFocusedPane(width, height int) string {
 				height: height,
 				active: true,
 				band:   headerBand{total: width},
+				header: func(w int) string {
+					return m.renderAgentsBar(contextLabel, w)
+				},
 			},
 		)
 	case paneInteraction:
@@ -583,6 +602,10 @@ func (m Model) renderFocusedPane(width, height int) string {
 		if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
 			frame.header = func(w int) string {
 				return m.renderTerminalBar(selected, w)
+			}
+		} else {
+			frame.header = func(w int) string {
+				return m.renderQuietBar("", "‹", w)
 			}
 		}
 		return m.renderPane(
@@ -601,6 +624,9 @@ func (m Model) renderFocusedPane(width, height int) string {
 				height: height,
 				active: true,
 				band:   headerBand{total: width},
+				header: func(w int) string {
+					return m.renderWorkspacesBar("Agents ›", w)
+				},
 			},
 		)
 	}
