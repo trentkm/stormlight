@@ -11,7 +11,7 @@ require (
 	github.com/charmbracelet/x/vt v0.0.0-20260811151704-00c6608f106b
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
-	github.com/trentkm/windrunner v0.0.0-20260814174815-cad55b623609
+	github.com/trentkm/windrunner v0.0.0-20260814175808-c95b54243d0b
 )
 
 require (
