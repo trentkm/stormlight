@@ -20,11 +20,16 @@ func (m Model) renderFooter() string {
 	} else {
 		hints := m.commandHints()
 		hintStyle := mutedStyle()
-		if m.terminalFocused() {
+		switch {
+		case m.terminalFocused():
 			// Inside the portal the footer carries the terminal's
 			// controls; it wears the portal's light rather than fading
 			// to furniture gray.
 			hintStyle = lipgloss.NewStyle().Foreground(colorWorking())
+		case m.mode == modeNormal && m.rosterLit():
+			// On the roster's side the hints wear the strip's silver —
+			// the footer matches whichever side of the seam is lit.
+			hintStyle = lipgloss.NewStyle().Foreground(colorBand())
 		}
 		content = hintStyle.Render(truncate(hints, inner))
 		if m.err != nil {
