@@ -214,8 +214,10 @@ func selectTheme() rowTheme {
 	return rowTheme{
 		background: colorSelect(),
 		text:       colorSelectedText(),
-		focusMark:  colorWaiting(),
-		restMark:   colorBorder(),
+		// The cursor mark speaks the strip's silver — selection is one
+		// word everywhere — leaving amber to mean attention alone.
+		focusMark: colorBand(),
+		restMark:  colorBorder(),
 	}
 }
 
