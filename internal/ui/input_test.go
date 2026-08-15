@@ -1755,9 +1755,9 @@ func TestHierarchyConnectorBridgesDifferentRows(t *testing.T) {
 	rendered := ansi.Strip(paintHierarchyConnector(pane, 8, 1, 3))
 	lines := strings.Split(rendered, "\n")
 	if lines[0] != "header │" ||
-		!strings.HasSuffix(lines[1], "┓ │") ||
-		!strings.HasSuffix(lines[2], "┃ │") ||
-		!strings.HasSuffix(lines[3], "┗ │") {
+		!strings.HasSuffix(lines[1], "╮ │") ||
+		!strings.HasSuffix(lines[2], "│ │") ||
+		!strings.HasSuffix(lines[3], "╰ │") {
 		t.Fatalf("hierarchy path is incomplete:\n%s", rendered)
 	}
 	for index, line := range lines {
