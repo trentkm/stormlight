@@ -268,21 +268,20 @@ func (m Model) terminalHints() string {
 // agents with the roster out of sight.
 func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 	symbol, statusStyle := statusVisual(managedAgent)
-	dims := ""
-	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok {
-		cols, rows := widget.TerminalSize()
-		dims = fmt.Sprintf("%d×%d", cols, rows)
-	}
+	// The right edge carries the roster position when zoomed — alt+j/k
+	// still cycle with the roster out of sight — and nothing otherwise;
+	// the terminal's dimensions were chrome nobody read.
+	position := ""
 	if m.ptyZoom {
 		if list := m.agentsForSelectedWorkspace(); len(list) > 1 {
-			dims = fmt.Sprintf("‹ %d/%d ›  %s", m.agentCursor+1, len(list), dims)
+			position = fmt.Sprintf("‹ %d/%d ›", m.agentCursor+1, len(list))
 		}
 	}
 	label := agentDisplayTitle(managedAgent)
 	if meta := terminalBarMeta(managedAgent); meta != "" {
 		label += "  ·  " + meta
 	}
-	return bandSegment(symbol, &statusStyle, label, dims,
+	return bandSegment(symbol, &statusStyle, label, position,
 		m.terminalFocused(), width)
 }
 
