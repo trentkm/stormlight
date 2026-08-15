@@ -734,7 +734,11 @@ const (
 func (s paneSeam) border() lipgloss.Border {
 	border := lipgloss.NormalBorder()
 	if s == seamPlane {
-		border.Right = "┃"
+		// The right one-eighth block hugs its cell's right edge — the
+		// same pixel where the band's light ends above it — so the rule
+		// is flush with the agents tab instead of floating at the
+		// center of its column the way a box-drawing vertical does.
+		border.Right = "▕"
 	}
 	return border
 }

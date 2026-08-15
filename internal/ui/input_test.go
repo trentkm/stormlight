@@ -901,7 +901,7 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	}
 	// The title band is one continuous surface: no seam glyph of any
 	// weight interrupts the strip.
-	if strings.ContainsAny(lines[header], "╷╻│┃") {
+	if strings.ContainsAny(lines[header], "╷╻│┃▕") {
 		t.Fatalf("a seam interrupts the title band: %q", lines[header])
 	}
 
@@ -911,7 +911,7 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	if strings.Contains(firstRow, "│") {
 		t.Fatalf("a hairline divides the catalog: %q", firstRow)
 	}
-	plane := strings.Index(firstRow, "┃")
+	plane := strings.Index(firstRow, "▕")
 	if plane < 0 {
 		t.Fatalf("the plane seam does not begin under the band: %q", firstRow)
 	}
@@ -926,7 +926,7 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 				t.Fatalf("catalog rule has no air before it: %q", line)
 			}
 		}
-		column := runeIndex(runes, '┃')
+		column := runeIndex(runes, '▕')
 		if column < 0 {
 			t.Fatalf("body row has no plane seam: %q", line)
 		}
