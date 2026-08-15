@@ -31,10 +31,10 @@ func segmentRow(
 		text.Render(" "+label+strings.Repeat(" ", gap)+meta+" ")
 }
 
-// bandSegment is the terminal portion of the strip: the window bar's own
-// ground — select gray at rest, the accent while the keyboard is inside —
-// so the portal's segment stays the portal's, distinct from the roster's
-// whitish half. symbol, when present, is the status glyph.
+// bandSegment is the terminal portion of the strip: the accent receded
+// at rest, the full accent while the keyboard is inside — dimming and
+// brightening in the same language as the roster's silver, while staying
+// the portal's own blue. symbol, when present, is the status glyph.
 func bandSegment(
 	symbol string,
 	symbolStyle *lipgloss.Style,
@@ -42,13 +42,13 @@ func bandSegment(
 	focused bool,
 	width int,
 ) string {
-	band := lipgloss.NewStyle().Background(colorSelect())
+	band := lipgloss.NewStyle().Background(colorAccentDim())
 	text := band.Foreground(colorText())
 	glyph := ""
 	lead := 0
 	if symbol != "" {
 		lead = 1
-		glyph = symbolStyle.Background(colorSelect()).Render(symbol)
+		glyph = symbolStyle.Background(colorAccentDim()).Render(symbol)
 	}
 	if focused {
 		band = lipgloss.NewStyle().Background(colorAccent())

@@ -62,6 +62,10 @@ var (
 	// steps back while the keyboard lives in the portal, so the lit
 	// band always means "you are on this side of the seam".
 	BandDim = Pair{Light: "#E8F1F7", Dark: "#59707F"}
+	// AccentDim is the terminal segment at rest: the accent receded the
+	// way BandDim recedes the roster's silver, so the strip dims and
+	// brightens in one language on both sides of the seam.
+	AccentDim = Pair{Light: "#A8CBE8", Dark: "#3A607F"}
 )
 
 // dark records which background the palette resolves against.
