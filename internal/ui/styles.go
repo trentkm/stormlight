@@ -36,6 +36,8 @@ func colorDangerBg() color.Color     { return theme.Color(theme.DangerBg) }
 func colorRecede() color.Color       { return theme.Color(theme.Recede) }
 func colorPortalInk() color.Color    { return theme.Color(theme.PortalInk) }
 func colorBand() color.Color         { return theme.Color(theme.Band) }
+func colorBandMuted() color.Color    { return theme.Color(theme.BandMuted) }
+func colorBandDim() color.Color      { return theme.Color(theme.BandDim) }
 
 func titleStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Bold(true).Foreground(colorText())

@@ -60,13 +60,31 @@ func bandSegment(
 	return segmentRow(glyph, lead, label, meta, band, text, width)
 }
 
-// rosterSegment is the whitish half of the strip, one steady surface for
-// Workspaces and Agents: the lists below tell the roster's focus story,
-// so the segments hold still while the terminal's flips.
-func rosterSegment(label, meta string, width int) string {
-	band := lipgloss.NewStyle().Background(colorBand())
+// rosterSegment is the silvery half of the strip, shared by Workspaces
+// and Agents. It holds one surface for the whole side — the lists below
+// tell which of the two panes has the cursor — and recedes together when
+// the keyboard crosses to the portal: lit silver means "you are on this
+// side of the seam".
+// Three levels: the selected pane's segment wears the full silver, its
+// neighbor a half-step below, and both recede when the keyboard is in
+// the portal.
+func rosterSegment(label, meta string, selected, lit bool, width int) string {
+	ground := colorBandMuted()
+	switch {
+	case !lit:
+		ground = colorBandDim()
+	case selected:
+		ground = colorBand()
+	}
+	band := lipgloss.NewStyle().Background(ground)
 	text := band.Foreground(colorPortalInk())
 	return segmentRow("", 0, label, meta, band, text, width)
+}
+
+// rosterLit reports whether the keyboard is on the roster's side of the
+// seam.
+func (m Model) rosterLit() bool {
+	return m.activePane == paneWorkspaces || m.activePane == paneAgents
 }
 
 // renderWorkspacesBar is the band's first segment: the pane's name and
@@ -75,7 +93,8 @@ func (m Model) renderWorkspacesBar(meta string, width int) string {
 	if meta == "" {
 		meta = fmt.Sprintf("%d", len(m.catalogWorkspaces))
 	}
-	return rosterSegment("Workspaces", meta, width)
+	return rosterSegment("Workspaces", meta,
+		m.activePane == paneWorkspaces, m.rosterLit(), width)
 }
 
 // renderAgentsBar is the middle segment: the pane's name and the size of
@@ -84,7 +103,8 @@ func (m Model) renderAgentsBar(meta string, width int) string {
 	if meta == "" {
 		meta = fmt.Sprintf("%d", len(m.agentsForSelectedWorkspace()))
 	}
-	return rosterSegment("Agents", meta, width)
+	return rosterSegment("Agents", meta,
+		m.activePane == paneAgents, m.rosterLit(), width)
 }
 
 // renderTitleBand composes the strip as one string at full width — the

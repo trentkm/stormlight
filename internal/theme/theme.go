@@ -54,6 +54,14 @@ var (
 	// enough not to glare against the dark ground. Carries PortalInk the
 	// same as the Accent does.
 	Band = Pair{Light: "#D3D8DE", Dark: "#A9B1BA"}
+	// BandMuted is the roster segment the cursor is not in: a half-step
+	// below Band, so the selected pane's segment reads slightly brighter
+	// than its neighbor without breaking the shared surface.
+	BandMuted = Pair{Light: "#DEE2E8", Dark: "#8F97A1"}
+	// BandDim is the same surface receded: the roster half of the strip
+	// steps back while the keyboard lives in the portal, so the lit
+	// silver always means "you are on this side of the seam".
+	BandDim = Pair{Light: "#E4E8ED", Dark: "#6E757E"}
 )
 
 // dark records which background the palette resolves against.
