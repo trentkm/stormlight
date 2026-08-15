@@ -814,7 +814,9 @@ func (m Model) renderPane(
 		// inside it; innerWidth is what is left for content once the seam
 		// has taken its column.
 		innerWidth = max(1, width-1)
-		seamForeground := seamColor(edges.right, frame.band, width)
+		// The plane seam wears the band's icy blue: the rule and the
+		// strip it hangs from are one light.
+		seamForeground := colorBand()
 		if frame.dimSeam {
 			seamForeground = colorRecede()
 		}
