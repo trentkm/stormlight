@@ -112,6 +112,10 @@ func (m Model) renderAgentsBar(meta string, width int) string {
 // at seams. Each pane's segment is laid at its pane's width; the seam
 // columns disappear under the shared ground.
 func (m Model) renderTitleBand(workspaceWidth, agentWidth, interactionWidth int) string {
+	// The plane seam's column belongs to the terminal's side of the band:
+	// the ground changes exactly where the rule below begins, so the seam
+	// hangs from the color boundary instead of one column past it.
+	interactionWidth++
 	right := ""
 	if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
 		right = m.renderTerminalBar(selected, interactionWidth)
@@ -123,7 +127,7 @@ func (m Model) renderTitleBand(workspaceWidth, agentWidth, interactionWidth int)
 		right = m.renderQuietBar(label, "", interactionWidth)
 	}
 	return m.renderWorkspacesBar("", workspaceWidth) +
-		m.renderAgentsBar("", agentWidth) +
+		m.renderAgentsBar("", agentWidth-1) +
 		right
 }
 
