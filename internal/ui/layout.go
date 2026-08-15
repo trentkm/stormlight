@@ -387,8 +387,10 @@ func paintHierarchyConnector(
 
 	// The connector lives in the column just inside the rule, so the arc
 	// reaches toward the agent it names without crowding the divider,
-	// spanning exactly its two endpoint rows with rounded caps.
-	style := lipgloss.NewStyle().Foreground(colorWaiting())
+	// spanning exactly its two endpoint rows with rounded caps. It wears
+	// the strip's silver: the arc states a selection relationship, and
+	// selection is one word everywhere.
+	style := lipgloss.NewStyle().Foreground(colorBand())
 	first := min(workspaceRow, agentRow)
 	last := max(workspaceRow, agentRow)
 	for row := first; row <= last; row++ {
