@@ -147,3 +147,32 @@ func TestWidgetFollowsATerminalMovedBySomeoneElse(t *testing.T) {
 		t.Fatalf("terminal size after SetSize = %dx%d", cols, rows)
 	}
 }
+
+func TestMouseReportingShadowsTheHostedProgramsModes(t *testing.T) {
+	transport := newFakeTransport("x")
+	terminal := New(transport, NewGate(), 20, 4)
+	defer terminal.Close()
+	if terminal.MouseReporting() {
+		t.Fatal("mouse reporting on before the program asked")
+	}
+	transport.output <- []byte("\x1b[?1000h\x1b[?1006h")
+	transport.output <- []byte("sync")
+	if !terminal.MouseReporting() {
+		t.Fatal("mouse-on did not register")
+	}
+	transport.output <- []byte("\x1b[?1000l")
+	transport.output <- []byte("sync")
+	if terminal.MouseReporting() {
+		t.Fatal("mouse-off did not register")
+	}
+}
+
+func TestTextReturnsThePlainScreen(t *testing.T) {
+	transport := newFakeTransport("\x1b[31mred\x1b[0m line")
+	terminal := New(transport, NewGate(), 20, 3)
+	defer terminal.Close()
+	lines := terminal.Text()
+	if len(lines) != 3 || lines[0] != "red line" {
+		t.Fatalf("text = %q", lines)
+	}
+}

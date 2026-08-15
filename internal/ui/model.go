@@ -204,6 +204,13 @@ type Model struct {
 	// keys are the seam chords, config-rebindable; see KeyBindings.
 	keys KeyBindings
 
+	// Terminal drag selection: line-wise over the grid, copied on
+	// release — the transcript's gesture, spoken by the portal.
+	ptySelecting  bool
+	ptySelDragged bool
+	ptySelAnchor  int
+	ptySelHead    int
+
 	// The floating program overlay (Yazi picker, Neovim task editor): a
 	// windrunner session rendered through the same widget machinery as
 	// the Spanreed, composited over the dashboard. The generation ties
@@ -635,6 +642,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case tea.PasteMsg:
+		if m.ptyEnabled && m.mode == modeNormal &&
+			m.activePane == paneInteraction {
+			// Paste lands in the agent's terminal as one bracketed paste,
+			// the same shape Send uses — never a burst of keystrokes.
+			if widget, ok := m.selectedPTY(); ok {
+				widget.ScrollToBottom()
+				return m, writeTerminalCmd(widget,
+					[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
+			}
+			return m, nil
+		}
 		if m.overlay != nil {
 			// Bracketed paste, so a multi-line paste lands in the hosted
 			// program as one paste rather than a burst of keys.

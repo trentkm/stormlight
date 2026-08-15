@@ -31,13 +31,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mouse := msg.Mouse()
 	if mouse.Button == tea.MouseLeft && m.mode == modeNormal {
 		if m.ptyEnabled {
-			// Click-to-focus, like tabs: clicking the terminal walks in,
-			// clicking a list walks out. Drag-to-copy stays a transcript
-			// feature; the terminal's selection belongs to F full-screen.
-			if _, ok := msg.(tea.MouseClickMsg); ok {
-				m.activePane = m.paneAt(mouse.X)
-			}
-			return m, nil
+			return m.handleTerminalMouse(msg)
 		}
 		return m.handleSelectionMouse(msg)
 	}
@@ -64,16 +58,153 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.ptyEnabled {
+		widget, ok := m.selectedPTY()
+		if !ok {
+			return m, nil
+		}
+		if widget.MouseReporting() {
+			// The hosted program asked for the mouse: the wheel is its —
+			// Claude Code scrolls its own transcript this way — so the
+			// event forwards as SGR mouse instead of moving the replica.
+			if col, row, ok := m.gridCellAt(mouse.X, mouse.Y); ok {
+				button := 64
+				if direction > 0 {
+					button = 65
+				}
+				return m, writeTerminalCmd(widget, []byte(fmt.Sprintf(
+					"\x1b[<%d;%d;%dM", button, col+1, row+1)))
+			}
+			return m, nil
+		}
 		// Wheel deltas coalesce through the widget, so a trackpad burst
 		// lands as one update; the scheduled flush returns through
 		// Update's message forwarding.
-		if widget, ok := m.selectedPTY(); ok {
-			return m, widget.QueueScroll(-direction * 3)
-		}
-		return m, nil
+		return m, widget.QueueScroll(-direction * 3)
 	}
 	m.moveSelectionIn(paneInteraction, direction*3)
 	return m, nil
+}
+
+// gridCellAt maps screen coordinates to a cell of the terminal grid,
+// mirroring ptyCursor's origin math: zoomed the grid owns the body,
+// docked it starts past the sidebars and the gutter.
+func (m Model) gridCellAt(x, y int) (int, int, bool) {
+	width := max(1, m.width-1)
+	if width < 72 {
+		return 0, 0, false
+	}
+	left := 0
+	if !m.ptyZoom {
+		workspaceWidth, agentWidth, _ := m.paneWidths(width)
+		left = workspaceWidth + agentWidth + 1
+	}
+	col, row := x-left, y-ptyGridTop
+	gridWidth, gridHeight := m.ptyGridDimensions()
+	if col < 0 || col >= gridWidth || row < 0 || row >= gridHeight {
+		return 0, 0, false
+	}
+	return col, row, true
+}
+
+// handleTerminalMouse is the left button over the terminal view. A click
+// focuses the pane under the pointer and forwards to a program that asked
+// for the mouse; a drag is Stormlight's line selection, copied on release
+// — the same gesture the transcript speaks.
+func (m Model) handleTerminalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	mouse := msg.Mouse()
+	widget, hasWidget := m.selectedPTY()
+	switch msg.(type) {
+	case tea.MouseClickMsg:
+		m.activePane = m.paneAt(mouse.X)
+		row, ok := m.terminalRowAt(mouse.X, mouse.Y)
+		if !ok {
+			m.ptySelecting = false
+			return m, nil
+		}
+		m.ptySelecting = true
+		m.ptySelDragged = false
+		m.ptySelAnchor, m.ptySelHead = row, row
+		return m, nil
+	case tea.MouseMotionMsg:
+		if !m.ptySelecting {
+			return m, nil
+		}
+		if row, ok := m.terminalRowAt(mouse.X, mouse.Y); ok {
+			if row != m.ptySelAnchor {
+				m.ptySelDragged = true
+			}
+			m.ptySelHead = row
+		}
+		return m, nil
+	case tea.MouseReleaseMsg:
+		if !m.ptySelecting {
+			return m, nil
+		}
+		m.ptySelecting = false
+		if m.ptySelDragged {
+			command := m.copyTerminalSelectionCmd()
+			m.ptySelDragged = false
+			return m, command
+		}
+		// A plain click belongs to a program that wants the mouse.
+		if hasWidget && widget.MouseReporting() {
+			if col, row, ok := m.gridCellAt(mouse.X, mouse.Y); ok {
+				press := fmt.Sprintf("\x1b[<0;%d;%dM", col+1, row+1)
+				release := fmt.Sprintf("\x1b[<0;%d;%dm", col+1, row+1)
+				return m, writeTerminalCmd(widget, []byte(press+release))
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// terminalRowAt maps screen coordinates to a grid row for selection,
+// clamping the column so a drag past the edges keeps its row.
+func (m Model) terminalRowAt(x, y int) (int, bool) {
+	_, gridHeight := m.ptyGridDimensions()
+	_, row, ok := m.gridCellAt(x, y)
+	if ok {
+		return row, true
+	}
+	// Off to the side but vertically inside: clamp to the grid, the way
+	// every terminal treats a drag that leaves the window.
+	row = clamp(y-ptyGridTop, 0, gridHeight-1)
+	if m.paneAt(x) == paneInteraction && y >= ptyGridTop &&
+		y < ptyGridTop+gridHeight {
+		return row, true
+	}
+	return 0, false
+}
+
+// copyTerminalSelectionCmd extracts the selected grid rows as plain text
+// and hands them to the clipboard.
+func (m Model) copyTerminalSelectionCmd() tea.Cmd {
+	widget, ok := m.selectedPTY()
+	if !ok {
+		return nil
+	}
+	start, end := m.ptySelAnchor, m.ptySelHead
+	if start > end {
+		start, end = end, start
+	}
+	lines := widget.Text()
+	if start >= len(lines) {
+		return nil
+	}
+	end = min(end, len(lines)-1)
+	text := strings.Join(lines[start:end+1], "\n")
+	count := end - start + 1
+	return func() tea.Msg {
+		if err := copyToClipboard(text); err != nil {
+			return actionMsg{status: "Action failed", err: err}
+		}
+		label := "line"
+		if count != 1 {
+			label = "lines"
+		}
+		return actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
+	}
 }
 
 // handleSelectionMouse turns press-drag-release over the transcript into a

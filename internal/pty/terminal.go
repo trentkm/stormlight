@@ -95,6 +95,10 @@ type state struct {
 	// knock on the gate, so a busy agent nobody is looking at costs no
 	// render passes.
 	visible atomic.Bool
+	// mouseReporting shadows the hosted program's mouse modes
+	// (1000/1002/1003): while set, the program wants the mouse, and the
+	// dashboard forwards wheel and clicks instead of interpreting them.
+	mouseReporting atomic.Bool
 	// view caches the serialized grid between changes, so a dashboard
 	// render pass touching every visible terminal only walks the grids
 	// that actually received bytes. viewDirty marks it stale; both are
@@ -118,7 +122,9 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 	// vt writes query responses to its input pipe. The real terminal owns
 	// those responses, so drain this end to keep a query from blocking paint.
 	go func() { _, _ = io.Copy(io.Discard, s.emu) }()
-	s.emu.Write(transport.Seed())
+	seed := transport.Seed()
+	s.observeModes(seed)
+	s.emu.Write(seed)
 	model := Model{id: lastID.Add(1), state: s}
 	if notifier, ok := transport.(ResizeNotifier); ok {
 		// The handler runs on the transport's read loop, ahead of the
@@ -150,6 +156,7 @@ func (m Model) setTerminalSize(cols, rows int) {
 
 func (s *state) pump() {
 	for chunk := range s.transport.Output() {
+		s.observeModes(chunk)
 		s.mu.Lock()
 		s.emu.Write(chunk)
 		if s.emu.IsAltScreen() {
@@ -170,6 +177,44 @@ func (s *state) pump() {
 // request redraws. Flipping to visible needs no catch-up knock — the
 // render pass that follows the flip paints the emulator's current state.
 func (m Model) SetVisible(visible bool) { m.state.visible.Store(visible) }
+
+// MouseReporting reports whether the hosted program asked for the mouse.
+func (m Model) MouseReporting() bool { return m.state.mouseReporting.Load() }
+
+// observeModes shadows the mouse-tracking modes from the byte stream. The
+// stream arrives on whole-sequence boundaries (the daemon guarantees it),
+// so a plain scan cannot tear a sequence.
+func (s *state) observeModes(chunk []byte) {
+	for index := 0; index+5 < len(chunk); index++ {
+		if chunk[index] != 0x1b || chunk[index+1] != '[' || chunk[index+2] != '?' {
+			continue
+		}
+		rest := chunk[index+3:]
+		end := 0
+		for end < len(rest) && (rest[end] >= '0' && rest[end] <= '9' || rest[end] == ';') {
+			end++
+		}
+		if end == 0 || end >= len(rest) || (rest[end] != 'h' && rest[end] != 'l') {
+			continue
+		}
+		set := rest[end] == 'h'
+		for _, mode := range strings.Split(string(rest[:end]), ";") {
+			switch mode {
+			case "1000", "1002", "1003":
+				s.mouseReporting.Store(set)
+			}
+		}
+	}
+}
+
+// Text is the visible screen as plain lines, for selection copies.
+func (m Model) Text() []string {
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	for index, line := range lines {
+		lines[index] = strings.TrimRight(line, " ")
+	}
+	return lines
+}
 
 // Write delivers bytes to the hosted terminal.
 func (m Model) Write(data []byte) error { return m.state.transport.Write(data) }
