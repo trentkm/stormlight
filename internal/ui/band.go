@@ -14,10 +14,27 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// bandSegment renders one segment of the title band. The label yields
-// first, the gap absorbs what remains, and the meta keeps its full width
-// at the right edge. symbol, when present, leads the segment in its own
-// style — the terminal's status glyph.
+// segmentRow lays out one segment of the title band: an optional leading
+// glyph cell, a label that yields first, a gap that absorbs what remains,
+// and the meta at full width against the right edge.
+func segmentRow(
+	glyph string,
+	lead int,
+	label, meta string,
+	band, text lipgloss.Style,
+	width int,
+) string {
+	metaWidth := lipgloss.Width(meta)
+	label = truncate(label, max(1, width-metaWidth-4-lead))
+	gap := max(1, width-3-lead-lipgloss.Width(label)-metaWidth)
+	return band.Render(" ") + glyph +
+		text.Render(" "+label+strings.Repeat(" ", gap)+meta+" ")
+}
+
+// bandSegment is the terminal portion of the strip: the window bar's own
+// ground — select gray at rest, the accent while the keyboard is inside —
+// so the portal's segment stays the portal's, distinct from the roster's
+// whitish half. symbol, when present, is the status glyph.
 func bandSegment(
 	symbol string,
 	symbolStyle *lipgloss.Style,
@@ -25,13 +42,13 @@ func bandSegment(
 	focused bool,
 	width int,
 ) string {
-	band := lipgloss.NewStyle().Background(colorBand())
-	text := band.Foreground(colorPortalInk())
+	band := lipgloss.NewStyle().Background(colorSelect())
+	text := band.Foreground(colorText())
 	glyph := ""
 	lead := 0
 	if symbol != "" {
 		lead = 1
-		glyph = symbolStyle.Background(colorBand()).Render(symbol)
+		glyph = symbolStyle.Background(colorSelect()).Render(symbol)
 	}
 	if focused {
 		band = lipgloss.NewStyle().Background(colorAccent())
@@ -40,11 +57,16 @@ func bandSegment(
 			glyph = band.Foreground(colorPortalInk()).Bold(true).Render(symbol)
 		}
 	}
-	metaWidth := lipgloss.Width(meta)
-	label = truncate(label, max(1, width-metaWidth-4-lead))
-	gap := max(1, width-3-lead-lipgloss.Width(label)-metaWidth)
-	return band.Render(" ") + glyph +
-		text.Render(" "+label+strings.Repeat(" ", gap)+meta+" ")
+	return segmentRow(glyph, lead, label, meta, band, text, width)
+}
+
+// rosterSegment is the whitish half of the strip, one steady surface for
+// Workspaces and Agents: the lists below tell the roster's focus story,
+// so the segments hold still while the terminal's flips.
+func rosterSegment(label, meta string, width int) string {
+	band := lipgloss.NewStyle().Background(colorBand())
+	text := band.Foreground(colorPortalInk())
+	return segmentRow("", 0, label, meta, band, text, width)
 }
 
 // renderWorkspacesBar is the band's first segment: the pane's name and
@@ -53,8 +75,7 @@ func (m Model) renderWorkspacesBar(meta string, width int) string {
 	if meta == "" {
 		meta = fmt.Sprintf("%d", len(m.catalogWorkspaces))
 	}
-	return bandSegment("", nil, "Workspaces", meta,
-		m.mode == modeNormal && m.activePane == paneWorkspaces, width)
+	return rosterSegment("Workspaces", meta, width)
 }
 
 // renderAgentsBar is the middle segment: the pane's name and the size of
@@ -63,8 +84,7 @@ func (m Model) renderAgentsBar(meta string, width int) string {
 	if meta == "" {
 		meta = fmt.Sprintf("%d", len(m.agentsForSelectedWorkspace()))
 	}
-	return bandSegment("", nil, "Agents", meta,
-		m.mode == modeNormal && m.activePane == paneAgents, width)
+	return rosterSegment("Agents", meta, width)
 }
 
 // renderTitleBand composes the strip as one string at full width — the
