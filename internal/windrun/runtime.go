@@ -233,20 +233,35 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 
 // sessionIDFor maps an agent id to the daemon's session id.
 func (r *Runtime) sessionIDFor(id string) (string, error) {
+	if id == "" {
+		// An empty id would prefix-match the first agent listed —
+		// destructive commands must never guess.
+		return "", fmt.Errorf("agent id is required")
+	}
 	sessions, err := r.client.List()
 	if err != nil {
 		return "", err
 	}
+	match := ""
 	for _, info := range sessions {
 		managedAgent, ok := decodeAgent(info)
 		if !ok {
 			continue
 		}
-		if managedAgent.ID == id || strings.HasPrefix(managedAgent.ID, id) {
+		if managedAgent.ID == id {
 			return info.ID, nil
 		}
+		if strings.HasPrefix(managedAgent.ID, id) {
+			if match != "" {
+				return "", fmt.Errorf("agent id %q is ambiguous", id)
+			}
+			match = info.ID
+		}
 	}
-	return "", fmt.Errorf("agent %q not found", id)
+	if match == "" {
+		return "", fmt.Errorf("agent %q not found", id)
+	}
+	return match, nil
 }
 
 func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, error) {

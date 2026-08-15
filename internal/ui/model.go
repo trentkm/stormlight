@@ -364,8 +364,14 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	if m.ptyEnabled {
-		if widget, ok := m.selectedPTY(); ok && widget.Handle(message) {
+	if m.ptyEnabled && m.ptyManager != nil {
+		// The coalesced wheel tick goes to the terminal that scheduled
+		// it — selection may have moved since; an unrouted tick would
+		// latch that terminal's wheel shut.
+		if widgetID, ok := pty.ScrollOwner(message); ok {
+			if widget, ok := m.ptyManager.WidgetByID(widgetID); ok {
+				widget.Handle(message)
+			}
 			return m, nil
 		}
 	}

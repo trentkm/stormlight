@@ -216,19 +216,22 @@ func (m Model) copyTerminalSelectionCmd() tea.Cmd {
 	end.row = min(end.row, len(lines)-1)
 	selected := make([]string, 0, end.row-start.row+1)
 	for row := start.row; row <= end.row; row++ {
-		runes := []rune(lines[row])
-		from, to := 0, len(runes)
+		// Columns are display cells, not runes: a wide glyph occupies
+		// two of them, and slicing by rune index would shift everything
+		// after it. ansi.Cut slices by cell.
+		line := lines[row]
+		from, to := 0, ansi.StringWidth(line)
 		if row == start.row {
-			from = min(start.col, len(runes))
+			from = min(start.col, to)
 		}
 		if row == end.row {
-			to = min(end.col+1, len(runes))
+			to = min(end.col+1, to)
 		}
 		if from > to {
 			from = to
 		}
 		selected = append(selected,
-			strings.TrimRight(string(runes[from:to]), " "))
+			strings.TrimRight(ansi.Cut(line, from, to), " "))
 	}
 	text := strings.Join(selected, "\n")
 	count := len(selected)
@@ -260,7 +263,7 @@ func paintTerminalSelection(view string, start, end gridCell, gridWidth int) str
 		line := lines[row]
 		before := ansi.Cut(line, 0, from)
 		mid := ansi.Strip(ansi.Cut(line, from, to))
-		if width := to - from - len([]rune(ansi.Strip(ansi.Cut(line, from, to)))); width > 0 {
+		if width := to - from - ansi.StringWidth(mid); width > 0 {
 			mid += strings.Repeat(" ", width)
 		}
 		after := ansi.Cut(line, to, gridWidth)

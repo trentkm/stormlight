@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 )
@@ -79,5 +80,15 @@ func TestPaintTerminalSelectionReversesTheSpanOnly(t *testing.T) {
 	if !strings.Contains(lines[2], searchMatchSGR+"eps") ||
 		strings.Contains(strings.SplitN(lines[2], searchResetSGR, 2)[0], "ilon") {
 		t.Fatalf("head line reversed past its column: %q", lines[2])
+	}
+}
+
+func TestSelectionCopiesByCellsNotRunes(t *testing.T) {
+	// "你好 world": the two wide glyphs occupy cells 0-3; "world" starts
+	// at cell 5. A rune-indexed slice would land inside "好 wor".
+	line := "你好 world"
+	got := strings.TrimRight(ansi.Cut(line, 5, 10), " ")
+	if got != "world" {
+		t.Fatalf("cell slice = %q, want %q", got, "world")
 	}
 }

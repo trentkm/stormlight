@@ -461,16 +461,29 @@ func (s *Service) CompactSessionHistory() error {
 
 // find resolves an id — possibly shortened — against the live roster.
 func (s *Service) find(ctx context.Context, id string) (agent.Agent, error) {
+	if id == "" {
+		return agent.Agent{}, fmt.Errorf("agent id is required")
+	}
 	agents, err := s.runtime.ListAgents(ctx)
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	for _, managedAgent := range agents {
-		if managedAgent.ID == id || strings.HasPrefix(managedAgent.ID, id) {
+	var match *agent.Agent
+	for index, managedAgent := range agents {
+		if managedAgent.ID == id {
 			return managedAgent, nil
 		}
+		if strings.HasPrefix(managedAgent.ID, id) {
+			if match != nil {
+				return agent.Agent{}, fmt.Errorf("agent id %q is ambiguous", id)
+			}
+			match = &agents[index]
+		}
 	}
-	return agent.Agent{}, fmt.Errorf("agent %q not found", id)
+	if match == nil {
+		return agent.Agent{}, fmt.Errorf("agent %q not found", id)
+	}
+	return *match, nil
 }
 
 func (s *Service) Providers() []provider.Info {

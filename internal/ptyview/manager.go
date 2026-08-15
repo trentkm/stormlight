@@ -154,6 +154,20 @@ func (g *Manager) Widget(id string) (pty.Model, bool) {
 	return widget, ok
 }
 
+// WidgetByID resolves a widget's own id, for routing deferred messages
+// (a coalesced wheel tick) to the terminal that scheduled them — which
+// may no longer be the selected one by the time the tick lands.
+func (g *Manager) WidgetByID(widgetID int64) (pty.Model, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, widget := range g.entries {
+		if widget.ID() == widgetID {
+			return widget, true
+		}
+	}
+	return pty.Model{}, false
+}
+
 // ResizeAll reasserts the grid on every terminal — the recovery move
 // after an external attach let a client resize the terminals.
 func (g *Manager) ResizeAll(ctx context.Context) []tea.Cmd {

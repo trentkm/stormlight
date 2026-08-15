@@ -27,6 +27,14 @@ var lastID atomic.Int64
 type FrameMsg struct{}
 type scrollMsg struct{ ID int64 }
 
+// ScrollOwner names the widget a deferred wheel tick belongs to, so the
+// dashboard can route it to that terminal even after selection moved —
+// an unrouted tick would latch scrollPending and wedge the wheel.
+func ScrollOwner(msg tea.Msg) (int64, bool) {
+	wake, ok := msg.(scrollMsg)
+	return wake.ID, ok
+}
+
 // Gate coalesces every visible terminal's output into at most one redraw
 // per frame period. One Gate serves a whole herd of terminals: however
 // many are streaming, the event loop sees ~30 messages a second, and one

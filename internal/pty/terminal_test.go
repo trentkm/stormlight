@@ -176,3 +176,49 @@ func TestTextReturnsThePlainScreen(t *testing.T) {
 		t.Fatalf("text = %q", lines)
 	}
 }
+
+func TestKeyEncoderCoversNavigationAndFunctionKeys(t *testing.T) {
+	for _, test := range []struct {
+		key  string
+		want string
+	}{
+		{"f1", "\x1bOP"},
+		{"f5", "\x1b[15~"},
+		{"f12", "\x1b[24~"},
+		{"ctrl+up", "\x1b[1;5A"},
+		{"shift+right", "\x1b[1;2C"},
+		{"ctrl+shift+left", "\x1b[1;6D"},
+		{"alt+f1", "\x1b[1;3P"},
+		{"insert", "\x1b[2~"},
+		{"ctrl+delete", "\x1b[3;5~"},
+		{"ctrl+home", "\x1b[1;5H"},
+		{"alt+backspace", "\x1b\x7f"},
+		{"shift+pgup", "\x1b[5;2~"},
+	} {
+		got := KeyToBytes(keyNamed(test.key))
+		if string(got) != test.want {
+			t.Errorf("KeyToBytes(%s) = %q, want %q", test.key, got, test.want)
+		}
+	}
+}
+
+// keyNamed builds a KeyPressMsg whose String() is the given chord — the
+// encoder only reads the name for these keys.
+func keyNamed(name string) tea.KeyPressMsg {
+	return namedKeys[name]
+}
+
+var namedKeys = map[string]tea.KeyPressMsg{
+	"f1":              {Code: tea.KeyF1},
+	"f5":              {Code: tea.KeyF5},
+	"f12":             {Code: tea.KeyF12},
+	"ctrl+up":         {Code: tea.KeyUp, Mod: tea.ModCtrl},
+	"shift+right":     {Code: tea.KeyRight, Mod: tea.ModShift},
+	"ctrl+shift+left": {Code: tea.KeyLeft, Mod: tea.ModCtrl | tea.ModShift},
+	"alt+f1":          {Code: tea.KeyF1, Mod: tea.ModAlt},
+	"insert":          {Code: tea.KeyInsert},
+	"ctrl+delete":     {Code: tea.KeyDelete, Mod: tea.ModCtrl},
+	"ctrl+home":       {Code: tea.KeyHome, Mod: tea.ModCtrl},
+	"alt+backspace":   {Code: tea.KeyBackspace, Mod: tea.ModAlt},
+	"shift+pgup":      {Code: tea.KeyPgUp, Mod: tea.ModShift},
+}
