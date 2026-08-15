@@ -123,7 +123,18 @@ func (m Model) renderTitleBand(workspaceWidth, agentWidth, interactionWidth int)
 		right = m.renderQuietBar(label, "", interactionWidth)
 	}
 	// The seam column is the agents segment's last cell: the rule below
-	// hangs flush from the roster tab's edge, where the light ends.
+	// hangs flush from the roster tab's edge, where the light ends. While
+	// the terminal is lit, that cell carries the rule's cap, so the
+	// accent line runs unbroken from the floor to the header's edge.
+	if m.terminalFocused() {
+		cap := lipgloss.NewStyle().
+			Background(colorBandDim()).
+			Foreground(colorAccent()).
+			Render("▕")
+		return m.renderWorkspacesBar("", workspaceWidth) +
+			m.renderAgentsBar("", agentWidth-1) + cap +
+			right
+	}
 	return m.renderWorkspacesBar("", workspaceWidth) +
 		m.renderAgentsBar("", agentWidth) +
 		right
