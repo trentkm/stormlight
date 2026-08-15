@@ -49,10 +49,11 @@ var (
 	// the terminal holds the keyboard. The Accent is identical on both
 	// grounds, so its ink is too.
 	PortalInk = Pair{Light: "#0F2338", Dark: "#0F2338"}
-	// Band is the title strip's ground: one whitish surface running the
-	// full width of the body, light enough to read as a bar rather than
-	// a shaded row, carrying PortalInk the same as the Accent does.
-	Band = Pair{Light: "#E1E6EC", Dark: "#CBD2DB"}
+	// Band is the title strip's ground: one silvery surface running the
+	// full width of the body — light enough to read as a bar, tempered
+	// enough not to glare against the dark ground. Carries PortalInk the
+	// same as the Accent does.
+	Band = Pair{Light: "#D3D8DE", Dark: "#A9B1BA"}
 )
 
 // dark records which background the palette resolves against.
