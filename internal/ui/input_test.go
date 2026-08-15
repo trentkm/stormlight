@@ -905,11 +905,15 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 		t.Fatalf("a seam interrupts the title band: %q", lines[header])
 	}
 
+	// One seam remains: the plane seam before the portal. The catalog's
+	// two lists share their side of it with no rule between them.
 	firstRow := lines[header+1]
-	hairline := strings.Index(firstRow, "│")
+	if strings.Contains(firstRow, "│") {
+		t.Fatalf("a hairline divides the catalog: %q", firstRow)
+	}
 	plane := strings.Index(firstRow, "┃")
-	if hairline < 0 || plane < 0 || plane < hairline {
-		t.Fatalf("seams do not begin under the band: %q", firstRow)
+	if plane < 0 {
+		t.Fatalf("the plane seam does not begin under the band: %q", firstRow)
 	}
 
 	for _, line := range lines[header+1:] {

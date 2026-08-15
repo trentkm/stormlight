@@ -187,7 +187,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			width:   workspaceWidth,
 			height:  contentHeight,
 			active:  m.activePane == paneWorkspaces,
-			edges:   paneEdges{right: seamColumn},
 			band:    headerBand{start: 0, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
@@ -263,10 +262,12 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		),
 		interactionFrame,
 	)
+	// No rule between Workspaces and Agents: the hierarchy connector and
+	// the shared band already say the two lists are one catalog; the gap
+	// column breathes instead of dividing.
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		capSeam(workspaces, workspaceWidth, seamColumn,
-			headerBand{start: 0, total: width}),
+		workspaces,
 		capSeam(agents, agentWidth, seamPlane,
 			headerBand{start: workspaceWidth, total: width}),
 		interaction,
