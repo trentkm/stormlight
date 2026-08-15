@@ -839,7 +839,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "z":
 		m.rowsExpanded = !m.rowsExpanded
 		return m, nil
-	case "Z", "alt+z":
+	case "Z", "alt+z", "ctrl+alt+z":
 		// Zoom from the roster: the sidebars collapse and the keyboard
 		// walks into the portal in the same stroke.
 		if _, ok := m.selectedAgent(); ok {
@@ -978,9 +978,9 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
-	case "alt+n":
+	case "alt+n", "ctrl+alt+n":
 		return m.jumpQueue(agent.QueueForward)
-	case "alt+p":
+	case "alt+p", "ctrl+alt+p":
 		return m.jumpQueue(agent.QueueBack)
 	case "m":
 		return m.beginMark()

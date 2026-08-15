@@ -14,7 +14,10 @@ import (
 // updateTerminalKey is every keypress while the Spanreed terminal holds
 // focus. A focused terminal must receive letters, so the dashboard's keys
 // here are modifier chords the hosted TUIs don't bind — the tmux-prefix
-// insight without the prefix. Everything else goes to the terminal, byte
+// insight without the prefix. Every alt chord has a ctrl+alt alias:
+// tiling window managers (AeroSpace) commonly own plain alt+hjkl at the
+// OS level, and ctrl+alt is claimed by nobody — not the WM, not the
+// hosted TUIs. Everything else goes to the terminal, byte
 // for byte; typing into an agent's terminal is the strongest possible form
 // of having seen its result, so attention clears on the way through.
 func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -26,25 +29,25 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.activePane = paneAgents
 		m.status = "Ready"
 		return m, m.ensurePTYCmd()
-	case "alt+j", "alt+down":
+	case "alt+j", "alt+down", "ctrl+alt+j", "ctrl+alt+down":
 		// Switch agents without stepping out: the portal swaps terminals
 		// under the keyboard and the bar re-labels. The roster's cursor is
 		// the target — plain moveSelection would scroll this terminal.
 		m.moveSelectionIn(paneAgents, 1)
 		return m, m.interactionFollowCmd()
-	case "alt+k", "alt+up":
+	case "alt+k", "alt+up", "ctrl+alt+k", "ctrl+alt+up":
 		m.moveSelectionIn(paneAgents, -1)
 		return m, m.interactionFollowCmd()
-	case "alt+n":
+	case "alt+n", "ctrl+alt+n":
 		// The attention inbox, oldest first: cycle to whoever has waited
 		// longest, wherever their workspace is.
 		return m.jumpQueue(agent.QueueForward)
-	case "alt+p":
+	case "alt+p", "ctrl+alt+p":
 		return m.jumpQueue(agent.QueueBack)
-	case "alt+z":
+	case "alt+z", "ctrl+alt+z":
 		m.ptyZoom = !m.ptyZoom
 		return m, m.ensurePTYCmd()
-	case "alt+t":
+	case "alt+t", "ctrl+alt+t":
 		m.ptyZoom = false
 		return m, tea.Batch(m.togglePTY(), m.ensurePTYCmd())
 	}
