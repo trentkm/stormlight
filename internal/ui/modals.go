@@ -166,8 +166,8 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"M", "mark agent or workspace seen"},
 			{"K", "workspace info"},
 			{"H", "session history; Enter resumes one"},
-			{"⌃⌥n / ⌃⌥p", "cycle agents waiting on you, oldest first"},
-			{"⌃⌥j / ⌃⌥k", "cycle agents in roster order"},
+			{"alt+n / alt+p", "cycle agents waiting on you, oldest first"},
+			{"alt+j / alt+k", "cycle agents in roster order"},
 		}},
 		{"View", [][2]string{
 			{", then a/n/c", "sort: attention, name, newest"},

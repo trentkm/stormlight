@@ -17,11 +17,14 @@ const template = `# Stormlight configuration.
 [keys]
 # Seam chords: keys the dashboard keeps while an agent's terminal holds
 # the keyboard. Bubble Tea names; several chords may name one action.
-# agents_next     = ["ctrl+alt+j", "ctrl+alt+down"]
-# agents_previous = ["ctrl+alt+k", "ctrl+alt+up"]
-# queue_next      = ["ctrl+alt+n"]
-# queue_previous  = ["ctrl+alt+p"]
-# zoom            = ["alt+z", "ctrl+alt+z"]
+# agents_next     = ["alt+j", "alt+down"]
+# agents_previous = ["alt+k", "alt+up"]
+# queue_next      = ["alt+n"]
+# queue_previous  = ["alt+p"]
+# zoom            = ["alt+z"]
+# On macOS, alt is the option key (Ghostty needs macos-option-as-alt);
+# if your window manager owns alt+hjkl, rebind here — e.g.
+# agents_next = ["ctrl+alt+j"].
 
 [ui]
 # rows = "compact"              # compact | expanded

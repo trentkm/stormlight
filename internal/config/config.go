@@ -35,9 +35,9 @@ type Defaults struct {
 
 // Keys rebinds the seam chords — the keys that reach the dashboard while
 // an agent's terminal holds the keyboard. Each action takes a list of
-// chords in Bubble Tea's names ("ctrl+alt+j", "alt+down"); an empty list
-// keeps the default. Defaults avoid both what hosted TUIs bind and what
-// tiling window managers commonly own (plain alt+hjkl).
+// chords in Bubble Tea's names ("alt+j", "ctrl+alt+down"); an empty list
+// keeps the default. Defaults are alt chords — what hosted TUIs leave
+// alone; a desk whose window manager owns alt rebinds here.
 type Keys struct {
 	AgentsNext     []string `toml:"agents_next"`
 	AgentsPrevious []string `toml:"agents_previous"`
@@ -233,19 +233,19 @@ func (c Config) EffectiveTOML() (string, error) {
 	merged.Defaults.Mode = valueOr(merged.Defaults.Mode, string(agent.DefaultMode))
 	merged.UI.Rows = valueOr(merged.UI.Rows, "compact")
 	if len(merged.Keys.AgentsNext) == 0 {
-		merged.Keys.AgentsNext = []string{"ctrl+alt+j", "ctrl+alt+down"}
+		merged.Keys.AgentsNext = []string{"alt+j", "alt+down"}
 	}
 	if len(merged.Keys.AgentsPrevious) == 0 {
-		merged.Keys.AgentsPrevious = []string{"ctrl+alt+k", "ctrl+alt+up"}
+		merged.Keys.AgentsPrevious = []string{"alt+k", "alt+up"}
 	}
 	if len(merged.Keys.QueueNext) == 0 {
-		merged.Keys.QueueNext = []string{"ctrl+alt+n"}
+		merged.Keys.QueueNext = []string{"alt+n"}
 	}
 	if len(merged.Keys.QueuePrevious) == 0 {
-		merged.Keys.QueuePrevious = []string{"ctrl+alt+p"}
+		merged.Keys.QueuePrevious = []string{"alt+p"}
 	}
 	if len(merged.Keys.Zoom) == 0 {
-		merged.Keys.Zoom = []string{"alt+z", "ctrl+alt+z"}
+		merged.Keys.Zoom = []string{"alt+z"}
 	}
 	merged.Log.Level = valueOr(merged.Log.Level, "info")
 	rendered, err := toml.Marshal(merged)

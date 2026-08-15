@@ -9,7 +9,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -42,15 +41,16 @@ type KeyBindings struct {
 	Zoom           []string
 }
 
-// defaultKeyBindings avoid both what hosted TUIs bind and what tiling
-// window managers commonly own (plain alt+hjkl).
+// defaultKeyBindings are alt chords: the keys hosted TUIs leave alone.
+// A desk where the window manager owns alt (AeroSpace and kin) rebinds
+// here — [keys] in config.toml.
 func defaultKeyBindings() KeyBindings {
 	return KeyBindings{
-		AgentsNext:     []string{"ctrl+alt+j", "ctrl+alt+down"},
-		AgentsPrevious: []string{"ctrl+alt+k", "ctrl+alt+up"},
-		QueueNext:      []string{"ctrl+alt+n"},
-		QueuePrevious:  []string{"ctrl+alt+p"},
-		Zoom:           []string{"alt+z", "ctrl+alt+z"},
+		AgentsNext:     []string{"alt+j", "alt+down"},
+		AgentsPrevious: []string{"alt+k", "alt+up"},
+		QueueNext:      []string{"alt+n"},
+		QueuePrevious:  []string{"alt+p"},
+		Zoom:           []string{"alt+z"},
 	}
 }
 
@@ -76,12 +76,11 @@ func fillKeyDefaults(keys KeyBindings) KeyBindings {
 	return keys
 }
 
-// chordName is what the hint row calls a chord: macOS keyboards label the
-// alt key option; the chord itself is the same either way.
+// chordName is what the hint row calls a chord: the binding's own name,
+// verbatim — alt everywhere, because that is what the key is called in
+// every config file and on every keyboard but Apple's, and one name is
+// worth more than two dialects.
 func chordName(chord string) string {
-	if runtime.GOOS == "darwin" {
-		return strings.ReplaceAll(chord, "alt", "option")
-	}
 	return chord
 }
 
