@@ -35,6 +35,12 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "alt+k", "alt+up":
 		m.moveSelectionIn(paneAgents, -1)
 		return m, m.interactionFollowCmd()
+	case "alt+n":
+		// The attention inbox, oldest first: cycle to whoever has waited
+		// longest, wherever their workspace is.
+		return m.jumpQueue(agent.QueueForward)
+	case "alt+p":
+		return m.jumpQueue(agent.QueueBack)
 	case "alt+z":
 		m.ptyZoom = !m.ptyZoom
 		return m, m.ensurePTYCmd()

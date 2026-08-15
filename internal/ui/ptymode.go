@@ -137,6 +137,20 @@ func resizeAllPTYCmd(manager *ptyview.Manager) tea.Cmd {
 	}
 }
 
+// jumpQueue moves the selection to the next agent waiting on a human —
+// oldest first, wrapping — from either side of the seam. Flat cycling
+// walks the roster; this walks the inbox.
+func (m Model) jumpQueue(step agent.QueueStep) (tea.Model, tea.Cmd) {
+	queue := agent.Queue(m.agents)
+	next, ok := agent.StepInQueue(queue, m.selectedAgentID(), step)
+	if !ok {
+		m.status = "Nobody is waiting on you"
+		return m, nil
+	}
+	m.rebuildGroups(next.Workspace.ID, next.ID)
+	return m, m.interactionFollowCmd()
+}
+
 // interactionFollowCmd is what selection movement returns: a transcript
 // reload in transcript view; in terminal view just a listener for the
 // newly selected agent's frames — its terminal is already running.
@@ -177,8 +191,9 @@ func (m Model) terminalHints() string {
 		return fmt.Sprintf("scrolled %d lines up — wheel down to follow", widget.Scrolled())
 	}
 	alt := altKeyName()
-	return fmt.Sprintf("ctrl+space out  %s+j/k agents  %s+z zoom  %s+t transcript",
-		alt, alt, alt)
+	return fmt.Sprintf(
+		"ctrl+space out  %s+j/k agents  %s+n/p queue  %s+z zoom  %s+t transcript",
+		alt, alt, alt, alt)
 }
 
 // renderTerminalBar is the window bar over the terminal grid, and the only

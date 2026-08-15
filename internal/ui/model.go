@@ -978,6 +978,10 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
+	case "alt+n":
+		return m.jumpQueue(agent.QueueForward)
+	case "alt+p":
+		return m.jumpQueue(agent.QueueBack)
 	case "m":
 		return m.beginMark()
 	case "M":
