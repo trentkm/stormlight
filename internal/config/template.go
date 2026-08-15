@@ -14,6 +14,15 @@ const template = `# Stormlight configuration.
 # provider = "codex"            # codex | claude, or a custom provider
 # mode     = "edits"            # ask | edits | auto
 
+[keys]
+# Seam chords: keys the dashboard keeps while an agent's terminal holds
+# the keyboard. Bubble Tea names; several chords may name one action.
+# agents_next     = ["ctrl+alt+j", "ctrl+alt+down"]
+# agents_previous = ["ctrl+alt+k", "ctrl+alt+up"]
+# queue_next      = ["ctrl+alt+n"]
+# queue_previous  = ["ctrl+alt+p"]
+# zoom            = ["alt+z", "ctrl+alt+z"]
+
 [ui]
 # rows = "compact"              # compact | expanded
 

@@ -31,14 +31,72 @@ type attachReturnedMsg struct {
 	err  error
 }
 
-// altKeyName is what the hint row calls the modifier: macOS keyboards
-// label it option, everywhere else it is alt. The chord itself is the
-// same key either way.
-func altKeyName() string {
-	if runtime.GOOS == "darwin" {
-		return "option"
+// KeyBindings are the seam chords: the keys the dashboard keeps while an
+// agent's terminal holds the keyboard. Several chords may name one
+// action; the first is what the hints display.
+type KeyBindings struct {
+	AgentsNext     []string
+	AgentsPrevious []string
+	QueueNext      []string
+	QueuePrevious  []string
+	Zoom           []string
+}
+
+// defaultKeyBindings avoid both what hosted TUIs bind and what tiling
+// window managers commonly own (plain alt+hjkl).
+func defaultKeyBindings() KeyBindings {
+	return KeyBindings{
+		AgentsNext:     []string{"ctrl+alt+j", "ctrl+alt+down"},
+		AgentsPrevious: []string{"ctrl+alt+k", "ctrl+alt+up"},
+		QueueNext:      []string{"ctrl+alt+n"},
+		QueuePrevious:  []string{"ctrl+alt+p"},
+		Zoom:           []string{"alt+z", "ctrl+alt+z"},
 	}
-	return "alt"
+}
+
+// fillKeyDefaults completes a partially configured set: an action the
+// config leaves empty keeps its default chords.
+func fillKeyDefaults(keys KeyBindings) KeyBindings {
+	defaults := defaultKeyBindings()
+	if len(keys.AgentsNext) == 0 {
+		keys.AgentsNext = defaults.AgentsNext
+	}
+	if len(keys.AgentsPrevious) == 0 {
+		keys.AgentsPrevious = defaults.AgentsPrevious
+	}
+	if len(keys.QueueNext) == 0 {
+		keys.QueueNext = defaults.QueueNext
+	}
+	if len(keys.QueuePrevious) == 0 {
+		keys.QueuePrevious = defaults.QueuePrevious
+	}
+	if len(keys.Zoom) == 0 {
+		keys.Zoom = defaults.Zoom
+	}
+	return keys
+}
+
+// chordName is what the hint row calls a chord: macOS keyboards label the
+// alt key option; the chord itself is the same either way.
+func chordName(chord string) string {
+	if runtime.GOOS == "darwin" {
+		return strings.ReplaceAll(chord, "alt", "option")
+	}
+	return chord
+}
+
+// chordPair compresses a next/previous pair for the hints: chords that
+// differ only in their final key read as one entry ("ctrl+option+j/k").
+func chordPair(next, previous []string) string {
+	if len(next) == 0 || len(previous) == 0 {
+		return ""
+	}
+	a, b := chordName(next[0]), chordName(previous[0])
+	cutA, cutB := strings.LastIndex(a, "+"), strings.LastIndex(b, "+")
+	if cutA > 0 && cutA == cutB && a[:cutA] == b[:cutB] {
+		return a + "/" + b[cutB+1:]
+	}
+	return a + " " + b
 }
 
 // ptyGridDimensions is every terminal box's size. The window bar is mounted
@@ -190,10 +248,11 @@ func (m Model) terminalHints() string {
 	if widget, ok := m.selectedPTY(); ok && widget.Scrolled() > 0 {
 		return fmt.Sprintf("scrolled %d lines up — wheel down to follow", widget.Scrolled())
 	}
-	alt := altKeyName()
 	return fmt.Sprintf(
-		"ctrl+space out  %s+j/k agents  %s+n/p queue  %s+z zoom  %s+t transcript",
-		alt, alt, alt, alt)
+		"ctrl+space out  %s agents  %s queue  %s zoom",
+		chordPair(m.keys.AgentsNext, m.keys.AgentsPrevious),
+		chordPair(m.keys.QueueNext, m.keys.QueuePrevious),
+		chordName(m.keys.Zoom[0]))
 }
 
 // renderTerminalBar is the window bar over the terminal grid, and the only

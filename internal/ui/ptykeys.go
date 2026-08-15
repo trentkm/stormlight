@@ -9,6 +9,7 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/pty"
+	"slices"
 )
 
 // updateTerminalKey is every keypress while the Spanreed terminal holds
@@ -21,35 +22,33 @@ import (
 // for byte; typing into an agent's terminal is the strongest possible form
 // of having seen its result, so attention clears on the way through.
 func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+q", "ctrl+space", "ctrl+@":
+	key := msg.String()
+	switch {
+	case key == "ctrl+q" || key == "ctrl+space" || key == "ctrl+@":
 		// The seam key: one step out, from anywhere inside. Zoom collapses
 		// with it, so it always lands back on the roster.
 		m.ptyZoom = false
 		m.activePane = paneAgents
 		m.status = "Ready"
 		return m, m.ensurePTYCmd()
-	case "alt+j", "alt+down", "ctrl+alt+j", "ctrl+alt+down":
+	case slices.Contains(m.keys.AgentsNext, key):
 		// Switch agents without stepping out: the portal swaps terminals
 		// under the keyboard and the bar re-labels. The roster's cursor is
 		// the target — plain moveSelection would scroll this terminal.
 		m.moveSelectionIn(paneAgents, 1)
 		return m, m.interactionFollowCmd()
-	case "alt+k", "alt+up", "ctrl+alt+k", "ctrl+alt+up":
+	case slices.Contains(m.keys.AgentsPrevious, key):
 		m.moveSelectionIn(paneAgents, -1)
 		return m, m.interactionFollowCmd()
-	case "alt+n", "ctrl+alt+n":
+	case slices.Contains(m.keys.QueueNext, key):
 		// The attention inbox, oldest first: cycle to whoever has waited
 		// longest, wherever their workspace is.
 		return m.jumpQueue(agent.QueueForward)
-	case "alt+p", "ctrl+alt+p":
+	case slices.Contains(m.keys.QueuePrevious, key):
 		return m.jumpQueue(agent.QueueBack)
-	case "alt+z", "ctrl+alt+z":
+	case slices.Contains(m.keys.Zoom, key):
 		m.ptyZoom = !m.ptyZoom
 		return m, m.ensurePTYCmd()
-	case "alt+t", "ctrl+alt+t":
-		m.ptyZoom = false
-		return m, tea.Batch(m.togglePTY(), m.ensurePTYCmd())
 	}
 	widget, ok := m.selectedPTY()
 	if !ok {

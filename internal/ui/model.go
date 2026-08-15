@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -200,6 +201,8 @@ type Model struct {
 	ptyZoom    bool
 	ptyManager *ptyview.Manager
 	ptyWaiting bool
+	// keys are the seam chords, config-rebindable; see KeyBindings.
+	keys KeyBindings
 
 	// The floating program overlay (Yazi picker, Neovim task editor): a
 	// windrunner session rendered through the same widget machinery as
@@ -274,6 +277,8 @@ type Options struct {
 	SelectWorkspaceID string
 	// Columns restores the user's saved < > pane-width adjustments.
 	Columns ColumnPrefs
+	// Keys rebinds the seam chords; empty lists keep the defaults.
+	Keys KeyBindings
 }
 
 func NewModelWithOptions(backend Backend, options Options) Model {
@@ -326,6 +331,7 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		columns:            options.Columns,
 		ptyEnabled:         true,
 		ptyManager:         ptyview.NewManager(backend),
+		keys:               fillKeyDefaults(options.Keys),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -747,6 +753,27 @@ func (m Model) View() tea.View {
 
 func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	// The seam chords work from this side too: the same keys that cycle
+	// inside the terminal cycle here, so the hands never relearn.
+	switch {
+	case slices.Contains(m.keys.QueueNext, key):
+		return m.jumpQueue(agent.QueueForward)
+	case slices.Contains(m.keys.QueuePrevious, key):
+		return m.jumpQueue(agent.QueueBack)
+	case slices.Contains(m.keys.AgentsNext, key):
+		m.moveSelectionIn(paneAgents, 1)
+		return m, m.interactionFollowCmd()
+	case slices.Contains(m.keys.AgentsPrevious, key):
+		m.moveSelectionIn(paneAgents, -1)
+		return m, m.interactionFollowCmd()
+	case slices.Contains(m.keys.Zoom, key):
+		if _, ok := m.selectedAgent(); ok {
+			m.ptyEnabled = true
+			m.ptyZoom = true
+			m.activePane = paneInteraction
+			return m, m.ensurePTYCmd()
+		}
+	}
 	if m.normalPrefix == "," {
 		m.normalPrefix = ""
 		mode := m.sortMode
@@ -839,7 +866,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "z":
 		m.rowsExpanded = !m.rowsExpanded
 		return m, nil
-	case "Z", "alt+z", "ctrl+alt+z":
+	case "Z":
 		// Zoom from the roster: the sidebars collapse and the keyboard
 		// walks into the portal in the same stroke.
 		if _, ok := m.selectedAgent(); ok {
@@ -978,10 +1005,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
-	case "alt+n", "ctrl+alt+n":
-		return m.jumpQueue(agent.QueueForward)
-	case "alt+p", "ctrl+alt+p":
-		return m.jumpQueue(agent.QueueBack)
 	case "m":
 		return m.beginMark()
 	case "M":

@@ -269,6 +269,13 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 	options := ui.Options{
 		YaziPath:        cfg.Tools.Yazi,
 		NvimPath:        cfg.Tools.Nvim,
+		Keys: ui.KeyBindings{
+			AgentsNext:     cfg.Keys.AgentsNext,
+			AgentsPrevious: cfg.Keys.AgentsPrevious,
+			QueueNext:      cfg.Keys.QueueNext,
+			QueuePrevious:  cfg.Keys.QueuePrevious,
+			Zoom:           cfg.Keys.Zoom,
+		},
 		DefaultProvider: agent.Provider(cfg.Defaults.Provider),
 		ExpandedRows:    cfg.UI.Rows == "expanded",
 		ModeForDir:      cfg.ModeForDir,
