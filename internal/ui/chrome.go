@@ -19,7 +19,14 @@ func (m Model) renderFooter() string {
 		content = chord
 	} else {
 		hints := m.commandHints()
-		content = mutedStyle().Render(truncate(hints, inner))
+		hintStyle := mutedStyle()
+		if m.terminalFocused() {
+			// Inside the portal the footer carries the terminal's
+			// controls; it wears the portal's light rather than fading
+			// to furniture gray.
+			hintStyle = lipgloss.NewStyle().Foreground(colorWorking())
+		}
+		content = hintStyle.Render(truncate(hints, inner))
 		if m.err != nil {
 			content = renderFooterStatus(inner, m.err.Error(), hints, errorStyle())
 		} else if m.status != "Ready" {

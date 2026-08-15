@@ -152,12 +152,12 @@ func (m *Model) interactionFollowCmd() tea.Cmd {
 func (m *Model) togglePTY() tea.Cmd {
 	if m.ptyEnabled {
 		m.ptyEnabled = false
-		m.status = "Transcript view"
+		m.status = "Ready"
 		return m.loadInteractionCmd()
 	}
 	m.ptyEnabled = true
 	m.activePane = paneInteraction
-	m.status = "Terminal view"
+	m.status = "Ready"
 	return m.armPTYWait()
 }
 

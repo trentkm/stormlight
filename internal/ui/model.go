@@ -846,7 +846,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ptyEnabled = true
 			m.ptyZoom = true
 			m.activePane = paneInteraction
-			m.status = "Terminal — ctrl+space to leave"
+			m.status = "Ready"
 			return m, tea.Batch(m.ensurePTYCmd(), m.armPTYWait())
 		}
 		return m, nil
@@ -855,7 +855,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.ptyEnabled {
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Terminal — ctrl+space to leave"
+				m.status = "Ready"
 				return m, m.armPTYWait()
 			}
 		}
@@ -872,7 +872,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// zoomed version.
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Terminal — ctrl+space to leave"
+				m.status = "Ready"
 				return m, m.armPTYWait()
 			}
 			return m, nil
@@ -918,7 +918,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// The live terminal is the composer; walking in is replying.
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Terminal — ctrl+q to leave"
+				m.status = "Ready"
 				return m, m.armPTYWait()
 			}
 			return m, nil
