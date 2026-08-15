@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,8 +19,7 @@ import (
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
-	"github.com/trentkm/stormlight/internal/resurrect"
-	"github.com/trentkm/stormlight/internal/surface"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -259,7 +257,7 @@ func TestViewFitsEightyColumnTmuxPane(t *testing.T) {
 	model.interactionID = "12345678"
 	model.interaction.SetContent("layout-check\n\nPane is dead")
 
-	assertViewFitsPane(t, model, 79, 23)
+	assertViewFitsPane(t, model, 80, 24)
 }
 
 func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
@@ -287,7 +285,7 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 		!strings.Contains(view, "Enter a path") {
 		t.Fatalf("directory selector is incomplete:\n%s", view)
 	}
-	assertViewFitsPane(t, model, 79, 23)
+	assertViewFitsPane(t, model, 80, 24)
 }
 
 func TestDispatchCustomPathFitsShortPane(t *testing.T) {
@@ -316,7 +314,7 @@ func TestDispatchCustomPathFitsShortPane(t *testing.T) {
 		})
 		model = updated.(Model)
 
-		assertViewFitsPane(t, model, size.width-1, size.height-1)
+		assertViewFitsPane(t, model, size.width, size.height)
 	}
 }
 
@@ -350,7 +348,7 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 	if strings.Count(view, "╭") != strings.Count(view, "╰") {
 		t.Fatalf("the form was cut off inside the composer:\n%s", view)
 	}
-	assertViewFitsPane(t, model, 39, 15)
+	assertViewFitsPane(t, model, 40, 16)
 }
 
 func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
@@ -375,7 +373,9 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 	for _, label := range []string{
 		"Workspaces",
 		"Agents",
-		"Spanreed",
+		// The Spanreed's title row is its window bar in terminal view,
+		// so the context it preserves is the selected agent's name.
+		"agent-one",
 		"New agent",
 		"Coding agent",
 		"Task",
@@ -384,7 +384,7 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 			t.Fatalf("modal view is missing %q:\n%s", label, view)
 		}
 	}
-	assertViewFitsPane(t, model, 119, 29)
+	assertViewFitsPane(t, model, 120, 30)
 }
 
 func TestDispatchOptionalNameReachesTheRequest(t *testing.T) {
@@ -608,7 +608,7 @@ func TestDispatchFormFitsItsModal(t *testing.T) {
 				t.Fatalf("%dx%d picker=%v: the task box was clipped:\n%s\n%s",
 					size[0], size[1], picker, composer, modal)
 			}
-			assertViewFitsPane(t, model, size[0]-1, size[1]-1)
+			assertViewFitsPane(t, model, size[0], size[1])
 		}
 	}
 }
@@ -792,7 +792,7 @@ func TestAddWorkspaceOnlyOffersNewDirectoryActions(t *testing.T) {
 		!strings.Contains(view, active.Name) {
 		t.Fatalf("add-workspace modal lacks context:\n%s", view)
 	}
-	assertViewFitsPane(t, model, 99, 27)
+	assertViewFitsPane(t, model, 100, 28)
 }
 
 func TestFooterKeepsCommandsVisibleWithStatus(t *testing.T) {
@@ -854,6 +854,7 @@ func TestFooterShowsOnlyChordOptionsWhilePending(t *testing.T) {
 func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(stubBackend{})
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{{
 		ID:        "one",
@@ -867,12 +868,12 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 	model.interaction.SetContent("agent response")
 
 	view := ansi.Strip(model.View().Content)
-	for _, label := range []string{"Workspaces", "Agents", "Spanreed", "agent response"} {
+	for _, label := range []string{"Workspaces", "Agents", "agent response"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("dashboard is missing %q:\n%s", label, view)
 		}
 	}
-	assertViewFitsPane(t, model, 119, 29)
+	assertViewFitsPane(t, model, 120, 30)
 }
 
 // The dashboard's two seams divide different kinds of thing, so they are not
@@ -890,8 +891,7 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	header := -1
 	for index, line := range lines {
 		if strings.Contains(line, "Workspaces") &&
-			strings.Contains(line, "Agents") &&
-			strings.Contains(line, "Spanreed") {
+			strings.Contains(line, "Agents") {
 			header = index
 			break
 		}
@@ -899,22 +899,21 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	if header < 0 {
 		t.Fatalf("pane header row not found:\n%s", body)
 	}
-	// The header row carries the seams' caps, not the seams: half-strokes
-	// that begin at the band and descend out of it.
-	hairline := strings.Index(lines[header], "╷")
-	plane := strings.Index(lines[header], "╻")
-	if hairline < 0 || plane < 0 || plane < hairline {
-		t.Fatalf("seams are not capped under the band: %q", lines[header])
-	}
-	if strings.ContainsAny(lines[header], "│┃") {
-		t.Fatalf("uncapped seam collides with the header band: %q", lines[header])
+	// The title band is one continuous surface: no seam glyph of any
+	// weight interrupts the strip.
+	if strings.ContainsAny(lines[header], "╷╻│┃▕") {
+		t.Fatalf("a seam interrupts the title band: %q", lines[header])
 	}
 
+	// One seam remains: the plane seam before the portal. The catalog's
+	// two lists share their side of it with no rule between them.
 	firstRow := lines[header+1]
-	if strings.Index(firstRow, "│") != hairline ||
-		strings.Index(firstRow, "┃") != plane {
-		t.Fatalf("seams do not hang from their caps:\n%q\n%q",
-			lines[header], firstRow)
+	if strings.Contains(firstRow, "│") {
+		t.Fatalf("a hairline divides the catalog: %q", firstRow)
+	}
+	plane := strings.Index(firstRow, "▕")
+	if plane < 0 {
+		t.Fatalf("the plane seam does not begin under the band: %q", firstRow)
 	}
 
 	for _, line := range lines[header+1:] {
@@ -927,7 +926,7 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 				t.Fatalf("catalog rule has no air before it: %q", line)
 			}
 		}
-		column := runeIndex(runes, '┃')
+		column := runeIndex(runes, '▕')
 		if column < 0 {
 			t.Fatalf("body row has no plane seam: %q", line)
 		}
@@ -966,25 +965,9 @@ func TestAgentPaneHeaderNamesWorkspaceOnlyWhenNarrow(t *testing.T) {
 		t.Fatalf("narrow agent header lacks its workspace context: %q", narrow)
 	}
 
-	rendered := ansi.Strip(renderPaneHeader("Agents", "a-very-long-workspace-name", 24, true, headerBand{total: 24}))
+	rendered := ansi.Strip(rosterSegment("Agents", "a-very-long-workspace-name", true, true, 24))
 	if width := lipgloss.Width(rendered); width != 24 {
-		t.Fatalf("contextual header width = %d, want 24: %q", width, rendered)
-	}
-}
-
-func TestPaneHeaderKeepsLabelAlignmentAcrossFocusStates(t *testing.T) {
-	active := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true, headerBand{total: 24}))
-	inactive := ansi.Strip(renderPaneHeader("Workspaces", "", 24, false, headerBand{total: 24}))
-	// The label is set into the band with a column of padding on each side,
-	// and that padding must not move when focus does.
-	if !strings.HasPrefix(active, " Workspaces ") ||
-		!strings.HasPrefix(inactive, " Workspaces ") {
-		t.Fatalf("labels shifted between focus states:\nactive:   %q\ninactive: %q",
-			active, inactive)
-	}
-	if lipgloss.Width(active) != 24 || lipgloss.Width(inactive) != 24 {
-		t.Fatalf("header width changed with focus: %d vs %d",
-			lipgloss.Width(active), lipgloss.Width(inactive))
+		t.Fatalf("contextual segment width = %d, want 24: %q", width, rendered)
 	}
 }
 
@@ -1004,8 +987,7 @@ func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 	body := ansi.Strip(model.renderBody())
 	header := strings.Split(body, "\n")[0]
 	if !strings.Contains(header, "Workspaces") ||
-		!strings.Contains(header, "Agents") ||
-		!strings.Contains(header, "Spanreed") {
+		!strings.Contains(header, "Agents") {
 		t.Fatalf("density toggle hid dashboard panes: %q", header)
 	}
 	if !strings.Contains(model.commandHints(), "z compact rows") {
@@ -1158,11 +1140,9 @@ func TestTaskComposerWrapsLongPrompts(t *testing.T) {
 	}
 }
 
-func TestTaskEditorDelegatesPresentationToSurface(t *testing.T) {
+func TestTaskEditorRoundTripsThroughTheHandoffFile(t *testing.T) {
 	start := t.TempDir()
-	current := &recordingSurface{popups: true}
-	command, err := taskEditorCmd(
-		current,
+	spec, err := taskEditorSpec(
 		"/usr/local/bin/nvim",
 		start,
 		"Review this workspace",
@@ -1170,23 +1150,19 @@ func TestTaskEditorDelegatesPresentationToSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer spec.cleanup()
 
-	if current.request.Command.Path != "/usr/local/bin/nvim" ||
-		current.request.Command.Dir != start ||
-		len(current.request.Command.Args) != 1 ||
-		!strings.HasSuffix(current.request.Command.Args[0], ".md") {
-		t.Fatalf("editor command request = %#v", current.request.Command)
-	}
-	if current.request.Popup == nil ||
-		current.request.Popup.Width != "82%" ||
-		current.request.Popup.Height != "76%" ||
-		!strings.Contains(current.request.Popup.Title, "Edit task") {
-		t.Fatalf("editor popup request = %#v", current.request.Popup)
+	if spec.path != "/usr/local/bin/nvim" || spec.dir != start ||
+		len(spec.args) != 1 ||
+		!strings.HasSuffix(spec.args[0], ".md") {
+		t.Fatalf("editor spec = %#v", spec)
 	}
 
-	message := command()
-	result, ok := message.(taskEditedMsg)
-	if !ok || result.err != nil || result.task != "Review this workspace" {
+	// The editor "session": what is in the handoff when it exits is the
+	// task that comes back.
+	message := spec.result(nil)
+	edited, ok := message.(taskEditedMsg)
+	if !ok || edited.err != nil || edited.task != "Review this workspace" {
 		t.Fatalf("editor result = %#v", message)
 	}
 }
@@ -1393,66 +1369,28 @@ func TestResolveYaziDirectory(t *testing.T) {
 	}
 }
 
-type recordingSurface struct {
-	request surface.Request
-	popups  bool
-}
-
-func (s *recordingSurface) Capabilities() surface.Capabilities {
-	return surface.Capabilities{Popups: s.popups}
-}
-
-func (s *recordingSurface) Present(
-	request surface.Request,
-) (surface.Presentation, error) {
-	s.request = request
-	return surface.Presentation{
-		Command: exec.Command("true"),
-		Mode:    surface.PresentationOverlay,
-	}, nil
-}
-
-func TestYaziPickerDelegatesPresentationToSurface(t *testing.T) {
+func TestYaziPickerBuildsHandoffsAndResolvesTheChoice(t *testing.T) {
 	start := t.TempDir()
-	current := &recordingSurface{popups: true}
-	command, err := yaziPickerCmd(current, "/usr/local/bin/yazi", start)
+	spec, err := yaziPickerSpec("/usr/local/bin/yazi", start)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if current.request.Command.Path != "/usr/local/bin/yazi" ||
-		current.request.Command.Dir != start {
-		t.Fatalf("command request = %#v", current.request.Command)
+	if spec.path != "/usr/local/bin/yazi" || spec.dir != start {
+		t.Fatalf("picker spec = %#v", spec)
 	}
-	if current.request.Popup == nil ||
-		current.request.Popup.Width != "78%" ||
-		current.request.Popup.Height != "76%" {
-		t.Fatalf("popup request = %#v", current.request.Popup)
-	}
-	args := strings.Join(current.request.Command.Args, " ")
+	args := strings.Join(spec.args, " ")
 	if !strings.Contains(args, "--chooser-file") ||
 		!strings.Contains(args, "--cwd-file") {
-		t.Fatalf("Yazi handoff args = %#v", current.request.Command.Args)
+		t.Fatalf("Yazi handoff args = %#v", spec.args)
 	}
 
-	message := command()
-	result, ok := message.(directoryPickedMsg)
-	if !ok || result.err != nil {
+	// Empty handoffs are a cancelled pick, which completes cleanly with
+	// no path.
+	message := spec.result(nil)
+	picked, ok := message.(directoryPickedMsg)
+	if !ok || picked.err != nil || picked.path != "" {
 		t.Fatalf("picker result = %#v", message)
-	}
-}
-
-func TestYaziPickerOmitsPopupForDirectSurface(t *testing.T) {
-	current := &recordingSurface{}
-	command, err := yaziPickerCmd(current, "/usr/local/bin/yazi", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.request.Popup != nil {
-		t.Fatalf("unsupported popup was requested: %#v", current.request.Popup)
-	}
-	if result, ok := command().(directoryPickedMsg); !ok || result.err != nil {
-		t.Fatalf("picker did not complete cleanly: %#v", result)
 	}
 }
 
@@ -1617,7 +1555,7 @@ func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
 func TestFirstRefreshLandsOnRequestedWorkspace(t *testing.T) {
 	first := workspace.DirectoryContext("/workspace/first")
 	second := workspace.DirectoryContext("/workspace/second")
-	model := NewModelWithOptions(stubBackend{}, nil, Options{
+	model := NewModelWithOptions(stubBackend{}, Options{
 		SelectWorkspaceID: second.ID,
 	})
 
@@ -2031,6 +1969,7 @@ func TestInteractionComposerSendsToSelectedAgent(t *testing.T) {
 	}
 	workspaceContext := workspace.DirectoryContext(t.TempDir())
 	model := NewModel(backend)
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{{
 		ID:        "agent-one",
@@ -2068,6 +2007,9 @@ func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 	backend := &recordingBackend{}
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(backend)
+	// In the terminal view Enter walks into the embedded terminal
+	// instead; the external attach is transcript-view behavior (and F).
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{{
 		ID:        "agent-one",
@@ -2095,6 +2037,7 @@ func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 func TestInteractionHidesPreviousAgentTranscript(t *testing.T) {
 	workspaceContext := workspace.DirectoryContext("/workspace")
 	model := NewModel(stubBackend{})
+	model.ptyEnabled = false
 	model.catalogWorkspaces = []workspace.Context{workspaceContext}
 	model.agents = []agent.Agent{
 		{ID: "one", Name: "one", Workspace: workspaceContext},
@@ -2167,7 +2110,14 @@ func TestInteractionHeadingNamesTheCheckout(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			model.rebuildGroups(testCase.workspace, testCase.agent)
 			model.interactionID = testCase.agent
-			rendered := ansi.Strip(model.renderInteraction(80, 20))
+			selected, ok := model.selectedAgent()
+			if !ok {
+				t.Fatal("no selected agent")
+			}
+			// The checkout words live in the window bar, the Spanreed's
+			// title row in terminal view.
+			rendered := ansi.Strip(model.renderTerminalBar(selected, 80) +
+				"\n" + model.renderInteraction(80, 20))
 			if testCase.want != "" && !strings.Contains(rendered, testCase.want) {
 				t.Fatalf("heading hides %q:\n%s", testCase.want, rendered)
 			}
@@ -2399,8 +2349,12 @@ func (stubBackend) Delete(context.Context, string) error {
 	return nil
 }
 
-func (stubBackend) SyncAgentWindows(context.Context, int, int) error {
-	return nil
+func (stubBackend) AttachTerminal(context.Context, string, int, int) (pty.Transport, error) {
+	return nil, fmt.Errorf("stub backend has no terminals")
+}
+
+func (stubBackend) StartOverlay(context.Context, app.OverlayRequest) (app.Overlay, error) {
+	return nil, fmt.Errorf("stub backend hosts no overlays")
 }
 
 func (stubBackend) Providers() []provider.Info {
@@ -2413,23 +2367,6 @@ func (stubBackend) SessionHistory(context.Context) ([]history.Record, error) {
 
 func (stubBackend) Resume(context.Context, history.Record) (agent.Agent, error) {
 	return agent.Agent{}, nil
-}
-
-func (stubBackend) RestoreCandidates(
-	context.Context,
-) ([]resurrect.Candidate, error) {
-	return nil, nil
-}
-
-func (stubBackend) Restore(
-	context.Context,
-	...string,
-) ([]app.RestoreResult, error) {
-	return nil, nil
-}
-
-func (stubBackend) Forget(context.Context, ...string) error {
-	return nil
 }
 
 type recordingBackend struct {
@@ -2479,6 +2416,10 @@ func (b *recordingBackend) Attach(
 func unreadAgentModel(active pane) Model {
 	ws := workspace.DirectoryContext("/workspace/project")
 	model := NewModel(stubBackend{})
+	// Engagement semantics are transcript-view rules; in the terminal
+	// view every forwarded keystroke clears attention by its own path
+	// (updateTerminalKey).
+	model.ptyEnabled = false
 	model.width = 120
 	model.height = 30
 	model.ready = true

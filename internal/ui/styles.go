@@ -33,6 +33,11 @@ func colorBorder() color.Color       { return theme.Color(theme.Border) }
 func colorSelect() color.Color       { return theme.Color(theme.Select) }
 func colorSelectedText() color.Color { return theme.Color(theme.SelectedText) }
 func colorDangerBg() color.Color     { return theme.Color(theme.DangerBg) }
+func colorPortalInk() color.Color    { return theme.Color(theme.PortalInk) }
+func colorBand() color.Color         { return theme.Color(theme.Band) }
+func colorBandMuted() color.Color    { return theme.Color(theme.BandMuted) }
+func colorBandDim() color.Color      { return theme.Color(theme.BandDim) }
+func colorAccentDim() color.Color    { return theme.Color(theme.AccentDim) }
 
 func titleStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Bold(true).Foreground(colorText())
@@ -208,8 +213,10 @@ func selectTheme() rowTheme {
 	return rowTheme{
 		background: colorSelect(),
 		text:       colorSelectedText(),
-		focusMark:  colorWaiting(),
-		restMark:   colorBorder(),
+		// The cursor mark speaks the strip's silver — selection is one
+		// word everywhere — leaving amber to mean attention alone.
+		focusMark: colorBand(),
+		restMark:  colorBorder(),
 	}
 }
 

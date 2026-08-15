@@ -148,13 +148,10 @@ func sortAgentList(agents []agent.Agent, mode sortMode) {
 	}
 }
 
-// newestFirst orders by creation time; window index breaks same-second
-// ties deterministically (later windows are newer within a session).
+// newestFirst orders by creation time; same-second ties keep the
+// roster's own order, which the stable sort preserves.
 func newestFirst(a, b agent.Agent) int {
-	if d := b.CreatedAt.Compare(a.CreatedAt); d != 0 {
-		return d
-	}
-	return b.WindowIndex - a.WindowIndex
+	return b.CreatedAt.Compare(a.CreatedAt)
 }
 
 func buildWorkspaceGroups(
@@ -272,6 +269,16 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 		}
 		m.agentCursor = clamp(m.agentCursor+delta, 0, len(agents)-1)
 	case paneInteraction:
+		if m.ptyEnabled {
+			// The PTY view scrolls the emulator's history; positive delta
+			// is "down", which moves toward the live tail. Keyboard scroll
+			// applies immediately — key repeat is slow; the wheel path
+			// coalesces separately (see handleMouse).
+			if widget, ok := m.selectedPTY(); ok {
+				widget.ScrollBy(-delta)
+			}
+			return
+		}
 		if delta > 0 {
 			m.interaction.ScrollDown(delta)
 		} else {
@@ -288,6 +295,12 @@ func (m *Model) moveSelectionToStart() {
 	case paneAgents:
 		m.agentCursor = 0
 	case paneInteraction:
+		if m.ptyEnabled {
+			if widget, ok := m.selectedPTY(); ok {
+				widget.ScrollBy(1 << 30)
+			}
+			return
+		}
 		m.interaction.GotoTop()
 	}
 }
@@ -305,6 +318,12 @@ func (m *Model) moveSelectionToEnd() {
 			m.agentCursor = len(agents) - 1
 		}
 	case paneInteraction:
+		if m.ptyEnabled {
+			if widget, ok := m.selectedPTY(); ok {
+				widget.ScrollToBottom()
+			}
+			return
+		}
 		m.interaction.GotoBottom()
 	}
 }

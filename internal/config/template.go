@@ -13,13 +13,18 @@ const template = `# Stormlight configuration.
 [defaults]
 # provider = "codex"            # codex | claude, or a custom provider
 # mode     = "edits"            # ask | edits | auto
-# session  = "stormlight-agents"
 
-[tmux]
-# socket      = "stormlight"    # tmux -L <socket>; "" targets the default server
-# return_keys = ["C-6", "C-^"]  # single-press return-to-dashboard keys
-# next_keys     = ["C-]"]       # single-press step forward through the queue
-# previous_keys = ['C-\\']       # single-press step back through the queue
+[keys]
+# Seam chords: keys the dashboard keeps while an agent's terminal holds
+# the keyboard. Bubble Tea names; several chords may name one action.
+# agents_next     = ["alt+j", "alt+down"]
+# agents_previous = ["alt+k", "alt+up"]
+# queue_next      = ["alt+n"]
+# queue_previous  = ["alt+p"]
+# zoom            = ["alt+z"]
+# On macOS, alt is the option key (Ghostty needs macos-option-as-alt);
+# if your window manager owns alt+hjkl, rebind here — e.g.
+# agents_next = ["ctrl+alt+j"].
 
 [ui]
 # rows = "compact"              # compact | expanded

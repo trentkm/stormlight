@@ -10,11 +10,6 @@ import (
 // buckets partition the set — every agent lands in exactly one, chosen by
 // the same precedence the dashboard's row glyph uses — so a summary built
 // from them adds up to the agents it describes.
-//
-// It lives here rather than in the dashboard because it is no longer the
-// dashboard's alone: the header counts and the managed session's tmux status
-// bar are the same tally shown in two places, and two derivations of it
-// would drift.
 type Stats struct {
 	// Working is running, by Stormlight's reading or the human's.
 	Working int
@@ -66,7 +61,8 @@ func Count(agents []Agent) Stats {
 	return stats
 }
 
-// Queue is the agents pending on a human, oldest first.
+// Queue is the attention inbox: the live agents waiting on a human,
+// ordered by who has waited longest.
 //
 // The order is arrival order — when the agent started waiting, not when it
 // was dispatched — so working the queue front to back answers whoever has

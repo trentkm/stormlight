@@ -20,7 +20,7 @@ import (
 
 type Config struct {
 	Defaults   Defaults                     `toml:"defaults"`
-	Tmux       Tmux                         `toml:"tmux"`
+	Keys       Keys                         `toml:"keys"`
 	UI         UI                           `toml:"ui"`
 	Log        Log                          `toml:"log"`
 	Tools      Tools                        `toml:"tools"`
@@ -31,19 +31,19 @@ type Config struct {
 type Defaults struct {
 	Provider string `toml:"provider"`
 	Mode     string `toml:"mode"`
-	Session  string `toml:"session"`
 }
 
-type Tmux struct {
-	// Socket is a pointer so an explicit `socket = ""` (target the default
-	// tmux server) is distinguishable from an unset key.
-	Socket     *string  `toml:"socket"`
-	ReturnKeys []string `toml:"return_keys"`
-	// NextKeys and PreviousKeys step through the attention queue from inside
-	// an agent. They live in tmux's root table alongside ReturnKeys, so a key
-	// an agent's own TUI needs is one these lists take away from it.
-	NextKeys     []string `toml:"next_keys"`
-	PreviousKeys []string `toml:"previous_keys"`
+// Keys rebinds the seam chords — the keys that reach the dashboard while
+// an agent's terminal holds the keyboard. Each action takes a list of
+// chords in Bubble Tea's names ("alt+j", "ctrl+alt+down"); an empty list
+// keeps the default. Defaults are alt chords — what hosted TUIs leave
+// alone; a desk whose window manager owns alt rebinds here.
+type Keys struct {
+	AgentsNext     []string `toml:"agents_next"`
+	AgentsPrevious []string `toml:"agents_previous"`
+	QueueNext      []string `toml:"queue_next"`
+	QueuePrevious  []string `toml:"queue_previous"`
+	Zoom           []string `toml:"zoom"`
 }
 
 type UI struct {
@@ -169,14 +169,6 @@ func (c Config) normalize(path string) (Config, []string, error) {
 	return c, warnings, nil
 }
 
-// SocketOr resolves the tmux socket, honoring an explicit empty value.
-func (c Config) SocketOr(fallback string) string {
-	if c.Tmux.Socket == nil {
-		return fallback
-	}
-	return *c.Tmux.Socket
-}
-
 // ModeForDir returns the permission-mode override whose directory key
 // contains dir, preferring the longest (most specific) key.
 func (c Config) ModeForDir(dir string) (agent.PermissionMode, bool) {
@@ -235,25 +227,26 @@ func valueOr(value, fallback string) string {
 
 // EffectiveTOML renders the merged configuration (file values over built-in
 // defaults) for `stormlight config`.
-func (c Config) EffectiveTOML(builtinSocket, builtinSession string) (string, error) {
+func (c Config) EffectiveTOML() (string, error) {
 	merged := c
 	merged.Defaults.Provider = valueOr(merged.Defaults.Provider, "codex")
 	merged.Defaults.Mode = valueOr(merged.Defaults.Mode, string(agent.DefaultMode))
-	merged.Defaults.Session = valueOr(merged.Defaults.Session, builtinSession)
-	if merged.Tmux.Socket == nil {
-		socket := builtinSocket
-		merged.Tmux.Socket = &socket
-	}
-	if len(merged.Tmux.ReturnKeys) == 0 {
-		merged.Tmux.ReturnKeys = []string{"C-6", "C-^"}
-	}
-	if len(merged.Tmux.NextKeys) == 0 {
-		merged.Tmux.NextKeys = []string{"C-]"}
-	}
-	if len(merged.Tmux.PreviousKeys) == 0 {
-		merged.Tmux.PreviousKeys = []string{`C-\`}
-	}
 	merged.UI.Rows = valueOr(merged.UI.Rows, "compact")
+	if len(merged.Keys.AgentsNext) == 0 {
+		merged.Keys.AgentsNext = []string{"alt+j", "alt+down"}
+	}
+	if len(merged.Keys.AgentsPrevious) == 0 {
+		merged.Keys.AgentsPrevious = []string{"alt+k", "alt+up"}
+	}
+	if len(merged.Keys.QueueNext) == 0 {
+		merged.Keys.QueueNext = []string{"alt+n"}
+	}
+	if len(merged.Keys.QueuePrevious) == 0 {
+		merged.Keys.QueuePrevious = []string{"alt+p"}
+	}
+	if len(merged.Keys.Zoom) == 0 {
+		merged.Keys.Zoom = []string{"alt+z"}
+	}
 	merged.Log.Level = valueOr(merged.Log.Level, "info")
 	rendered, err := toml.Marshal(merged)
 	if err != nil {

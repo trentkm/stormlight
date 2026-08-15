@@ -13,7 +13,7 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
-	"github.com/trentkm/stormlight/internal/resurrect"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -28,6 +28,9 @@ type DispatchRequest struct {
 
 type AttachResult = session.AttachResult
 
+type OverlayRequest = session.OverlayRequest
+type Overlay = session.Overlay
+
 type Service struct {
 	runtime    session.Runtime
 	providers  *provider.Registry
@@ -37,10 +40,7 @@ type Service struct {
 	// providers ever reported, kept so a conversation can be reopened long
 	// after its window is gone.
 	sessions *history.Log
-	// store keeps the roster on disk so it outlives the runtime hosting it.
-	// A nil store is a service that does not remember, which is what tests
 	// and one-shot commands want.
-	store *resurrect.Store
 
 	// resolved caches catalog-path resolution (one git spawn per path per
 	// call otherwise); the dashboard polls fast, directories change slowly.
@@ -98,15 +98,6 @@ func NewServiceWithCatalog(
 	}
 }
 
-// Remembering gives the service a snapshot store, which is what turns a
-// roster into something that survives its runtime. It is opt-in because
-// remembering means writing to the user's state directory, and a service
-// built for a test or a single query has no business doing that.
-func (s *Service) Remembering(store *resurrect.Store) *Service {
-	s.store = store
-	return s
-}
-
 func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	agents, err := s.runtime.ListAgents(ctx)
 	if err != nil {
@@ -145,25 +136,7 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	for index := range agents {
 		agents[index].Workspace = contexts[index]
 	}
-	s.publishStatus(ctx, agents)
-	s.snapshot(ctx, agents)
 	return agents, nil
-}
-
-// publishStatus hands the runtime's own chrome the tally the dashboard is
-// about to draw. It rides on the listing rather than on state changes
-// because a listing is the only thing that notices a pane dying, and the
-// dashboard polls it — so whatever the dashboard knows, the status bar
-// knows a moment later. Best-effort: a bar that cannot be written is not a
-// reason to fail the listing behind it.
-func (s *Service) publishStatus(ctx context.Context, agents []agent.Agent) {
-	publisher, ok := s.runtime.(session.StatusPublisher)
-	if !ok {
-		return
-	}
-	if err := publisher.PublishStatus(ctx, agent.Count(agents)); err != nil {
-		diagnostic.Logger().Debug("status bar tally not published", "error", err)
-	}
 }
 
 func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agent, error) {
@@ -197,7 +170,6 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 			"error", err,
 		)
 	}
-	s.resnapshot(ctx)
 	return managedAgent, nil
 }
 
@@ -342,7 +314,7 @@ func (s *Service) Capture(ctx context.Context, id string, lines int) (string, er
 
 // transcriptCapture renders the conversation from the provider's own
 // transcript file when the agent's hooks have reported one. The terminal
-// screen is all tmux can see of an alternate-screen agent, so the
+// screen is all a capture can see of an alternate-screen agent, so the
 // transcript file is the only complete history; the live screen is
 // appended while a turn is in flight so streaming output stays visible.
 func (s *Service) transcriptCapture(ctx context.Context, id string, lines int) (string, bool) {
@@ -403,26 +375,8 @@ func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error
 	})
 }
 
-// Delete removes an agent and forgets it. Deleting is the human saying they
-// are done with this one, and that has to be recorded here — a later listing
-// cannot tell an agent someone dismissed from one whose window went down with
-// its server, and guessing wrong either resurrects the dead or buries the
-// living.
 func (s *Service) Delete(ctx context.Context, id string) error {
-	managedAgent, findErr := s.find(ctx, id)
-	if err := s.runtime.Delete(ctx, id); err != nil {
-		return err
-	}
-	if s.store != nil && findErr == nil {
-		if err := s.store.Forget(managedAgent.ID); err != nil {
-			diagnostic.Logger().Warn("agent not forgotten",
-				"agent_id", managedAgent.ID,
-				"error", err,
-			)
-		}
-	}
-	s.resnapshot(ctx)
-	return nil
+	return s.runtime.Delete(ctx, id)
 }
 
 func (s *Service) Update(ctx context.Context, id string, update session.Update) error {
@@ -430,7 +384,6 @@ func (s *Service) Update(ctx context.Context, id string, update session.Update) 
 		return err
 	}
 	s.recordHistory(ctx, id)
-	s.resnapshot(ctx)
 	return nil
 }
 
@@ -508,26 +461,53 @@ func (s *Service) CompactSessionHistory() error {
 
 // find resolves an id — possibly shortened — against the live roster.
 func (s *Service) find(ctx context.Context, id string) (agent.Agent, error) {
+	if id == "" {
+		return agent.Agent{}, fmt.Errorf("agent id is required")
+	}
 	agents, err := s.runtime.ListAgents(ctx)
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	for _, managedAgent := range agents {
-		if managedAgent.ID == id || strings.HasPrefix(managedAgent.ID, id) {
+	var match *agent.Agent
+	for index, managedAgent := range agents {
+		if managedAgent.ID == id {
 			return managedAgent, nil
 		}
+		if strings.HasPrefix(managedAgent.ID, id) {
+			if match != nil {
+				return agent.Agent{}, fmt.Errorf("agent id %q is ambiguous", id)
+			}
+			match = &agents[index]
+		}
 	}
-	return agent.Agent{}, fmt.Errorf("agent %q not found", id)
+	if match == nil {
+		return agent.Agent{}, fmt.Errorf("agent %q not found", id)
+	}
+	return *match, nil
 }
 
 func (s *Service) Providers() []provider.Info {
 	return s.providers.Infos()
 }
 
-func (s *Service) SyncAgentWindows(ctx context.Context, width, height int) error {
-	return s.runtime.SyncWindowSizes(ctx, width, height)
+// StartOverlay floats a short-lived interactive program (the Yazi picker,
+// the Neovim task editor) on a runtime-owned PTY, for the dashboard to
+// render in a popup.
+func (s *Service) StartOverlay(ctx context.Context, request session.OverlayRequest) (session.Overlay, error) {
+	host, ok := s.runtime.(session.OverlayHost)
+	if !ok {
+		return nil, fmt.Errorf("runtime cannot host overlays")
+	}
+	return host.StartOverlay(ctx, request)
 }
 
-func (s *Service) Runtime() session.Runtime {
-	return s.runtime
+// AttachTerminal surfaces the runtime's live terminal attachment as the
+// widget-facing transport: an exact snapshot seed, then the byte stream,
+// with input and resize flowing back.
+func (s *Service) AttachTerminal(ctx context.Context, id string, cols, rows int) (pty.Transport, error) {
+	streamer, ok := s.runtime.(session.TerminalStreamer)
+	if !ok {
+		return nil, fmt.Errorf("runtime does not stream terminals")
+	}
+	return streamer.AttachTerminal(ctx, id, cols, rows)
 }

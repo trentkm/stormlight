@@ -14,11 +14,21 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
-func (m Model) renderInteraction(width, height int) string {
-	managedAgent, ok := m.selectedAgent()
-	if !ok {
-		return mutedStyle().Render(truncate("No agent selected", width))
+// renderEmptyPortal is the Spanreed with nothing to show — not an error,
+// an invitation, centered where the terminal would be.
+func (m Model) renderEmptyPortal(width, height int) string {
+	invitation := "No agents yet — press n to dispatch one"
+	if len(m.catalogWorkspaces) == 0 {
+		invitation = "Add a workspace to begin — press n in Workspaces"
 	}
+	return lipgloss.Place(width, max(1, height), lipgloss.Center, lipgloss.Center,
+		mutedStyle().Render(truncate(invitation, width)))
+}
+
+// renderInteractionHeading is the Spanreed masthead both views share: the
+// agent's name (shimmering while it works) over the meta line, with
+// attention states talking over the derived meta when they apply.
+func (m Model) renderInteractionHeading(managedAgent agent.Agent, width int) string {
 	title := titleStyle().Render(truncate(agentDisplayTitle(managedAgent), width))
 	if rowEmphasisFor(managedAgent) == emphasisWorking {
 		title = shimmerText(
@@ -52,7 +62,18 @@ func (m Model) renderInteraction(width, height int) string {
 		meta = lipgloss.NewStyle().Foreground(colorWaiting()).
 			Render(truncate("Unseen result", width))
 	}
-	heading := lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
+	return lipgloss.JoinVertical(lipgloss.Left, title, meta, "")
+}
+
+func (m Model) renderInteraction(width, height int) string {
+	managedAgent, ok := m.selectedAgent()
+	if !ok {
+		return m.renderEmptyPortal(width, height)
+	}
+	if m.ptyEnabled {
+		return m.renderPTYInteraction(managedAgent, width, height)
+	}
+	heading := m.renderInteractionHeading(managedAgent, width)
 
 	viewportCopy := m.interaction
 	composer := mutedStyle().Render(truncate("i reply  / search  Enter open terminal", width))
@@ -159,6 +180,10 @@ const metaSeparator = " · "
 // grey word. Tokens drop from the tail when the pane narrows, so the loudest
 // facts outlive the path.
 func interactionMeta(managedAgent agent.Agent, width int) string {
+	return joinMetaTokens(interactionMetaTokens(managedAgent), width)
+}
+
+func interactionMetaTokens(managedAgent agent.Agent) []metaToken {
 	symbol, symbolStyle := statusVisual(managedAgent)
 	tokens := []metaToken{{
 		plain: symbol + " " + agentStateLabel(managedAgent),
@@ -187,7 +212,7 @@ func interactionMeta(managedAgent agent.Agent, width int) string {
 	if path := shortPath(managedAgent.Cwd); path != "" {
 		tokens = append(tokens, metaToken{path, mutedStyle().Render(path)})
 	}
-	return joinMetaTokens(tokens, width)
+	return tokens
 }
 
 func joinMetaTokens(tokens []metaToken, width int) string {
@@ -302,7 +327,7 @@ func normalizeTerminalLine(line string) string {
 // hanging indent: continuation rows inherit the line's leading whitespace,
 // so indented agent output keeps its shape instead of snapping back to
 // column zero every time the Spanreed pane is narrower than the agent's
-// tmux pane.
+// terminal.
 func wrapTranscriptLine(line string, width int) string {
 	stripped := ansi.Strip(line)
 	if ansi.StringWidth(stripped) <= width {

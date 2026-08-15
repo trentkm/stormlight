@@ -1,8 +1,9 @@
 // Package history keeps the on-disk record of every provider conversation
-// Stormlight has run. Live agent metadata lives as tmux window options and
-// dies with the window; the provider's conversation outlives both — its
-// transcript stays on disk and its session id still resumes — so the record
-// that ties id, task, and workspace together has to live somewhere a window
+// Stormlight has run. Live agent metadata lives in windrunner session
+// metadata and dies with the session; the provider's conversation outlives
+// both — its transcript stays on disk and its session id still resumes — so
+// the record that ties id, task, and workspace together has to live
+// somewhere a session
 // close cannot reach.
 //
 // The log is append-only JSONL, one full record per write, coalesced by

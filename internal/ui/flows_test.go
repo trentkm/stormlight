@@ -2,16 +2,13 @@ package ui
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
-	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/history"
-	"github.com/trentkm/stormlight/internal/resurrect"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -62,6 +59,9 @@ func (b *flowBackend) RenameWorkspace(
 func flowModelFixture(t *testing.T, backend Backend) Model {
 	t.Helper()
 	model := NewModel(backend)
+	// These flows exercise the transcript view; the PTY view boots live
+	// terminal sessions no unit fixture wants.
+	model.ptyEnabled = false
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	model = updated.(Model)
 	workspaceContext := workspace.DirectoryContext("/tmp/flows")
@@ -316,7 +316,7 @@ func TestColumnResizeAdjustsPersistsAndClamps(t *testing.T) {
 	model = updated.(Model)
 	_, a, i := model.paneWidths(width)
 	if a != baseA-2 || i != baseI {
-		t.Fatalf("after spanreed grow: agents=%d spanreed=%d (base %d/%d)",
+		t.Fatalf("after terminal grow: agents=%d terminal=%d (base %d/%d)",
 			a, i, baseA, baseI)
 	}
 
@@ -391,7 +391,7 @@ func TestSpanreedNeverDimsAndListsAlwaysDoOutsideTheSelection(t *testing.T) {
 		model.activePane = focus
 		workspaces, agents, interaction := model.paneDimmings(20)
 		if interaction.dim {
-			t.Fatalf("spanreed dimmed with pane %d focused", focus)
+			t.Fatalf("terminal dimmed with pane %d focused", focus)
 		}
 		if !workspaces.dim || !agents.dim {
 			t.Fatalf("lists undimmed with pane %d focused: %+v %+v",
@@ -427,7 +427,7 @@ func TestNarrowLayoutFocusesOnePane(t *testing.T) {
 	model = updated.(Model)
 	for _, pane := range []pane{paneWorkspaces, paneAgents, paneInteraction} {
 		model.activePane = pane
-		assertViewFitsPane(t, model, 59, 19)
+		assertViewFitsPane(t, model, 60, 20)
 	}
 }
 
@@ -728,7 +728,11 @@ func TestSpanreedHeadingHonorsMarksOverDerivedState(t *testing.T) {
 			model.agents = []agent.Agent{marked}
 			model.rebuildGroups(ws.ID, marked.ID)
 			model.interactionID = marked.ID
-			rendered := ansi.Strip(model.renderInteraction(80, 20))
+			// The meta words live in the window bar, which the layout
+			// mounts as the Spanreed's title row; the interaction body
+			// holds the grid. Together they are the Spanreed surface.
+			rendered := ansi.Strip(model.renderTerminalBar(marked, 80) +
+				"\n" + model.renderInteraction(80, 20))
 			if !strings.Contains(rendered, testCase.want) {
 				t.Fatalf("heading hides %q:\n%s", testCase.want, rendered)
 			}
@@ -890,34 +894,6 @@ func TestHistoryFilterEscClearsBeforeClosing(t *testing.T) {
 	}
 }
 
-// restoreBackend answers the restore screen with a fixed snapshot and
-// records what it is asked to bring back.
-type restoreBackend struct {
-	stubBackend
-	candidates   []resurrect.Candidate
-	restoredIDs  []string
-	forgottenIDs []string
-}
-
-func (b *restoreBackend) RestoreCandidates(
-	context.Context,
-) ([]resurrect.Candidate, error) {
-	return b.candidates, nil
-}
-
-func (b *restoreBackend) Restore(
-	_ context.Context,
-	ids ...string,
-) ([]app.RestoreResult, error) {
-	b.restoredIDs = append(b.restoredIDs, ids...)
-	return nil, nil
-}
-
-func (b *restoreBackend) Forget(_ context.Context, ids ...string) error {
-	b.forgottenIDs = append(b.forgottenIDs, ids...)
-	return nil
-}
-
 // drainCmd executes a command tree far enough to run its side effects,
 // following tea.Batch all the way down so a test sees what the batched
 // commands actually did.
@@ -929,118 +905,5 @@ func drainCmd(cmd tea.Cmd) {
 		for _, item := range batch {
 			drainCmd(item)
 		}
-	}
-}
-
-func restoreCandidatesFixture() []resurrect.Candidate {
-	return []resurrect.Candidate{
-		{Entry: resurrect.Entry{ID: "ready-1", Name: "cl-one"}},
-		{Entry: resurrect.Entry{ID: "ready-2", Name: "cl-two"}},
-		{Entry: resurrect.Entry{ID: "blocked", Name: "cx-three"},
-			Reason: "Codex cannot reopen a conversation"},
-		{Entry: resurrect.Entry{ID: "running", Name: "cl-four"}, Live: true},
-	}
-}
-
-func restoreModelFixture(t *testing.T, backend Backend) Model {
-	t.Helper()
-	model := flowModelFixture(t, backend)
-	updated, _ := model.beginRestore()
-	model = updated.(Model)
-	model.applyRestoreCandidates(restoreCandidatesMsg{
-		candidates: restoreCandidatesFixture(),
-	})
-	return model
-}
-
-func TestRestorePickerChoosesEverythingThatCanComeBack(t *testing.T) {
-	backend := &restoreBackend{candidates: restoreCandidatesFixture()}
-	model := restoreModelFixture(t, backend)
-	if model.mode != modeRestore {
-		t.Fatalf("mode = %v, want modeRestore", model.mode)
-	}
-	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	model = updated.(Model)
-	if model.mode != modeNormal {
-		t.Fatalf("restoring left the picker open: %v", model.mode)
-	}
-	if cmd != nil {
-		cmd()
-	}
-	// Everything restorable, and only that: a row that cannot come back is
-	// never quietly included, and one already running is not restored twice.
-	if !slices.Equal(backend.restoredIDs, []string{"ready-1", "ready-2"}) {
-		t.Fatalf("restored %#v", backend.restoredIDs)
-	}
-}
-
-func TestRestorePickerWillNotChooseAnUnrestorableRow(t *testing.T) {
-	backend := &restoreBackend{candidates: restoreCandidatesFixture()}
-	model := restoreModelFixture(t, backend)
-	// Move onto the blocked row and try to toggle it on.
-	for range 2 {
-		updated, _ := model.Update(tea.KeyPressMsg{Code: 'j'})
-		model = updated.(Model)
-	}
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	model = updated.(Model)
-	if model.restoreChosen["blocked"] {
-		t.Fatal("a row that cannot be restored was selected")
-	}
-}
-
-func TestRestorePickerTogglesAndForgets(t *testing.T) {
-	backend := &restoreBackend{candidates: restoreCandidatesFixture()}
-	model := restoreModelFixture(t, backend)
-
-	// Space clears the row under the cursor; the rest stay chosen.
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	model = updated.(Model)
-	if model.restoreChosen["ready-1"] || !model.restoreChosen["ready-2"] {
-		t.Fatalf("space toggled the wrong row: %#v", model.restoreChosen)
-	}
-	// `a` reads as select-all until everything is chosen, then as clear.
-	updated, _ = model.Update(tea.KeyPressMsg{Code: 'a'})
-	model = updated.(Model)
-	if !model.restoreChosen["ready-1"] || !model.restoreChosen["ready-2"] {
-		t.Fatalf("a did not select all: %#v", model.restoreChosen)
-	}
-	updated, _ = model.Update(tea.KeyPressMsg{Code: 'a'})
-	model = updated.(Model)
-	if model.restoreChosen["ready-1"] || model.restoreChosen["ready-2"] {
-		t.Fatalf("a did not clear a full selection: %#v", model.restoreChosen)
-	}
-
-	updated, cmd := model.Update(tea.KeyPressMsg{Code: 'x'})
-	model = updated.(Model)
-	drainCmd(cmd)
-	if !slices.Contains(backend.forgottenIDs, "ready-1") {
-		t.Fatalf("forgot %#v", backend.forgottenIDs)
-	}
-}
-
-// The offer is for the dashboard you open after a reboot. An empty roster
-// with nothing recoverable behind it must not put a modal in the way.
-func TestAnEmptyRosterWithNothingToRestoreDoesNotOfferOne(t *testing.T) {
-	model := flowModelFixture(t, &restoreBackend{})
-	model.applyRestoreCandidates(restoreCandidatesMsg{offer: true})
-	if model.mode != modeNormal {
-		t.Fatalf("mode = %v, want the dashboard left alone", model.mode)
-	}
-	model.applyRestoreCandidates(restoreCandidatesMsg{
-		candidates: []resurrect.Candidate{
-			{Entry: resurrect.Entry{ID: "running"}, Live: true},
-		},
-		offer: true,
-	})
-	if model.mode != modeNormal {
-		t.Fatal("an offer opened for agents that are already running")
-	}
-	model.applyRestoreCandidates(restoreCandidatesMsg{
-		candidates: restoreCandidatesFixture(),
-		offer:      true,
-	})
-	if model.mode != modeRestore {
-		t.Fatal("a recoverable roster did not offer to come back")
 	}
 }

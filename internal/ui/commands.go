@@ -38,27 +38,6 @@ func (m Model) refreshCmd() tea.Cmd {
 // capture measures ~100ms and runs in a background command.
 const interactionCaptureLines = -1
 
-// syncAgentWindowsCmd sizes detached agent windows to the transcript
-// viewport, so agents render at exactly the width Spanreed displays and
-// captured lines never need re-wrapping. The window is taller than the
-// viewport: alternate-screen agents (Claude Code) expose only their visible
-// screen to tmux, so extra rows become extra reachable history.
-func (m Model) syncAgentWindowsCmd() tea.Cmd {
-	if !m.ready {
-		return nil
-	}
-	width, height := m.interactionDimensions()
-	rows := clamp(height*4, 24, 160)
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := m.backend.SyncAgentWindows(ctx, width, rows); err != nil {
-			diagnostic.Logger().Warn("sync agent window sizes", "error", err)
-		}
-		return nil
-	}
-}
-
 // shouldReloadInteraction keeps the fast poll cheap: the transcript is
 // recaptured only when the selected agent's story changed, while it is
 // streaming, or after a two-second staleness bound — not on every tick.

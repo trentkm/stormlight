@@ -19,7 +19,19 @@ func (m Model) renderFooter() string {
 		content = chord
 	} else {
 		hints := m.commandHints()
-		content = mutedStyle().Render(truncate(hints, inner))
+		hintStyle := mutedStyle()
+		switch {
+		case m.terminalFocused():
+			// Inside the portal the footer carries the terminal's
+			// controls; it wears the portal's light rather than fading
+			// to furniture gray.
+			hintStyle = lipgloss.NewStyle().Foreground(colorWorking())
+		case m.mode == modeNormal && m.rosterLit():
+			// On the roster's side the hints wear the strip's silver —
+			// the footer matches whichever side of the seam is lit.
+			hintStyle = lipgloss.NewStyle().Foreground(colorBand())
+		}
+		content = hintStyle.Render(truncate(hints, inner))
 		if m.err != nil {
 			content = renderFooterStatus(inner, m.err.Error(), hints, errorStyle())
 		} else if m.status != "Ready" {
@@ -202,6 +214,9 @@ func (m Model) commandHints() string {
 	}
 	if m.width < 72 {
 		rowMode = ""
+	}
+	if m.terminalFocused() {
+		return m.terminalHints()
 	}
 	if m.activePane == paneInteraction {
 		if selected, ok := m.selectedAgent(); ok &&

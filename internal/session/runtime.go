@@ -19,51 +19,51 @@ type Runtime interface {
 	Rename(context.Context, string, string) error
 	Update(context.Context, string, Update) error
 	SetWorkspace(context.Context, string, workspace.Context) error
-	// SyncWindowSizes resizes detached agent windows to the given cell
-	// size, so agents render at the width the dashboard displays.
-	SyncWindowSizes(context.Context, int, int) error
 }
 
-// Restorer is an optional runtime capability: a runtime whose agent records
-// live and die with the runtime itself, and which can therefore be handed a
-// record from before it started and asked to build the agent back.
-//
-// It is separate from Runtime because it is about the runtime's own
-// mortality rather than about agents: a runtime that persists its roster by
-// construction has nothing to restore, and callers treat its absence as
-// "this roster cannot be lost".
-type Restorer interface {
-	// SessionName identifies the world a roster belongs to, so a record
-	// written by one can say which one it came from.
-	SessionName() string
-	// RosterLive reports whether the runtime's agent listing is
-	// authoritative right now. An empty listing is ambiguous — it reads the
-	// same whether the last agent was deleted or the whole session is gone —
-	// and the difference decides whether a snapshot may be overwritten with
-	// nothing. False means the roster is not there to be believed.
-	RosterLive(context.Context) (bool, error)
-	// Restore builds an agent back from a record, preserving its identity so
-	// continuity holds across the gap.
-	Restore(context.Context, RestoreRequest) (agent.Agent, error)
+// TerminalStreamer is an optional runtime capability: a runtime whose
+// terminals can be attached to directly — an exact state snapshot followed
+// by the live byte stream, with input and resize flowing back.
+type TerminalStreamer interface {
+	AttachTerminal(ctx context.Context, id string, cols, rows int) (TerminalStream, error)
 }
 
-// RestoreRequest is a dispatch whose identity and history already exist. The
-// runtime is being told what the agent was, not asked to invent one.
-type RestoreRequest struct {
-	Agent  agent.Agent
-	Launch Launch
+// TerminalStream is one live attachment to one agent's terminal.
+type TerminalStream interface {
+	// Seed is the exact serialized state at attach time; everything on
+	// Output happened after it.
+	Seed() []byte
+	Output() <-chan []byte
+	Write(p []byte) error
+	Resize(ctx context.Context, cols, rows int) error
+	Close()
 }
 
-// StatusPublisher is an optional runtime capability: a runtime whose
-// terminal has chrome of its own can carry Stormlight's tally on it, so the
-// count of what is working and what is waiting stays readable from inside an
-// agent rather than only from the dashboard.
-//
-// It is separate from Runtime because it is presentation, not agent
-// semantics: a runtime with nowhere to put a status line is complete without
-// it, and callers treat its absence as "nothing to show it on".
-type StatusPublisher interface {
-	PublishStatus(context.Context, agent.Stats) error
+// OverlayRequest describes a short-lived interactive program the
+// dashboard wants floated over itself rather than handed the whole
+// screen: the Yazi picker, the Neovim task editor.
+type OverlayRequest struct {
+	Path string
+	Args []string
+	Dir  string
+	Cols int
+	Rows int
+}
+
+// Overlay is one running overlay program: its terminal stream plus the
+// exit the dashboard waits on. Close always destroys the hosting session —
+// an overlay must never persist into the roster.
+type Overlay interface {
+	TerminalStream
+	Exited() <-chan int
+}
+
+// OverlayHost is an optional runtime capability: run a short-lived
+// interactive program on a runtime-owned PTY and stream its terminal, so
+// the dashboard can float it in a popup instead of surrendering the
+// screen.
+type OverlayHost interface {
+	StartOverlay(ctx context.Context, request OverlayRequest) (Overlay, error)
 }
 
 type DispatchRequest struct {

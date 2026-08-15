@@ -53,13 +53,10 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/trentkm/stormlight
     description: Workspace-native control surface for coding agents
-    # tmux >= 3.7 is required for popup overlays (older display-popup
-    # crashes the server on DECRQM, tmux/tmux#4942); Homebrew ships 3.7+.
     # yazi is the directory picker for workspaces and dispatch — core to
     # the intended experience, so it installs alongside. Neovim stays
     # optional: most people already have an editor opinion.
     dependencies:
-      - formula: tmux
       - formula: yazi
     caveats: |
       Optional: install neovim to edit agent tasks in a popup (brew install neovim).

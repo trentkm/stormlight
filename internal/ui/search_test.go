@@ -47,6 +47,9 @@ func TestHighlightSearchMatchesKeepsTextAndPaintsMatches(t *testing.T) {
 func searchModelFixture(t *testing.T) Model {
 	t.Helper()
 	model := NewModel(stubBackend{})
+	// Search, drag-copy, and the composer are transcript-view features;
+	// the PTY view (the default) disables them.
+	model.ptyEnabled = false
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	model = updated.(Model)
 
@@ -154,7 +157,7 @@ func TestDragSelectsHighlightsAndCopies(t *testing.T) {
 	model.interaction.SetContent(model.interactionContent)
 	model.interaction.GotoTop()
 
-	press := tea.MouseClickMsg{X: 90, Y: spanreedContentTop + 2, Button: tea.MouseLeft}
+	press := tea.MouseClickMsg{X: 90, Y: interactionContentTop + 2, Button: tea.MouseLeft}
 	updated, _ := model.Update(press)
 	model = updated.(Model)
 	if !model.selectionActive || model.selectionAnchor != 2 {
@@ -163,7 +166,7 @@ func TestDragSelectsHighlightsAndCopies(t *testing.T) {
 	}
 
 	motion := tea.MouseMotionMsg(press)
-	motion.Y = spanreedContentTop + 6
+	motion.Y = interactionContentTop + 6
 	updated, _ = model.Update(motion)
 	model = updated.(Model)
 	start, end := model.selectionRange()

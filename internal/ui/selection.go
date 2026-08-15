@@ -13,9 +13,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// spanreedContentTop is the screen row where the transcript viewport
+// interactionContentTop is the screen row where the transcript viewport
 // starts: header, pane title, then the agent heading's three rows.
-const spanreedContentTop = 5
+const interactionContentTop = 5
 
 // handleMouse drives the transcript's two mouse behaviors: the wheel
 // scrolls it (positionally, without moving keyboard focus), and
@@ -30,6 +30,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	mouse := msg.Mouse()
 	if mouse.Button == tea.MouseLeft && m.mode == modeNormal {
+		if m.ptyEnabled {
+			return m.handleTerminalMouse(msg)
+		}
 		return m.handleSelectionMouse(msg)
 	}
 	// A wheel tick is its own message type, so asking for one is the whole
@@ -54,8 +57,221 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.paneAt(mouse.X) != paneInteraction {
 		return m, nil
 	}
+	if m.ptyEnabled {
+		widget, ok := m.selectedPTY()
+		if !ok {
+			return m, nil
+		}
+		if widget.MouseReporting() {
+			// The hosted program asked for the mouse: the wheel is its —
+			// Claude Code scrolls its own transcript this way — so the
+			// event forwards as SGR mouse instead of moving the replica.
+			if col, row, ok := m.gridCellAt(mouse.X, mouse.Y); ok {
+				button := 64
+				if direction > 0 {
+					button = 65
+				}
+				return m, writeTerminalCmd(widget, []byte(fmt.Sprintf(
+					"\x1b[<%d;%d;%dM", button, col+1, row+1)))
+			}
+			return m, nil
+		}
+		// Wheel deltas coalesce through the widget, so a trackpad burst
+		// lands as one update; the scheduled flush returns through
+		// Update's message forwarding.
+		return m, widget.QueueScroll(-direction * 3)
+	}
 	m.moveSelectionIn(paneInteraction, direction*3)
 	return m, nil
+}
+
+// gridCellAt maps screen coordinates to a cell of the terminal grid,
+// mirroring ptyCursor's origin math: zoomed the grid owns the body,
+// docked it starts past the sidebars and the gutter.
+func (m Model) gridCellAt(x, y int) (int, int, bool) {
+	width := max(1, m.width-1)
+	if width < 72 {
+		return 0, 0, false
+	}
+	left := 0
+	if !m.ptyZoom {
+		workspaceWidth, agentWidth, _ := m.paneWidths(width)
+		left = workspaceWidth + agentWidth + 1
+	}
+	col, row := x-left, y-ptyGridTop
+	gridWidth, gridHeight := m.ptyGridDimensions()
+	if col < 0 || col >= gridWidth || row < 0 || row >= gridHeight {
+		return 0, 0, false
+	}
+	return col, row, true
+}
+
+// gridCell names one cell of the terminal grid.
+type gridCell struct{ row, col int }
+
+func (a gridCell) before(b gridCell) bool {
+	return a.row < b.row || (a.row == b.row && a.col <= b.col)
+}
+
+// handleTerminalMouse is the left button over the terminal view. A click
+// focuses the pane under the pointer and forwards to a program that asked
+// for the mouse; a drag is Stormlight's selection — character-precise,
+// tmux style — copied on release.
+func (m Model) handleTerminalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	mouse := msg.Mouse()
+	widget, hasWidget := m.selectedPTY()
+	switch msg.(type) {
+	case tea.MouseClickMsg:
+		m.activePane = m.paneAt(mouse.X)
+		cell, ok := m.terminalCellAt(mouse.X, mouse.Y)
+		if !ok {
+			m.ptySelecting = false
+			return m, nil
+		}
+		m.ptySelecting = true
+		m.ptySelDragged = false
+		m.ptySelAnchor, m.ptySelHead = cell, cell
+		return m, nil
+	case tea.MouseMotionMsg:
+		if !m.ptySelecting {
+			return m, nil
+		}
+		if cell, ok := m.terminalCellAt(mouse.X, mouse.Y); ok {
+			if cell != m.ptySelAnchor {
+				m.ptySelDragged = true
+			}
+			m.ptySelHead = cell
+		}
+		return m, nil
+	case tea.MouseReleaseMsg:
+		if !m.ptySelecting {
+			return m, nil
+		}
+		m.ptySelecting = false
+		if m.ptySelDragged {
+			command := m.copyTerminalSelectionCmd()
+			m.ptySelDragged = false
+			return m, command
+		}
+		// A plain click belongs to a program that wants the mouse.
+		if hasWidget && widget.MouseReporting() {
+			if col, row, ok := m.gridCellAt(mouse.X, mouse.Y); ok {
+				press := fmt.Sprintf("\x1b[<0;%d;%dM", col+1, row+1)
+				release := fmt.Sprintf("\x1b[<0;%d;%dm", col+1, row+1)
+				return m, writeTerminalCmd(widget, []byte(press+release))
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// terminalCellAt maps screen coordinates to a grid cell for selection,
+// clamping coordinates that leave the grid mid-drag — the way every
+// terminal treats a drag past its edges.
+func (m Model) terminalCellAt(x, y int) (gridCell, bool) {
+	if col, row, ok := m.gridCellAt(x, y); ok {
+		return gridCell{row: row, col: col}, true
+	}
+	gridWidth, gridHeight := m.ptyGridDimensions()
+	width := max(1, m.width-1)
+	if width < 72 {
+		return gridCell{}, false
+	}
+	left := 0
+	if !m.ptyZoom {
+		workspaceWidth, agentWidth, _ := m.paneWidths(width)
+		left = workspaceWidth + agentWidth + 1
+	}
+	if x < left {
+		return gridCell{}, false
+	}
+	return gridCell{
+		row: clamp(y-ptyGridTop, 0, gridHeight-1),
+		col: clamp(x-left, 0, gridWidth-1),
+	}, true
+}
+
+// selectionSpan orders the anchor and head.
+func (m Model) selectionSpan() (gridCell, gridCell) {
+	if m.ptySelAnchor.before(m.ptySelHead) {
+		return m.ptySelAnchor, m.ptySelHead
+	}
+	return m.ptySelHead, m.ptySelAnchor
+}
+
+// copyTerminalSelectionCmd extracts the selected span as plain text —
+// first line from the anchor column, middles whole, last line to the
+// head column, trailing blanks trimmed per line.
+func (m Model) copyTerminalSelectionCmd() tea.Cmd {
+	widget, ok := m.selectedPTY()
+	if !ok {
+		return nil
+	}
+	start, end := m.selectionSpan()
+	lines := widget.Text()
+	if start.row >= len(lines) {
+		return nil
+	}
+	end.row = min(end.row, len(lines)-1)
+	selected := make([]string, 0, end.row-start.row+1)
+	for row := start.row; row <= end.row; row++ {
+		// Columns are display cells, not runes: a wide glyph occupies
+		// two of them, and slicing by rune index would shift everything
+		// after it. ansi.Cut slices by cell.
+		line := lines[row]
+		from, to := 0, ansi.StringWidth(line)
+		if row == start.row {
+			from = min(start.col, to)
+		}
+		if row == end.row {
+			to = min(end.col+1, to)
+		}
+		if from > to {
+			from = to
+		}
+		selected = append(selected,
+			strings.TrimRight(ansi.Cut(line, from, to), " "))
+	}
+	text := strings.Join(selected, "\n")
+	count := len(selected)
+	return func() tea.Msg {
+		if err := copyToClipboard(text); err != nil {
+			return actionMsg{status: "Action failed", err: err}
+		}
+		label := "line"
+		if count != 1 {
+			label = "lines"
+		}
+		return actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
+	}
+}
+
+// paintTerminalSelection reverses the video of the selected span over the
+// rendered grid, cell-precise: the same surgery overlayCentered performs,
+// aimed at a highlight instead of a modal.
+func paintTerminalSelection(view string, start, end gridCell, gridWidth int) string {
+	lines := strings.Split(view, "\n")
+	for row := start.row; row <= end.row && row < len(lines); row++ {
+		from, to := 0, gridWidth
+		if row == start.row {
+			from = start.col
+		}
+		if row == end.row {
+			to = end.col + 1
+		}
+		line := lines[row]
+		before := ansi.Cut(line, 0, from)
+		mid := ansi.Strip(ansi.Cut(line, from, to))
+		if width := to - from - ansi.StringWidth(mid); width > 0 {
+			mid += strings.Repeat(" ", width)
+		}
+		after := ansi.Cut(line, to, gridWidth)
+		lines[row] = before +
+			searchMatchSGR + mid + searchResetSGR +
+			sgrStateAt(line, to) + after
+	}
+	return strings.Join(lines, "\n")
 }
 
 // handleSelectionMouse turns press-drag-release over the transcript into a
@@ -110,7 +326,7 @@ func (m Model) transcriptLineAt(y int) (int, bool) {
 	if _, ok := m.selectedAgent(); !ok || m.interactionContent == "" {
 		return 0, false
 	}
-	row := y - spanreedContentTop
+	row := y - interactionContentTop
 	if row < 0 {
 		row = 0
 	}
@@ -201,6 +417,10 @@ func (m Model) paneAt(x int) pane {
 	width := max(1, m.width-1)
 	if width < 72 {
 		return m.activePane
+	}
+	if m.ptyZoom && m.ptyEnabled {
+		// Zoomed, the portal is the whole body: every column is its.
+		return paneInteraction
 	}
 	workspaceWidth, agentWidth, _ := m.paneWidths(width)
 	switch {

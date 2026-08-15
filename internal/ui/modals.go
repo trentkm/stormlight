@@ -148,8 +148,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"gg / G", "first or last item"},
 			{"Ctrl-d/u  Ctrl-f/b", "half or full page"},
 			{"Enter", "into agents; open agent terminal"},
-			{"Ctrl-6", "return from an agent to the dashboard"},
-			{"prefix Q", "return (tmux-native fallback)"},
+			{"Ctrl-q", "return from a full-screen attach (F)"},
 		}},
 		{"Act", [][2]string{
 			{"n", "new agent (or add workspace)"},
@@ -167,7 +166,8 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"M", "mark agent or workspace seen"},
 			{"K", "workspace info"},
 			{"H", "session history; Enter resumes one"},
-			{"Ctrl-r", "restore agents lost with the tmux server"},
+			{"alt+n / alt+p", "cycle agents waiting on you, oldest first"},
+			{"alt+j / alt+k", "cycle agents in roster order"},
 		}},
 		{"View", [][2]string{
 			{", then a/n/c", "sort: attention, name, newest"},

@@ -88,8 +88,8 @@ func (m Model) closeComposer() Model {
 }
 
 // insertComposerNewline breaks the line under the cursor (ctrl+j).
-// Shift+Enter was scrapped: it needs the full modifyOtherKeys relay chain
-// terminal→tmux→pane to hold, and it silently submits instead of inserting
+// Shift+Enter was scrapped: it needs modifyOtherKeys to hold across the
+// whole relay to the agent, and it silently submits instead of inserting
 // a newline anywhere it doesn't. Ctrl+j works everywhere.
 func (m Model) insertComposerNewline() (tea.Model, tea.Cmd) {
 	insertTextareaNewline(&m.sendInput)

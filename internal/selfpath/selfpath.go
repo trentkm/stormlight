@@ -15,7 +15,7 @@ import (
 // os.Executable answers with the real file behind the process, which for a
 // packaged install is version-stamped — Homebrew's cask resolves
 // `bin/stormlight` to `Caskroom/stormlight/0.6.3/stormlight`. Stormlight
-// writes that path into tmux window commands and hands it to provider hooks
+// hands that path to provider hooks
 // as $STORMLIGHT_BIN, and both outlive the process that computed them: the
 // next upgrade deletes the binary out from under every agent still running,
 // and their hooks start failing with "No such file or directory".
@@ -75,7 +75,7 @@ func launcherOnPath(name string) (string, bool) {
 		return "", false
 	}
 	// A relative PATH entry resolves against this process's directory, and
-	// the answer is written into tmux commands that run from somewhere else.
+	// the answer is handed to processes that run from somewhere else.
 	absolute, err := filepath.Abs(found)
 	if err != nil {
 		return "", false

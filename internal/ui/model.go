@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -16,8 +17,8 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
-	"github.com/trentkm/stormlight/internal/resurrect"
-	"github.com/trentkm/stormlight/internal/surface"
+	"github.com/trentkm/stormlight/internal/pty"
+	"github.com/trentkm/stormlight/internal/ptyview"
 	"github.com/trentkm/stormlight/internal/theme"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -37,15 +38,15 @@ type Backend interface {
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
-	SyncAgentWindows(context.Context, int, int) error
+	// AttachTerminal is the transport behind the live terminal view: one
+	// attachment per agent, seed plus stream plus input and resize.
+	AttachTerminal(ctx context.Context, id string, cols, rows int) (pty.Transport, error)
+	// StartOverlay floats a short-lived interactive program (the picker,
+	// the task editor) on a runtime-owned PTY for the popup to render.
+	StartOverlay(ctx context.Context, request app.OverlayRequest) (app.Overlay, error)
 	Providers() []provider.Info
 	SessionHistory(context.Context) ([]history.Record, error)
 	Resume(context.Context, history.Record) (agent.Agent, error)
-	// RestoreCandidates reads the agents remembered from before the runtime
-	// that is hosting this dashboard existed, and Restore brings them back.
-	RestoreCandidates(context.Context) ([]resurrect.Candidate, error)
-	Restore(context.Context, ...string) ([]app.RestoreResult, error)
-	Forget(context.Context, ...string) error
 }
 
 type mode int
@@ -62,7 +63,6 @@ const (
 	modeInfo
 	modeHelp
 	modeHistory
-	modeRestore
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -127,7 +127,6 @@ const (
 
 type Model struct {
 	backend Backend
-	surface surface.Surface
 
 	agents            []agent.Agent
 	catalogWorkspaces []workspace.Context
@@ -185,15 +184,40 @@ type Model struct {
 	shimmerPhase        int
 	shimmerRunning      bool
 
-	restoreCandidates []resurrect.Candidate
-	restoreChosen     map[string]bool
-	restoreCursor     int
-	restoreOffered    bool
-
 	normalPrefix   string
 	sortMode       sortMode
 	dispatchPrefix string
 	columns        ColumnPrefs
+
+	// The PTY Spanreed. The manager keeps one live terminal session per
+	// agent for the agent's whole life; ptyEnabled says which view the
+	// Spanreed renders (terminal by default, transcript after `t`), and
+	// ptyWaiting reports one outstanding frame-gate listener so
+	// redraw wake-ups never double up.
+	ptyEnabled bool
+	// ptyZoom collapses the sidebars so the portal spans the full body —
+	// still the same layout pipeline, not a separate mode. It survives a
+	// trip through the transcript view: t out, t back, still zoomed.
+	ptyZoom    bool
+	ptyManager *ptyview.Manager
+	ptyWaiting bool
+	// keys are the seam chords, config-rebindable; see KeyBindings.
+	keys KeyBindings
+
+	// Terminal drag selection: character-precise over the grid, tmux
+	// style — first line from the anchor, middles whole, last to the
+	// head — copied on release.
+	ptySelecting  bool
+	ptySelDragged bool
+	ptySelAnchor  gridCell
+	ptySelHead    gridCell
+
+	// The floating program overlay (Yazi picker, Neovim task editor): a
+	// windrunner session rendered through the same widget machinery as
+	// the Spanreed, composited over the dashboard. The generation ties
+	// async open/exit messages to the opening they belong to.
+	overlay           *overlayView
+	overlayGeneration int
 }
 
 type dashboardMsg struct {
@@ -239,19 +263,11 @@ type historyMsg struct {
 	err     error
 }
 
-type restoreCandidatesMsg struct {
-	candidates []resurrect.Candidate
-	// offer marks the unprompted reading taken at startup, which opens the
-	// picker on its own if there is something worth opening it for.
-	offer bool
-	err   error
-}
-
 type tickMsg time.Time
 type shimmerTickMsg time.Time
 
 func NewModel(backend Backend) Model {
-	return NewModelWithSurface(backend, surface.NewDirect())
+	return NewModelWithOptions(backend, Options{})
 }
 
 // Options carries user-configuration defaults into the dashboard. Zero
@@ -269,13 +285,11 @@ type Options struct {
 	SelectWorkspaceID string
 	// Columns restores the user's saved < > pane-width adjustments.
 	Columns ColumnPrefs
+	// Keys rebinds the seam chords; empty lists keep the defaults.
+	Keys KeyBindings
 }
 
-func NewModelWithSurface(backend Backend, current surface.Surface) Model {
-	return NewModelWithOptions(backend, current, Options{})
-}
-
-func NewModelWithOptions(backend Backend, current surface.Surface, options Options) Model {
+func NewModelWithOptions(backend Backend, options Options) Model {
 	cwd, _ := os.Getwd()
 	yaziPath := options.YaziPath
 	if yaziPath == "" {
@@ -289,10 +303,6 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 	if dispatchMode == "" {
 		dispatchMode = agent.DefaultMode
 	}
-	if current == nil {
-		current = surface.NewDirect()
-	}
-
 	cwdInput := newLineInput("")
 	cwdInput.SetValue(cwd)
 
@@ -310,7 +320,6 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 
 	model := Model{
 		backend:            backend,
-		surface:            current,
 		providers:          backend.Providers(),
 		cwdInput:           cwdInput,
 		nameInput:          nameInput,
@@ -328,6 +337,9 @@ func NewModelWithOptions(backend Backend, current surface.Surface, options Optio
 		shimmerRunning:     true,
 		status:             "Ready",
 		columns:            options.Columns,
+		ptyEnabled:         true,
+		ptyManager:         ptyview.NewManager(backend),
+		keys:               fillKeyDefaults(options.Keys),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -344,10 +356,6 @@ func (m Model) Init() tea.Cmd {
 		m.refreshCmd(),
 		tickCmd(),
 		shimmerTickCmd(),
-		// Read the snapshot once at startup. Whether it opens the picker
-		// depends on what the first listing finds; asking now means the
-		// answer is already in hand when that lands.
-		restoreCandidatesCmd(m.backend, false),
 		// Ask the terminal what it is painted on. Lip Gloss v1 answered this
 		// itself by querying behind the program's back on first use; v2 does
 		// not, so the palette runs on its dark default until this comes back.
@@ -356,6 +364,17 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if m.ptyEnabled && m.ptyManager != nil {
+		// The coalesced wheel tick goes to the terminal that scheduled
+		// it — selection may have moved since; an unrouted tick would
+		// latch that terminal's wheel shut.
+		if widgetID, ok := pty.ScrollOwner(message); ok {
+			if widget, ok := m.ptyManager.WidgetByID(widgetID); ok {
+				widget.Handle(message)
+			}
+			return m, nil
+		}
+	}
 	switch msg := message.(type) {
 	case tea.BackgroundColorMsg:
 		// Settling the palette changes every color the next frame draws,
@@ -383,7 +402,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusForm()
 		}
 		m.syncTaskComposerSize()
-		return m, tea.Batch(m.loadInteractionCmd(), m.syncAgentWindowsCmd())
+		if m.overlay != nil {
+			outerWidth, outerHeight := m.overlayDimensions()
+			_, resize := m.overlay.widget.SetSize(
+				max(2, outerWidth-2), max(2, outerHeight-2))
+			if resize != nil {
+				return m, tea.Batch(resize, m.ensurePTYCmd())
+			}
+		}
+		if m.ptyEnabled {
+			// Ensure re-reads the grid size and moves every window and
+			// emulator with it.
+			return m, m.ensurePTYCmd()
+		}
+		return m, tea.Batch(m.loadInteractionCmd(), m.ensurePTYCmd())
 
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
@@ -406,12 +438,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		agentID := m.selectedAgentID()
 		previous, _ := m.selectedAgent()
-		newAgents := false
 		if msg.err != nil {
 			m.err = msg.err
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
 		} else {
-			newAgents = len(msg.agents) > len(m.agents)
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
 			m.rebuildGroups(workspaceID, agentID)
@@ -430,26 +460,25 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmds []tea.Cmd
-		if newAgents {
-			// A fresh window boots at 80x24; size it like the rest.
-			cmds = append(cmds, m.syncAgentWindowsCmd())
-		}
+		// Reconcile the terminal herd against the roster on every refresh:
+		// new agents get sessions, deleted agents lose them, and when
+		// nothing changed this is a cheap map diff.
+		cmds = append(cmds, m.ensurePTYCmd())
 		if m.anyAgentsActive() && !m.shimmerRunning {
 			m.shimmerRunning = true
 			cmds = append(cmds, shimmerTickCmd())
 		}
-		if m.shouldReloadInteraction(previous) {
+		if !m.ptyEnabled && m.shouldReloadInteraction(previous) {
 			m.interactionLoadedAt = time.Now()
 			cmds = append(cmds, m.loadInteractionCmd())
 		}
-		if !m.restoreOffered && msg.err == nil {
-			// An empty roster on the first listing is the shape a lost tmux
-			// server leaves behind. Ask the snapshot whether it agrees, once:
-			// the offer is for the dashboard you open after the reboot, not
-			// for every moment you happen to have no agents running.
-			m.restoreOffered = true
-			if len(m.agents) == 0 && m.mode == modeNormal {
-				cmds = append(cmds, restoreCandidatesCmd(m.backend, true))
+		if m.ptyEnabled {
+			if selected, ok := m.selectedAgent(); ok &&
+				!selected.ProcessLive && previous.ProcessLive &&
+				selected.ID == previous.ID {
+				// remain-on-exit keeps the pane, so the frame freezes on
+				// the death screen; say why nothing moves anymore.
+				m.status = "Process exited — terminal view frozen"
 			}
 		}
 		return m, tea.Batch(cmds...)
@@ -464,9 +493,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyCursor = clamp(m.historyCursor, 0, max(0, len(msg.records)-1))
 		return m, nil
 
-	case restoreCandidatesMsg:
-		m.applyRestoreCandidates(msg)
-		return m, nil
+	case ptyEnsuredMsg:
+		// Fresh sessions may include the selected agent's; listen to it.
+		return m, m.armPTYWait()
+
+	case pty.FrameMsg:
+		return m.handlePTYFrame(msg)
 
 	case interactionMsg:
 		if msg.id == m.selectedAgentID() {
@@ -511,17 +543,28 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Opening " + msg.name
 			return m, tea.ExecProcess(msg.result.Command, func(err error) tea.Msg {
 				if err != nil {
-					diagnostic.Logger().Error("external tmux attach failed",
+					diagnostic.Logger().Error("external attach failed",
 						"agent", msg.name,
 						"error", err,
 					)
 				}
-				return actionMsg{status: "Returned from " + msg.name, err: err}
+				return attachReturnedMsg{name: msg.name, err: err}
 			})
 		}
 		m.err = nil
 		m.status = "Attached"
 		return m, nil
+
+	case attachReturnedMsg:
+		m.err = msg.err
+		if msg.err != nil {
+			m.status = "Action failed"
+		} else {
+			m.status = "Returned from " + msg.name
+		}
+		// The attached client owned the window sizes while it looked;
+		// reassert the herd's 1:1 grid now that the dashboard is back.
+		return m, tea.Batch(m.refreshCmd(), resizeAllPTYCmd(m.ptyManager))
 
 	case actionMsg:
 		m.err = msg.err
@@ -591,10 +634,38 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Workspace added"
 		return m, nil
 
+	case overlayOpenedMsg:
+		return m.handleOverlayOpened(msg)
+
+	case overlayExitedMsg:
+		return m.handleOverlayExited(msg)
+
 	case tea.MouseMsg:
+		if m.overlay != nil {
+			// The popup owns the screen; clicks must not move the panes
+			// beneath it.
+			return m, nil
+		}
 		return m.handleMouse(msg)
 
 	case tea.PasteMsg:
+		if m.ptyEnabled && m.mode == modeNormal &&
+			m.activePane == paneInteraction {
+			// Paste lands in the agent's terminal as one bracketed paste,
+			// the same shape Send uses — never a burst of keystrokes.
+			if widget, ok := m.selectedPTY(); ok {
+				widget.ScrollToBottom()
+				return m, writeTerminalCmd(widget,
+					[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
+			}
+			return m, nil
+		}
+		if m.overlay != nil {
+			// Bracketed paste, so a multi-line paste lands in the hosted
+			// program as one paste rather than a burst of keys.
+			return m, writeTerminalCmd(m.overlay.widget,
+				[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
+		}
 		return m.updatePaste(msg)
 
 	case tea.KeyPressMsg:
@@ -603,6 +674,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.status == "Action failed" {
 				m.status = "Ready"
 			}
+		}
+		if m.overlay != nil {
+			// The floating program owns the keyboard while it is up;
+			// ctrl+q cancels it.
+			return m.updateOverlayKey(msg)
+		}
+		if m.ptyEnabled && m.mode == modeNormal &&
+			m.activePane == paneInteraction {
+			// The Spanreed is not a preview: while it holds focus, the
+			// keyboard belongs to the agent's terminal, exactly like a
+			// focused terminal tab. ctrl+q is the one key that stays ours.
+			return m.updateTerminalKey(msg)
 		}
 		switch m.mode {
 		case modeDispatch:
@@ -621,8 +704,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateMark(msg)
 		case modeHistory:
 			return m.updateHistory(msg)
-		case modeRestore:
-			return m.updateRestore(msg)
 		case modeInfo, modeHelp:
 			// Any key dismisses an informational overlay.
 			m.mode = modeNormal
@@ -651,7 +732,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == modeNormal && m.ready && m.activePane == paneInteraction {
+	if m.ptyEnabled && m.ready {
+		// Everything a terminal owns has already been handled above. An
+		// unclaimed message must not leak into the transcript surface.
+		return m, nil
+	}
+	if m.mode == modeNormal && m.ready &&
+		m.activePane == paneInteraction {
 		var cmd tea.Cmd
 		m.interaction, cmd = m.interaction.Update(message)
 		return m, cmd
@@ -683,11 +770,35 @@ func (m Model) View() tea.View {
 	body := m.renderBody()
 	footer := m.renderFooter()
 	view.SetContent(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	// The real terminal cursor sits where the agent's program put it —
+	// the Spanreed is the terminal, not a picture of one.
+	view.Cursor = m.ptyCursor()
 	return view
 }
 
 func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	// The seam chords work from this side too: the same keys that cycle
+	// inside the terminal cycle here, so the hands never relearn.
+	switch {
+	case slices.Contains(m.keys.QueueNext, key):
+		return m.jumpQueue(agent.QueueForward)
+	case slices.Contains(m.keys.QueuePrevious, key):
+		return m.jumpQueue(agent.QueueBack)
+	case slices.Contains(m.keys.AgentsNext, key):
+		m.moveSelectionIn(paneAgents, 1)
+		return m, m.interactionFollowCmd()
+	case slices.Contains(m.keys.AgentsPrevious, key):
+		m.moveSelectionIn(paneAgents, -1)
+		return m, m.interactionFollowCmd()
+	case slices.Contains(m.keys.Zoom, key):
+		if _, ok := m.selectedAgent(); ok {
+			m.ptyEnabled = true
+			m.ptyZoom = true
+			m.activePane = paneInteraction
+			return m, m.ensurePTYCmd()
+		}
+	}
 	if m.normalPrefix == "," {
 		m.normalPrefix = ""
 		mode := m.sortMode
@@ -705,13 +816,13 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.sortMode = mode
 		m.rebuildGroups(m.selectedWorkspaceID(), m.selectedAgentID())
 		m.status = "Sorted by " + mode.label()
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	}
 	if m.normalPrefix == "g" {
 		m.normalPrefix = ""
 		if key == "g" {
 			m.moveSelectionToStart()
-			return m, m.loadInteractionCmd()
+			return m, m.interactionFollowCmd()
 		}
 		return m, nil
 	}
@@ -724,31 +835,43 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.normalPrefix = ","
 		return m, nil
 	case "q", "ctrl+c":
-		return m, tea.Quit
+		// The agents themselves live on in the windrunner daemon,
+		// terminals intact for the next run.
+		return m, tea.Sequence(closeAllPTYCmd(m.ptyManager), tea.Quit)
+	case "t":
+		return m, m.togglePTY()
+	case "F":
+		// The full-screen escape hatch: the same terminal, every column
+		// of the display, via an interactive attachment.
+		if selected, ok := m.selectedAgent(); ok {
+			displayTitle := agentDisplayTitle(selected)
+			m.status = "Opening " + displayTitle
+			return m, attachCmd(m.backend, selected.ID, displayTitle)
+		}
 	case "j", "down":
 		m.moveSelection(1)
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "k", "up":
 		m.moveSelection(-1)
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "home":
 		m.moveSelectionToStart()
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "G", "end":
 		m.moveSelectionToEnd()
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "ctrl+d":
 		m.moveSelection(max(1, m.visibleRows()/2))
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "ctrl+u":
 		m.moveSelection(-max(1, m.visibleRows()/2))
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "pgdown", "ctrl+f":
 		m.moveSelection(m.visibleRows())
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "pgup", "ctrl+b":
 		m.moveSelection(-m.visibleRows())
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "h", "left":
 		if m.activePane > paneWorkspaces {
 			m.activePane--
@@ -758,22 +881,53 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.activePane < paneInteraction {
 			m.activePane++
 		}
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "tab":
 		m.activePane = (m.activePane + 1) % 3
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "shift+tab":
 		m.activePane = (m.activePane + 2) % 3
-		return m, m.loadInteractionCmd()
+		return m, m.interactionFollowCmd()
 	case "z":
 		m.rowsExpanded = !m.rowsExpanded
+		return m, nil
+	case "Z":
+		// Zoom from the roster: the sidebars collapse and the keyboard
+		// walks into the portal in the same stroke.
+		if _, ok := m.selectedAgent(); ok {
+			m.ptyEnabled = true
+			m.ptyZoom = true
+			m.activePane = paneInteraction
+			m.status = "Ready"
+			return m, tea.Batch(m.ensurePTYCmd(), m.armPTYWait())
+		}
+		return m, nil
+	case "ctrl+space", "ctrl+@":
+		// The seam key works from this side too: in, symmetric with out.
+		if m.ptyEnabled {
+			if _, ok := m.selectedAgent(); ok {
+				m.activePane = paneInteraction
+				m.status = "Ready"
+				return m, m.armPTYWait()
+			}
+		}
 		return m, nil
 	case "<", ">":
 		return m.resizeColumns(key)
 	case "enter":
 		if m.activePane == paneWorkspaces {
 			m.activePane = paneAgents
-			return m, m.loadInteractionCmd()
+			return m, m.interactionFollowCmd()
+		}
+		if m.ptyEnabled {
+			// The terminal is right there — Enter walks into it. Z is the
+			// zoomed version.
+			if _, ok := m.selectedAgent(); ok {
+				m.activePane = paneInteraction
+				m.status = "Ready"
+				return m, m.armPTYWait()
+			}
+			return m, nil
 		}
 		if selected, ok := m.selectedAgent(); ok {
 			displayTitle := agentDisplayTitle(selected)
@@ -812,6 +966,15 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m.beginDispatch(true)
 	case "i", "s":
+		if m.ptyEnabled {
+			// The live terminal is the composer; walking in is replying.
+			if _, ok := m.selectedAgent(); ok {
+				m.activePane = paneInteraction
+				m.status = "Ready"
+				return m, m.armPTYWait()
+			}
+			return m, nil
+		}
 		if selected, ok := m.selectedAgent(); ok {
 			if selected.ProcessLive && selected.Attention.TerminalOwned() {
 				// An active prompt owns the agent's input; composing here
@@ -867,8 +1030,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
-	case "ctrl+r":
-		return m.beginRestore()
 	case "m":
 		return m.beginMark()
 	case "M":
@@ -889,7 +1050,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.activePane != paneInteraction {
+	if m.activePane != paneInteraction || m.ptyEnabled {
 		return m, nil
 	}
 	var cmd tea.Cmd
