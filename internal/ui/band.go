@@ -25,13 +25,13 @@ func bandSegment(
 	focused bool,
 	width int,
 ) string {
-	band := lipgloss.NewStyle().Background(colorSelect())
-	text := band.Foreground(colorText())
+	band := lipgloss.NewStyle().Background(colorBand())
+	text := band.Foreground(colorPortalInk())
 	glyph := ""
 	lead := 0
 	if symbol != "" {
 		lead = 1
-		glyph = symbolStyle.Background(colorSelect()).Render(symbol)
+		glyph = symbolStyle.Background(colorBand()).Render(symbol)
 	}
 	if focused {
 		band = lipgloss.NewStyle().Background(colorAccent())
@@ -65,6 +65,35 @@ func (m Model) renderAgentsBar(meta string, width int) string {
 	}
 	return bandSegment("", nil, "Agents", meta,
 		m.mode == modeNormal && m.activePane == paneAgents, width)
+}
+
+// renderTitleBand composes the strip as one string at full width — the
+// band is continuous because it is one surface, not three headers meeting
+// at seams. Each pane's segment is laid at its pane's width; the seam
+// columns disappear under the shared ground.
+func (m Model) renderTitleBand(workspaceWidth, agentWidth, interactionWidth int) string {
+	right := ""
+	if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
+		right = m.renderTerminalBar(selected, interactionWidth)
+	} else {
+		label := ""
+		if _, ok := m.selectedAgent(); ok && !m.ptyEnabled {
+			label = "Transcript"
+		}
+		right = m.renderQuietBar(label, "", interactionWidth)
+	}
+	return m.renderWorkspacesBar("", workspaceWidth) +
+		m.renderAgentsBar("", agentWidth) +
+		right
+}
+
+// paintTitleBand replaces the body's first row with the composed strip.
+func paintTitleBand(body, band string) string {
+	rows := strings.SplitN(body, "\n", 2)
+	if len(rows) < 2 {
+		return band
+	}
+	return band + "\n" + rows[1]
 }
 
 // renderQuietBar continues the band where the terminal segment would be

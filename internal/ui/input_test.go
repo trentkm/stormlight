@@ -899,22 +899,17 @@ func TestWideDashboardSeamsSeparateCatalogFromControlPlane(t *testing.T) {
 	if header < 0 {
 		t.Fatalf("pane header row not found:\n%s", body)
 	}
-	// The header row carries the seams' caps, not the seams: half-strokes
-	// that begin at the band and descend out of it.
-	hairline := strings.Index(lines[header], "╷")
-	plane := strings.Index(lines[header], "╻")
-	if hairline < 0 || plane < 0 || plane < hairline {
-		t.Fatalf("seams are not capped under the band: %q", lines[header])
-	}
-	if strings.ContainsAny(lines[header], "│┃") {
-		t.Fatalf("uncapped seam collides with the header band: %q", lines[header])
+	// The title band is one continuous surface: no seam glyph of any
+	// weight interrupts the strip.
+	if strings.ContainsAny(lines[header], "╷╻│┃") {
+		t.Fatalf("a seam interrupts the title band: %q", lines[header])
 	}
 
 	firstRow := lines[header+1]
-	if strings.Index(firstRow, "│") != hairline ||
-		strings.Index(firstRow, "┃") != plane {
-		t.Fatalf("seams do not hang from their caps:\n%q\n%q",
-			lines[header], firstRow)
+	hairline := strings.Index(firstRow, "│")
+	plane := strings.Index(firstRow, "┃")
+	if hairline < 0 || plane < 0 || plane < hairline {
+		t.Fatalf("seams do not begin under the band: %q", firstRow)
 	}
 
 	for _, line := range lines[header+1:] {

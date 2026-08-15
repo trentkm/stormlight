@@ -263,7 +263,7 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		),
 		interactionFrame,
 	)
-	return lipgloss.JoinHorizontal(
+	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		capSeam(workspaces, workspaceWidth, seamColumn,
 			headerBand{start: 0, total: width}),
@@ -271,6 +271,10 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			headerBand{start: workspaceWidth, total: width}),
 		interaction,
 	)
+	// The strip is painted over the joined row as one piece: continuous
+	// to the right edge, the seam columns under the shared ground.
+	return paintTitleBand(body,
+		m.renderTitleBand(workspaceWidth, agentWidth, interactionWidth))
 }
 
 // capSeam trims a seam's topmost cell to a half-stroke, so the rule hangs
