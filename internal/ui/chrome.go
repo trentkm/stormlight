@@ -45,7 +45,7 @@ func (m Model) renderFooter() string {
 		})).
 		Render("✦ ")
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
-		m.footerRule(width) + "\n " + glint + content,
+		renderFooterRule(width) + "\n " + glint + content,
 	)
 }
 
@@ -114,23 +114,6 @@ func renderBandRun(glyph string, start, count, total int, lit, underlined bool) 
 		out.WriteString(style.Render(glyph))
 	}
 	return out.String()
-}
-
-// footerRule is the footer's horizontal rule, with the plane seam's
-// column carried through it: the vertical line descends out of the body
-// and meets the rule instead of stopping a row short — the boundary runs
-// from the band's cap to the footer in one stroke.
-func (m Model) footerRule(width int) string {
-	rule := renderFooterRule(width)
-	if width < 72 || m.ptyZoom {
-		return rule
-	}
-	workspaceWidth, agentWidth, _ := m.paneWidths(width)
-	seam := lipgloss.NewStyle().Foreground(colorBand())
-	if m.terminalFocused() {
-		seam = lipgloss.NewStyle().Foreground(colorAccent())
-	}
-	return replaceStyledCell(rule, width, workspaceWidth+agentWidth-1, "▕", seam)
 }
 
 func renderFooterRule(width int) string {
