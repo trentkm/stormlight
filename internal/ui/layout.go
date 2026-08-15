@@ -718,7 +718,6 @@ type paneEdges struct {
 	gutter bool
 }
 
-
 // paneMargins is the air a pane keeps inside its own frame: a blank row
 // under the header band, and a column between the frame and the text.
 type paneMargins struct {
