@@ -793,8 +793,9 @@ type paneFrame struct {
 	// terminal view mounts its window bar there, so the portal starts on
 	// the frame's very first row. Called with the pane's content width.
 	header func(width int) string
-	// dimSeam recedes the pane's right seam: chrome stepping back while
-	// the Spanreed terminal holds the keyboard.
+	// dimSeam flips the pane's right seam to the accent while the
+	// Spanreed terminal holds the keyboard: the rule joins the portal's
+	// lit segment instead of receding.
 	dimSeam bool
 }
 
@@ -818,11 +819,13 @@ func (m Model) renderPane(
 		// inside it; innerWidth is what is left for content once the seam
 		// has taken its column.
 		innerWidth = max(1, width-1)
-		// The plane seam wears the band's icy blue: the rule and the
-		// strip it hangs from are one light.
+		// The plane seam wears the band's icy blue while the keyboard is
+		// on the roster's side, and flips to the accent when it crosses
+		// into the portal — the rule and the terminal's lit segment are
+		// one light, telling the same story from top to bottom.
 		seamForeground := colorBand()
 		if frame.dimSeam {
-			seamForeground = colorRecede()
+			seamForeground = colorAccent()
 		}
 		style = style.Width(max(1, width)).
 			BorderStyle(edges.right.border()).
