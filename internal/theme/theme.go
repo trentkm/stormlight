@@ -49,18 +49,19 @@ var (
 	// the terminal holds the keyboard. The Accent is identical on both
 	// grounds, so its ink is too.
 	PortalInk = Pair{Light: "#0F2338", Dark: "#0F2338"}
-	// Band is the title strip's ground: the wordmark gradient's palest
-	// stop, so the strip and the Stormlight header are cut from the same
-	// light. Carries PortalInk the same as the Accent does.
-	Band = Pair{Light: "#BFDEDA", Dark: "#C8F7EF"}
+	// Band is the title strip's ground: the wordmark gradient's sky stop
+	// lifted toward white — icy blue rather than the crest's mint, so the
+	// strip reads as Stormlight's light without drifting green. Carries
+	// PortalInk the same as the Accent does.
+	Band = Pair{Light: "#B9D9EF", Dark: "#C6E9FF"}
 	// BandMuted is the roster segment the cursor is not in: distinctly
 	// below Band in the same hue, so the selected pane's segment reads
 	// brighter at a glance without breaking the shared surface.
-	BandMuted = Pair{Light: "#DAEBE8", Dark: "#8FB6AF"}
+	BandMuted = Pair{Light: "#D5E7F2", Dark: "#8AB3D1"}
 	// BandDim is the same surface receded: the roster half of the strip
 	// steps back while the keyboard lives in the portal, so the lit
 	// band always means "you are on this side of the seam".
-	BandDim = Pair{Light: "#EAF2F0", Dark: "#5C6F6B"}
+	BandDim = Pair{Light: "#E8F1F7", Dark: "#59707F"}
 )
 
 // dark records which background the palette resolves against.
