@@ -965,25 +965,9 @@ func TestAgentPaneHeaderNamesWorkspaceOnlyWhenNarrow(t *testing.T) {
 		t.Fatalf("narrow agent header lacks its workspace context: %q", narrow)
 	}
 
-	rendered := ansi.Strip(renderPaneHeader("Agents", "a-very-long-workspace-name", 24, true, headerBand{total: 24}))
+	rendered := ansi.Strip(rosterSegment("Agents", "a-very-long-workspace-name", true, true, 24))
 	if width := lipgloss.Width(rendered); width != 24 {
-		t.Fatalf("contextual header width = %d, want 24: %q", width, rendered)
-	}
-}
-
-func TestPaneHeaderKeepsLabelAlignmentAcrossFocusStates(t *testing.T) {
-	active := ansi.Strip(renderPaneHeader("Workspaces", "", 24, true, headerBand{total: 24}))
-	inactive := ansi.Strip(renderPaneHeader("Workspaces", "", 24, false, headerBand{total: 24}))
-	// The label is set into the band with a column of padding on each side,
-	// and that padding must not move when focus does.
-	if !strings.HasPrefix(active, " Workspaces ") ||
-		!strings.HasPrefix(inactive, " Workspaces ") {
-		t.Fatalf("labels shifted between focus states:\nactive:   %q\ninactive: %q",
-			active, inactive)
-	}
-	if lipgloss.Width(active) != 24 || lipgloss.Width(inactive) != 24 {
-		t.Fatalf("header width changed with focus: %d vs %d",
-			lipgloss.Width(active), lipgloss.Width(inactive))
+		t.Fatalf("contextual segment width = %d, want 24: %q", width, rendered)
 	}
 }
 

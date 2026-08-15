@@ -13,7 +13,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
-	"github.com/trentkm/stormlight/internal/theme"
 )
 
 func (m Model) renderHeader() string {
@@ -155,7 +154,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 					width:  width,
 					height: contentHeight,
 					active: true,
-					band:   headerBand{total: width},
 					header: func(w int) string {
 						return m.renderTerminalBar(selected, w)
 					},
@@ -187,7 +185,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			width:   workspaceWidth,
 			height:  contentHeight,
 			active:  m.activePane == paneWorkspaces,
-			band:    headerBand{start: 0, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimWorkspaces,
 			dimSeam: m.terminalFocused(),
@@ -213,7 +210,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 			height:  contentHeight,
 			active:  m.activePane == paneAgents,
 			edges:   paneEdges{right: seamPlane},
-			band:    headerBand{start: workspaceWidth, total: width},
 			margins: paneMargins{top: true, left: true},
 			dimming: dimAgents,
 			dimSeam: m.terminalFocused(),
@@ -227,7 +223,6 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 		height:  contentHeight,
 		active:  m.activePane == paneInteraction,
 		edges:   paneEdges{gutter: true},
-		band:    headerBand{start: workspaceWidth + agentWidth, total: width},
 		margins: paneMargins{top: true},
 		dimming: dimInteraction,
 	}
@@ -268,40 +263,13 @@ func (m Model) renderDashboardBody(width, contentHeight int) string {
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		workspaces,
-		capSeam(agents, agentWidth, seamPlane,
-			headerBand{start: workspaceWidth, total: width}),
+		agents,
 		interaction,
 	)
 	// The strip is painted over the joined row as one piece: continuous
 	// to the right edge, the seam columns under the shared ground.
 	return paintTitleBand(body,
 		m.renderTitleBand(workspaceWidth, agentWidth, interactionWidth))
-}
-
-// capSeam trims a seam's topmost cell to a half-stroke, so the rule hangs
-// from the header band instead of colliding with it. The band is drawn as an
-// underline along the bottom of the header row, which is exactly where these
-// glyphs begin — the seam reads as descending out of the frame.
-func capSeam(paneContent string, width int, seam paneSeam, band headerBand) string {
-	if seam == seamNone || width < 1 {
-		return paneContent
-	}
-	glyph := "╷"
-	if seam == seamPlane {
-		glyph = "╻"
-	}
-	lines := strings.Split(paneContent, "\n")
-	if len(lines) == 0 {
-		return paneContent
-	}
-	lines[0] = replaceStyledCell(
-		lines[0],
-		width,
-		width-1,
-		glyph,
-		lipgloss.NewStyle().Foreground(seamColor(seam, band, width)),
-	)
-	return strings.Join(lines, "\n")
 }
 
 // paneDimmings decides how far each pane recedes. The lit path is the
@@ -593,7 +561,6 @@ func (m Model) renderFocusedPane(width, height int) string {
 				width:  width,
 				height: height,
 				active: true,
-				band:   headerBand{total: width},
 				header: func(w int) string {
 					return m.renderAgentsBar(contextLabel, w)
 				},
@@ -604,7 +571,6 @@ func (m Model) renderFocusedPane(width, height int) string {
 			width:  width,
 			height: height,
 			active: true,
-			band:   headerBand{total: width},
 		}
 		if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
 			frame.header = func(w int) string {
@@ -630,7 +596,6 @@ func (m Model) renderFocusedPane(width, height int) string {
 				width:  width,
 				height: height,
 				active: true,
-				band:   headerBand{total: width},
 				header: func(w int) string {
 					return m.renderWorkspacesBar("Agents ›", w)
 				},
@@ -745,20 +710,6 @@ func (s paneSeam) border() lipgloss.Border {
 	return border
 }
 
-// seamColor paints a rule. A plane seam takes the accent, so the one line
-// that divides browsing from driving is the one line on screen that isn't
-// furniture. A column seam takes the header band's color at the column it
-// hangs from — the catalog's divider is made of the same faded gradient as
-// the frame it descends out of, which subordinates it to the accent seam by
-// material as well as by weight.
-func seamColor(seam paneSeam, band headerBand, width int) color.Color {
-	if seam == seamPlane || band.total <= 1 {
-		return colorAccent()
-	}
-	column := clamp(band.start+width-1, 0, band.total-1)
-	return theme.Color(bandColor(float64(column)/float64(band.total-1), false))
-}
-
 // paneEdges describes both sides of a pane's frame. A plane seam is drawn in
 // two halves by two panes: the pane on its left owns the heavy rule, the pane
 // on its right owns the column of air that follows it.
@@ -767,13 +718,6 @@ type paneEdges struct {
 	gutter bool
 }
 
-// headerBand places a pane's header rule inside the dashboard-wide band of
-// light: start is the column the pane begins at, total the full width the
-// gradient is stretched across.
-type headerBand struct {
-	start int
-	total int
-}
 
 // paneMargins is the air a pane keeps inside its own frame: a blank row
 // under the header band, and a column between the frame and the text.
@@ -788,7 +732,6 @@ type paneFrame struct {
 	height  int
 	active  bool
 	edges   paneEdges
-	band    headerBand
 	margins paneMargins
 	dimming paneDimming
 	// header, when set, replaces the pane's title row entirely — the
@@ -835,22 +778,14 @@ func (m Model) renderPane(
 			BorderForeground(seamForeground)
 	}
 	// The gutter is the far half of a plane seam, so it comes out of this
-	// pane's own columns: the header rule and every body row start one cell
-	// in, leaving the heavy rule with air on its far side.
+	// pane's own columns: every body row starts one cell in, leaving the
+	// heavy rule with air on its far side.
 	contentWidth := innerWidth
-	band := frame.band
 	if edges.gutter {
 		contentWidth = max(1, innerWidth-1)
 		style = style.PaddingLeft(1)
-		// The gutter is dead space in the band's run, but it is still a
-		// column of the dashboard: the header rule resumes past it rather
-		// than restarting the gradient.
-		band.start++
 	}
-	header := renderPaneHeader(label, contextLabel, contentWidth, frame.active, band)
-	if frame.header != nil {
-		header = frame.header(contentWidth)
-	}
+	header := frame.header(contentWidth)
 	if dimming.dim {
 		content = dimPane(content, dimming.keep)
 	}
@@ -929,58 +864,6 @@ func dimParams(params string) string {
 		}
 	}
 	return strings.Join(append(out, "2"), ";")
-}
-
-// renderPaneHeader underlines the entire header cell, padding included, so
-// the header reads as a full-width ruled box top rather than floating text.
-// The underline is the top edge of the dashboard's band of light: every blank
-// cell takes the band's color at its own column, and the active pane's run
-// rises to full strength — the "selected tab" indicator is that stretch of
-// brightness, not a separate rail or a swapped accent.
-func renderPaneHeader(
-	label, contextLabel string,
-	width int,
-	active bool,
-	band headerBand,
-) string {
-	// A run of band, positioned by how far into this pane it starts.
-	fill := func(offset, count int) string {
-		return renderBandRun(
-			" ", band.start+offset, max(0, count), band.total, active, true)
-	}
-
-	// Labels interrupt the band; they do not sit on it. A rule running under
-	// the words is the construction of a table header — and it was breaking
-	// the band's gradient besides, since an underline takes the color of the
-	// text above it. lazygit sets its titles into the rule the same way.
-	// Each label is followed by a blank the band skips, so the line resumes
-	// clear of the descenders.
-	labelStyle := mutedStyle().Copy().Bold(true)
-	if active {
-		labelStyle = titleStyle().Copy()
-	}
-	// The padding sits outside truncate, which collapses whitespace runs and
-	// would otherwise eat it.
-	left := labelStyle.Render(" " + truncate(label, max(1, width-2)) + " ")
-	leftWidth := lipgloss.Width(left)
-
-	remaining := width - leftWidth - 4
-	if strings.TrimSpace(contextLabel) == "" || remaining < 4 {
-		return left + fill(leftWidth, width-leftWidth)
-	}
-
-	rightStyle := mutedStyle().Copy()
-	if strings.ContainsAny(contextLabel, "‹›") {
-		rightStyle = accentStyle().Copy()
-	}
-	right := rightStyle.Render(" " + truncate(contextLabel, remaining) + " ")
-	rightWidth := lipgloss.Width(right)
-	// One column of band survives past the context label, so it never ends
-	// flush against the seam it sits beside.
-	gap := max(1, width-leftWidth-rightWidth-1)
-	tail := max(0, width-leftWidth-gap-rightWidth)
-	return left + fill(leftWidth, gap) + right +
-		fill(leftWidth+gap+rightWidth, tail)
 }
 
 func (m Model) interactionDimensions() (int, int) {

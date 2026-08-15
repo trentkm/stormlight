@@ -24,9 +24,18 @@ func segmentRow(
 	band, text lipgloss.Style,
 	width int,
 ) string {
+	// Meta yields before it bursts the segment; the label yields to the
+	// meta, down to nothing; the gap absorbs whatever remains. The three
+	// budgets always sum to the width — a segment never overflows.
+	meta = truncate(meta, max(1, width-4-lead))
 	metaWidth := lipgloss.Width(meta)
-	label = truncate(label, max(1, width-metaWidth-4-lead))
-	gap := max(1, width-3-lead-lipgloss.Width(label)-metaWidth)
+	labelBudget := width - metaWidth - 4 - lead
+	if labelBudget < 1 {
+		label = ""
+	} else {
+		label = truncate(label, labelBudget)
+	}
+	gap := max(0, width-3-lead-lipgloss.Width(label)-metaWidth)
 	return band.Render(" ") + glyph +
 		text.Render(" "+label+strings.Repeat(" ", gap)+meta+" ")
 }
