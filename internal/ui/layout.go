@@ -394,21 +394,18 @@ func paintHierarchyConnector(
 	first := min(workspaceRow, agentRow)
 	last := max(workspaceRow, agentRow)
 	for row := first; row <= last; row++ {
-		// Heavy strokes: the arc carries the selection story, and a
-		// hairline was whispering it. Heavy corners exist only square,
-		// so the caps trade their curve for the weight.
-		glyph := "┃"
+		glyph := "│"
 		switch {
 		case workspaceRow == agentRow:
-			glyph = "━"
+			glyph = "─"
 		case row == workspaceRow && workspaceRow < agentRow:
-			glyph = "┓"
+			glyph = "╮"
 		case row == workspaceRow:
-			glyph = "┛"
+			glyph = "╯"
 		case row == agentRow && agentRow < workspaceRow:
-			glyph = "┏"
+			glyph = "╭"
 		case row == agentRow:
-			glyph = "┗"
+			glyph = "╰"
 		}
 		lines[row] = replaceStyledCell(
 			lines[row],
