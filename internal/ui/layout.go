@@ -59,9 +59,11 @@ func renderHeaderCount(symbol string, color color.Color, loud bool, label string
 }
 
 // bodyDimensions is the area modals and the dashboard share: the terminal
-// minus the header, status, and hint chrome.
+// minus the header row and the footer's rule and hints — three rows of
+// chrome, so the body's floor meets the footer and the footer meets the
+// terminal's bottom edge.
 func (m Model) bodyDimensions() (int, int) {
-	return max(1, m.width-1), max(1, m.height-4)
+	return max(1, m.width-1), max(1, m.height-3)
 }
 
 func (m Model) renderBody() string {

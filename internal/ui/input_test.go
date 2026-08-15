@@ -257,7 +257,7 @@ func TestViewFitsEightyColumnTmuxPane(t *testing.T) {
 	model.interactionID = "12345678"
 	model.interaction.SetContent("layout-check\n\nPane is dead")
 
-	assertViewFitsPane(t, model, 79, 23)
+	assertViewFitsPane(t, model, 80, 24)
 }
 
 func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
@@ -285,7 +285,7 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 		!strings.Contains(view, "Enter a path") {
 		t.Fatalf("directory selector is incomplete:\n%s", view)
 	}
-	assertViewFitsPane(t, model, 79, 23)
+	assertViewFitsPane(t, model, 80, 24)
 }
 
 func TestDispatchCustomPathFitsShortPane(t *testing.T) {
@@ -314,7 +314,7 @@ func TestDispatchCustomPathFitsShortPane(t *testing.T) {
 		})
 		model = updated.(Model)
 
-		assertViewFitsPane(t, model, size.width-1, size.height-1)
+		assertViewFitsPane(t, model, size.width, size.height)
 	}
 }
 
@@ -348,7 +348,7 @@ func TestDispatchViewFitsCompactPaneWithUnavailableProviders(t *testing.T) {
 	if strings.Count(view, "╭") != strings.Count(view, "╰") {
 		t.Fatalf("the form was cut off inside the composer:\n%s", view)
 	}
-	assertViewFitsPane(t, model, 39, 15)
+	assertViewFitsPane(t, model, 40, 16)
 }
 
 func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
@@ -384,7 +384,7 @@ func TestNewAgentModalPreservesDashboardContext(t *testing.T) {
 			t.Fatalf("modal view is missing %q:\n%s", label, view)
 		}
 	}
-	assertViewFitsPane(t, model, 119, 29)
+	assertViewFitsPane(t, model, 120, 30)
 }
 
 func TestDispatchOptionalNameReachesTheRequest(t *testing.T) {
@@ -608,7 +608,7 @@ func TestDispatchFormFitsItsModal(t *testing.T) {
 				t.Fatalf("%dx%d picker=%v: the task box was clipped:\n%s\n%s",
 					size[0], size[1], picker, composer, modal)
 			}
-			assertViewFitsPane(t, model, size[0]-1, size[1]-1)
+			assertViewFitsPane(t, model, size[0], size[1])
 		}
 	}
 }
@@ -792,7 +792,7 @@ func TestAddWorkspaceOnlyOffersNewDirectoryActions(t *testing.T) {
 		!strings.Contains(view, active.Name) {
 		t.Fatalf("add-workspace modal lacks context:\n%s", view)
 	}
-	assertViewFitsPane(t, model, 99, 27)
+	assertViewFitsPane(t, model, 100, 28)
 }
 
 func TestFooterKeepsCommandsVisibleWithStatus(t *testing.T) {
@@ -873,7 +873,7 @@ func TestWideDashboardRendersThreePaneHierarchy(t *testing.T) {
 			t.Fatalf("dashboard is missing %q:\n%s", label, view)
 		}
 	}
-	assertViewFitsPane(t, model, 119, 29)
+	assertViewFitsPane(t, model, 120, 30)
 }
 
 // The dashboard's two seams divide different kinds of thing, so they are not

@@ -121,6 +121,9 @@ func (m Model) renderAgentsBar(meta string, width int) string {
 // at seams. Each pane's segment is laid at its pane's width; the seam
 // columns disappear under the shared ground.
 func (m Model) renderTitleBand(workspaceWidth, agentWidth, interactionWidth int) string {
+	// The body is a column narrower than the terminal; the strip is the
+	// one row that runs to the true edge, like the header above it.
+	interactionWidth += max(0, m.width-1-(workspaceWidth+agentWidth+interactionWidth)+1)
 	right := ""
 	if selected, ok := m.selectedAgent(); ok && m.ptyEnabled {
 		right = m.renderTerminalBar(selected, interactionWidth)

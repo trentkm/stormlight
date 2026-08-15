@@ -427,7 +427,7 @@ func TestNarrowLayoutFocusesOnePane(t *testing.T) {
 	model = updated.(Model)
 	for _, pane := range []pane{paneWorkspaces, paneAgents, paneInteraction} {
 		model.activePane = pane
-		assertViewFitsPane(t, model, 59, 19)
+		assertViewFitsPane(t, model, 60, 20)
 	}
 }
 
