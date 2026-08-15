@@ -241,11 +241,9 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, _, _ int) string {
 		grid = widget.View()
 	}
 	if m.ptySelecting && m.ptySelDragged {
-		start, end := m.ptySelAnchor, m.ptySelHead
-		if start > end {
-			start, end = end, start
-		}
-		grid = paintTranscriptSelection(grid, 0, start, end)
+		start, end := m.selectionSpan()
+		gridWidth, _ := m.ptyGridDimensions()
+		grid = paintTerminalSelection(grid, start, end, gridWidth)
 	}
 	return grid
 }

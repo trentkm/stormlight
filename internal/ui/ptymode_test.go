@@ -44,3 +44,40 @@ func TestGridCellMapsDockedAndZoomedOrigins(t *testing.T) {
 		t.Fatalf("zoomed cell = (%d,%d,%v)", col, row, ok)
 	}
 }
+
+func TestTerminalSelectionCopiesTmuxStyleSpans(t *testing.T) {
+	model := Model{
+		ptySelAnchor: gridCell{row: 0, col: 6},
+		ptySelHead:   gridCell{row: 2, col: 3},
+	}
+	start, end := model.selectionSpan()
+	if start != (gridCell{0, 6}) || end != (gridCell{2, 3}) {
+		t.Fatalf("span = %v..%v", start, end)
+	}
+	// Reversed drags normalize.
+	model.ptySelAnchor, model.ptySelHead = model.ptySelHead, model.ptySelAnchor
+	start, end = model.selectionSpan()
+	if start != (gridCell{0, 6}) || end != (gridCell{2, 3}) {
+		t.Fatalf("reversed span = %v..%v", start, end)
+	}
+}
+
+func TestPaintTerminalSelectionReversesTheSpanOnly(t *testing.T) {
+	view := "alpha beta\ngamma delta\nepsilon zeta"
+	painted := paintTerminalSelection(view,
+		gridCell{row: 0, col: 6}, gridCell{row: 2, col: 2}, 12)
+	lines := strings.Split(painted, "\n")
+	if !strings.HasPrefix(lines[0], "alpha ") {
+		t.Fatalf("text before the anchor was painted: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], searchMatchSGR+"beta") {
+		t.Fatalf("anchor line span not reversed: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], searchMatchSGR) {
+		t.Fatalf("middle line not reversed: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], searchMatchSGR+"eps") ||
+		strings.Contains(strings.SplitN(lines[2], searchResetSGR, 2)[0], "ilon") {
+		t.Fatalf("head line reversed past its column: %q", lines[2])
+	}
+}

@@ -204,12 +204,13 @@ type Model struct {
 	// keys are the seam chords, config-rebindable; see KeyBindings.
 	keys KeyBindings
 
-	// Terminal drag selection: line-wise over the grid, copied on
-	// release — the transcript's gesture, spoken by the portal.
+	// Terminal drag selection: character-precise over the grid, tmux
+	// style — first line from the anchor, middles whole, last to the
+	// head — copied on release.
 	ptySelecting  bool
 	ptySelDragged bool
-	ptySelAnchor  int
-	ptySelHead    int
+	ptySelAnchor  gridCell
+	ptySelHead    gridCell
 
 	// The floating program overlay (Yazi picker, Neovim task editor): a
 	// windrunner session rendered through the same widget machinery as

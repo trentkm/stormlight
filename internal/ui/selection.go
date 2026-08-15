@@ -106,34 +106,41 @@ func (m Model) gridCellAt(x, y int) (int, int, bool) {
 	return col, row, true
 }
 
+// gridCell names one cell of the terminal grid.
+type gridCell struct{ row, col int }
+
+func (a gridCell) before(b gridCell) bool {
+	return a.row < b.row || (a.row == b.row && a.col <= b.col)
+}
+
 // handleTerminalMouse is the left button over the terminal view. A click
 // focuses the pane under the pointer and forwards to a program that asked
-// for the mouse; a drag is Stormlight's line selection, copied on release
-// — the same gesture the transcript speaks.
+// for the mouse; a drag is Stormlight's selection — character-precise,
+// tmux style — copied on release.
 func (m Model) handleTerminalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mouse := msg.Mouse()
 	widget, hasWidget := m.selectedPTY()
 	switch msg.(type) {
 	case tea.MouseClickMsg:
 		m.activePane = m.paneAt(mouse.X)
-		row, ok := m.terminalRowAt(mouse.X, mouse.Y)
+		cell, ok := m.terminalCellAt(mouse.X, mouse.Y)
 		if !ok {
 			m.ptySelecting = false
 			return m, nil
 		}
 		m.ptySelecting = true
 		m.ptySelDragged = false
-		m.ptySelAnchor, m.ptySelHead = row, row
+		m.ptySelAnchor, m.ptySelHead = cell, cell
 		return m, nil
 	case tea.MouseMotionMsg:
 		if !m.ptySelecting {
 			return m, nil
 		}
-		if row, ok := m.terminalRowAt(mouse.X, mouse.Y); ok {
-			if row != m.ptySelAnchor {
+		if cell, ok := m.terminalCellAt(mouse.X, mouse.Y); ok {
+			if cell != m.ptySelAnchor {
 				m.ptySelDragged = true
 			}
-			m.ptySelHead = row
+			m.ptySelHead = cell
 		}
 		return m, nil
 	case tea.MouseReleaseMsg:
@@ -159,42 +166,72 @@ func (m Model) handleTerminalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// terminalRowAt maps screen coordinates to a grid row for selection,
-// clamping the column so a drag past the edges keeps its row.
-func (m Model) terminalRowAt(x, y int) (int, bool) {
-	_, gridHeight := m.ptyGridDimensions()
-	_, row, ok := m.gridCellAt(x, y)
-	if ok {
-		return row, true
+// terminalCellAt maps screen coordinates to a grid cell for selection,
+// clamping coordinates that leave the grid mid-drag — the way every
+// terminal treats a drag past its edges.
+func (m Model) terminalCellAt(x, y int) (gridCell, bool) {
+	if col, row, ok := m.gridCellAt(x, y); ok {
+		return gridCell{row: row, col: col}, true
 	}
-	// Off to the side but vertically inside: clamp to the grid, the way
-	// every terminal treats a drag that leaves the window.
-	row = clamp(y-ptyGridTop, 0, gridHeight-1)
-	if m.paneAt(x) == paneInteraction && y >= ptyGridTop &&
-		y < ptyGridTop+gridHeight {
-		return row, true
+	gridWidth, gridHeight := m.ptyGridDimensions()
+	width := max(1, m.width-1)
+	if width < 72 {
+		return gridCell{}, false
 	}
-	return 0, false
+	left := 0
+	if !m.ptyZoom {
+		workspaceWidth, agentWidth, _ := m.paneWidths(width)
+		left = workspaceWidth + agentWidth + 1
+	}
+	if x < left {
+		return gridCell{}, false
+	}
+	return gridCell{
+		row: clamp(y-ptyGridTop, 0, gridHeight-1),
+		col: clamp(x-left, 0, gridWidth-1),
+	}, true
 }
 
-// copyTerminalSelectionCmd extracts the selected grid rows as plain text
-// and hands them to the clipboard.
+// selectionSpan orders the anchor and head.
+func (m Model) selectionSpan() (gridCell, gridCell) {
+	if m.ptySelAnchor.before(m.ptySelHead) {
+		return m.ptySelAnchor, m.ptySelHead
+	}
+	return m.ptySelHead, m.ptySelAnchor
+}
+
+// copyTerminalSelectionCmd extracts the selected span as plain text —
+// first line from the anchor column, middles whole, last line to the
+// head column, trailing blanks trimmed per line.
 func (m Model) copyTerminalSelectionCmd() tea.Cmd {
 	widget, ok := m.selectedPTY()
 	if !ok {
 		return nil
 	}
-	start, end := m.ptySelAnchor, m.ptySelHead
-	if start > end {
-		start, end = end, start
-	}
+	start, end := m.selectionSpan()
 	lines := widget.Text()
-	if start >= len(lines) {
+	if start.row >= len(lines) {
 		return nil
 	}
-	end = min(end, len(lines)-1)
-	text := strings.Join(lines[start:end+1], "\n")
-	count := end - start + 1
+	end.row = min(end.row, len(lines)-1)
+	selected := make([]string, 0, end.row-start.row+1)
+	for row := start.row; row <= end.row; row++ {
+		runes := []rune(lines[row])
+		from, to := 0, len(runes)
+		if row == start.row {
+			from = min(start.col, len(runes))
+		}
+		if row == end.row {
+			to = min(end.col+1, len(runes))
+		}
+		if from > to {
+			from = to
+		}
+		selected = append(selected,
+			strings.TrimRight(string(runes[from:to]), " "))
+	}
+	text := strings.Join(selected, "\n")
+	count := len(selected)
 	return func() tea.Msg {
 		if err := copyToClipboard(text); err != nil {
 			return actionMsg{status: "Action failed", err: err}
@@ -205,6 +242,33 @@ func (m Model) copyTerminalSelectionCmd() tea.Cmd {
 		}
 		return actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
 	}
+}
+
+// paintTerminalSelection reverses the video of the selected span over the
+// rendered grid, cell-precise: the same surgery overlayCentered performs,
+// aimed at a highlight instead of a modal.
+func paintTerminalSelection(view string, start, end gridCell, gridWidth int) string {
+	lines := strings.Split(view, "\n")
+	for row := start.row; row <= end.row && row < len(lines); row++ {
+		from, to := 0, gridWidth
+		if row == start.row {
+			from = start.col
+		}
+		if row == end.row {
+			to = end.col + 1
+		}
+		line := lines[row]
+		before := ansi.Cut(line, 0, from)
+		mid := ansi.Strip(ansi.Cut(line, from, to))
+		if width := to - from - len([]rune(ansi.Strip(ansi.Cut(line, from, to)))); width > 0 {
+			mid += strings.Repeat(" ", width)
+		}
+		after := ansi.Cut(line, to, gridWidth)
+		lines[row] = before +
+			searchMatchSGR + mid + searchResetSGR +
+			sgrStateAt(line, to) + after
+	}
+	return strings.Join(lines, "\n")
 }
 
 // handleSelectionMouse turns press-drag-release over the transcript into a
