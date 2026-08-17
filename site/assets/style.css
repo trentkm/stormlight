@@ -247,5 +247,8 @@ pre .s { color: var(--str); }
 @media (max-width: 640px) {
   body { font-size: 16px; }
   .wrap, .wrap-narrow { padding: 0 1.1rem; }
-  .nav-links { gap: 1rem; }
+  .nav { flex-wrap: wrap; row-gap: 0.7rem; }
+  .nav-links { gap: 1rem; flex-wrap: wrap; row-gap: 0.5rem; }
+  .install { font-size: 0.75rem; }
+  .install .cmd { overflow-wrap: anywhere; }
 }
