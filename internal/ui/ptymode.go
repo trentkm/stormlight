@@ -201,7 +201,6 @@ func (m Model) jumpQueue(step agent.QueueStep) (tea.Model, tea.Cmd) {
 	queue := agent.Queue(m.agents)
 	next, ok := agent.StepInQueue(queue, m.selectedAgentID(), step)
 	if !ok {
-		m.status = "Nobody is waiting on you"
 		return m, nil
 	}
 	m.rebuildGroups(next.Workspace.ID, next.ID)
@@ -223,12 +222,10 @@ func (m *Model) interactionFollowCmd() tea.Cmd {
 func (m *Model) togglePTY() tea.Cmd {
 	if m.ptyEnabled {
 		m.ptyEnabled = false
-		m.status = "Ready"
 		return m.loadInteractionCmd()
 	}
 	m.ptyEnabled = true
 	m.activePane = paneInteraction
-	m.status = "Ready"
 	return m.armPTYWait()
 }
 
@@ -248,15 +245,17 @@ func (m Model) renderPTYInteraction(managedAgent agent.Agent, _, _ int) string {
 	return grid
 }
 
-func (m Model) terminalHints() string {
+func (m Model) terminalHints() []string {
 	if widget, ok := m.selectedPTY(); ok && widget.Scrolled() > 0 {
-		return fmt.Sprintf("scrolled %d lines up — wheel down to follow", widget.Scrolled())
+		return []string{fmt.Sprintf(
+			"scrolled %d lines up — wheel down to follow", widget.Scrolled())}
 	}
-	return fmt.Sprintf(
-		"ctrl+space out  %s agents  %s queue  %s zoom",
-		chordPair(m.keys.AgentsNext, m.keys.AgentsPrevious),
-		chordPair(m.keys.QueueNext, m.keys.QueuePrevious),
-		chordName(m.keys.Zoom[0]))
+	return []string{
+		"ctrl+space out",
+		chordPair(m.keys.AgentsNext, m.keys.AgentsPrevious) + " agents",
+		chordPair(m.keys.QueueNext, m.keys.QueuePrevious) + " queue",
+		chordName(m.keys.Zoom[0]) + " zoom",
+	}
 }
 
 // renderTerminalBar is the window bar over the terminal grid, and the only

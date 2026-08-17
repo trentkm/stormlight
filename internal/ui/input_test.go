@@ -795,16 +795,26 @@ func TestAddWorkspaceOnlyOffersNewDirectoryActions(t *testing.T) {
 	assertViewFitsPane(t, model, 100, 28)
 }
 
-func TestFooterKeepsCommandsVisibleWithStatus(t *testing.T) {
+func TestFooterKeepsCommandsVisibleWithError(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 100
-	model.status = "Workspace added"
+	model.err = errors.New("attach failed")
 
 	footer := ansi.Strip(model.renderFooter())
-	if !strings.Contains(footer, "Workspace added") ||
+	if !strings.Contains(footer, "attach failed") ||
 		!strings.Contains(footer, "j/k select") ||
 		!strings.Contains(footer, "n add") {
-		t.Fatalf("status displaced contextual commands: %q", footer)
+		t.Fatalf("error displaced contextual commands: %q", footer)
+	}
+}
+
+func TestFooterSeparatesHints(t *testing.T) {
+	model := NewModel(stubBackend{})
+	model.width = 100
+
+	footer := ansi.Strip(model.renderFooter())
+	if !strings.Contains(footer, "j/k select · l agents") {
+		t.Fatalf("hints are not dot-separated: %q", footer)
 	}
 }
 
@@ -828,7 +838,7 @@ func TestFooterShowsOnlyChordOptionsWhilePending(t *testing.T) {
 	updated, _ = model.updateNormal(runeKey("n"))
 	model = updated.(Model)
 	footer = ansi.Strip(model.renderFooter())
-	if !strings.Contains(footer, "Sorted by name") ||
+	if strings.Contains(footer, "Sort:") ||
 		!strings.Contains(footer, "j/k select") {
 		t.Fatalf("resolved chord did not restore normal footer: %q", footer)
 	}
@@ -990,7 +1000,7 @@ func TestRowDensityTogglesWithoutHidingPanes(t *testing.T) {
 		!strings.Contains(header, "Agents") {
 		t.Fatalf("density toggle hid dashboard panes: %q", header)
 	}
-	if !strings.Contains(model.commandHints(), "z compact rows") {
+	if !slices.Contains(model.commandHints(), "z compact rows") {
 		t.Fatalf("expanded hint = %q", model.commandHints())
 	}
 
@@ -1104,9 +1114,6 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 	}
 	if backend.request.Provider != agent.ProviderCodex {
 		t.Fatalf("dispatched provider = %q, want codex", backend.request.Provider)
-	}
-	if model.status != "Dispatching Codex" {
-		t.Fatalf("status = %q", model.status)
 	}
 }
 
@@ -1724,9 +1731,6 @@ func TestSortChordChangesMode(t *testing.T) {
 	if model.sortMode != sortByAttention {
 		t.Fatalf("sort mode = %v, want attention", model.sortMode)
 	}
-	if !strings.Contains(model.status, "attention") {
-		t.Fatalf("status = %q", model.status)
-	}
 }
 
 func TestHierarchyConnectorBridgesDifferentRows(t *testing.T) {
@@ -2021,8 +2025,8 @@ func TestEnterOpensSelectedAgentTerminal(t *testing.T) {
 
 	updated, cmd := model.updateNormal(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
-	if cmd == nil || model.status != "Opening agent-one" {
-		t.Fatalf("terminal open was not started: status=%q", model.status)
+	if cmd == nil {
+		t.Fatal("terminal open was not started")
 	}
 	message := cmd()
 	attached, ok := message.(attachMsg)
@@ -2272,7 +2276,6 @@ func TestAddWorkspaceCommandUpdatesDashboard(t *testing.T) {
 func TestActionErrorSurvivesSuccessfulRefresh(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.err = errors.New("attach failed")
-	model.status = "Action failed"
 
 	updated, _ := model.Update(dashboardMsg{})
 	model = updated.(Model)
@@ -2282,8 +2285,8 @@ func TestActionErrorSurvivesSuccessfulRefresh(t *testing.T) {
 
 	updated, _ = model.Update(runeKey("j"))
 	model = updated.(Model)
-	if model.err != nil || model.status != "Ready" {
-		t.Fatalf("key did not clear action error: err=%v status=%q", model.err, model.status)
+	if model.err != nil {
+		t.Fatalf("key did not clear action error: err=%v", model.err)
 	}
 }
 

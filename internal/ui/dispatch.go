@@ -66,7 +66,6 @@ func (m Model) dispatchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
 		m.blurForm()
-		m.status = "Ready"
 		return m, nil
 	case "tab":
 		m.moveDispatchFocus(1)
@@ -385,7 +384,7 @@ func (m Model) renderDispatchAt(width, height int) string {
 		tail = append(tail, "")
 	}
 	tail = append(tail,
-		"  "+mutedStyle().Render(truncate(m.commandHints(), contentWidth)),
+		"  "+ansi.Truncate(renderHints(m.commandHints(), mutedStyle()), contentWidth, "…"),
 	)
 
 	return strings.Join(
@@ -1165,7 +1164,6 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	}
 	m.mode = modeNormal
 	m.blurForm()
-	m.status = "Dispatching " + m.providers[m.providerIndex].Label
 	m.taskInput.SetValue("")
 	m.nameInput.SetValue("")
 	return m, dispatchCmd(m.backend, request)
@@ -1209,7 +1207,6 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	m.focusForm()
 	m.syncTaskComposerSize()
 	m.err = nil
-	m.status = "New agent"
 	return m, nil
 }
 

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -115,7 +114,6 @@ func (m *Model) beginSearch() {
 	m.search.matches = nil
 	m.search.index = 0
 	m.search.anchor = m.interaction.YOffset()
-	m.status = "Search"
 }
 
 // clearSearch drops the query and repaints the transcript unhighlighted.
@@ -173,21 +171,16 @@ func (m *Model) seekSearchFromAnchor() {
 	}
 }
 
-// jumpSearchMatch moves n/N style through the matches, wrapping at the ends.
+// jumpSearchMatch moves n/N style through the matches, wrapping at the
+// ends. The hint row reports the position (see searchMatchLabel).
 func (m *Model) jumpSearchMatch(delta int) {
 	count := len(m.search.matches)
 	if count == 0 {
-		m.status = "No match: " + m.search.query
 		return
 	}
 	m.search.index = (m.search.index + delta + count) % count
 	m.repaintSearch()
 	m.centerSearchMatch()
-	m.status = m.searchPosition()
-}
-
-func (m Model) searchPosition() string {
-	return fmt.Sprintf("Match %d/%d", m.search.index+1, len(m.search.matches))
 }
 
 // updateSearch drives the prompt: matching narrows live, Enter keeps the
@@ -199,21 +192,13 @@ func (m Model) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.search.input.Blur()
 		m.clearSearch()
 		m.interaction.SetYOffset(m.search.anchor)
-		m.status = "Ready"
 		return m, nil
 	case "enter":
 		m.mode = modeNormal
 		m.search.input.Blur()
 		if m.search.query == "" {
 			m.clearSearch()
-			m.status = "Ready"
-			return m, nil
 		}
-		if len(m.search.matches) == 0 {
-			m.status = "No match: " + m.search.query
-			return m, nil
-		}
-		m.status = m.searchPosition()
 		return m, nil
 	}
 	m.search.input = m.search.input.Update(msg)

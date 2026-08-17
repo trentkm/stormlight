@@ -234,9 +234,7 @@ func (m Model) copyTerminalSelectionCmd() tea.Cmd {
 		selected = append(selected,
 			strings.TrimRight(ansi.Cut(line, from, to), " "))
 	}
-	text := strings.Join(selected, "\n")
-	count := len(selected)
-	return copyToClipboardCmd(text, count)
+	return copyToClipboardCmd(strings.Join(selected, "\n"))
 }
 
 // paintTerminalSelection reverses the video of the selected span over the
@@ -366,17 +364,11 @@ func (m Model) copySelectionCmd() tea.Cmd {
 	for _, line := range lines[start : end+1] {
 		selected = append(selected, strings.TrimRight(line, " "))
 	}
-	text := strings.Join(selected, "\n")
-	count := end - start + 1
-	return copyToClipboardCmd(text, count)
+	return copyToClipboardCmd(strings.Join(selected, "\n"))
 }
 
-func copyToClipboardCmd(text string, count int) tea.Cmd {
-	label := "line"
-	if count != 1 {
-		label = "lines"
-	}
-	success := actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
+func copyToClipboardCmd(text string) tea.Cmd {
+	success := actionMsg{}
 	return func() tea.Msg {
 		if os.Getenv("TMUX") != "" {
 			if err := runClipboardCommand(

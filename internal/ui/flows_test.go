@@ -112,11 +112,13 @@ func TestDeleteFlowGuardsWorkspaceWithAgents(t *testing.T) {
 	model.activePane = paneWorkspaces
 	model.mode = modeDelete
 
-	next, _ := model.updateDelete(runeKey("x"))
+	next, cmdX := model.updateDelete(runeKey("x"))
 	model = next.(Model)
-	if model.mode != modeDelete || !strings.Contains(model.status, "press X") {
-		t.Fatalf("x skipped the agent guard: mode=%d status=%q",
-			model.mode, model.status)
+	if model.mode != modeDelete || cmdX != nil {
+		t.Fatalf("x skipped the agent guard: mode=%d", model.mode)
+	}
+	if hints := strings.Join(model.commandHints(), " "); !strings.Contains(hints, "X delete") {
+		t.Fatalf("hint row does not ask for X: %q", hints)
 	}
 
 	next, cmd := model.updateDelete(runeKey("X"))
@@ -567,13 +569,13 @@ func TestDispatchNameAcceptsTypedRunes(t *testing.T) {
 func TestDispatchHintsNameTheNextField(t *testing.T) {
 	model := dispatchFixture(t)
 	model.mode = modeDispatch
-	if hints := model.commandHints(); !strings.Contains(hints, "Enter name") {
+	if hints := strings.Join(model.commandHints(), " "); !strings.Contains(hints, "Enter name") {
 		t.Fatalf("directory hints hide the name field: %q", hints)
 	}
 	selectCustomDirectory(t, &model)
 	next, _ := model.updateDispatch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
-	if hints := model.commandHints(); !strings.Contains(hints, "Tab name") {
+	if hints := strings.Join(model.commandHints(), " "); !strings.Contains(hints, "Tab name") {
 		t.Fatalf("picker hints hide the way out: %q", hints)
 	}
 }

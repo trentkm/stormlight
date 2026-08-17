@@ -65,7 +65,6 @@ func (m Model) beginMark() (tea.Model, tea.Cmd) {
 	m.markIndex = markChoiceIndex(selected.EffectiveMark())
 	m.mode = modeMark
 	m.err = nil
-	m.status = "Mark " + agentDisplayTitle(selected)
 	return m, nil
 }
 
@@ -74,7 +73,6 @@ func (m Model) updateMark(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
-		m.status = "Ready"
 		return m, nil
 	case "j", "down":
 		m.markIndex = clamp(m.markIndex+1, 0, len(markChoices)-1)
@@ -97,22 +95,20 @@ func (m Model) submitMark(mark agent.Mark) (tea.Model, tea.Cmd) {
 	m.mode = modeNormal
 	id := m.markAgentID
 	if id == "" {
-		m.status = "Ready"
 		return m, nil
 	}
 	// Apply locally first so the row reports the human's reading on the very
 	// next frame; the backend write follows.
 	m.applyMark(id, mark)
-	status := "Marked in progress"
+	label := "Marked in progress"
 	switch mark {
 	case agent.MarkAttention:
-		status = "Marked needs attention"
+		label = "Marked needs attention"
 	case agent.MarkNone:
-		status = "Mark cleared"
+		label = "Mark cleared"
 	}
-	m.status = status
 	backend := m.backend
-	return m, actionCmd(status, func(ctx context.Context) error {
+	return m, actionCmd(label, func(ctx context.Context) error {
 		return backend.SetMark(ctx, id, mark)
 	})
 }

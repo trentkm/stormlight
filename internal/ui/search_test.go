@@ -89,8 +89,9 @@ func TestSlashSearchFlowMatchesJumpsAndClears(t *testing.T) {
 
 	next, _ = model.updateSearch(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = next.(Model)
-	if model.mode != modeNormal || model.status != "Match 1/2" {
-		t.Fatalf("confirm state: mode=%d status=%q", model.mode, model.status)
+	if model.mode != modeNormal || model.searchMatchLabel() != "match 1/2" {
+		t.Fatalf("confirm state: mode=%d label=%q",
+			model.mode, model.searchMatchLabel())
 	}
 	if !strings.Contains(model.searchDecorated(), "\x1b[7m") {
 		t.Fatal("transcript is not highlighted after confirm")
@@ -98,18 +99,18 @@ func TestSlashSearchFlowMatchesJumpsAndClears(t *testing.T) {
 
 	updated, _ = model.updateNormal(runeKey("n"))
 	model = updated.(Model)
-	if model.status != "Match 2/2" {
-		t.Fatalf("n did not advance: %q", model.status)
+	if model.searchMatchLabel() != "match 2/2" {
+		t.Fatalf("n did not advance: %q", model.searchMatchLabel())
 	}
 	updated, _ = model.updateNormal(runeKey("n"))
 	model = updated.(Model)
-	if model.status != "Match 1/2" {
-		t.Fatalf("n did not wrap: %q", model.status)
+	if model.searchMatchLabel() != "match 1/2" {
+		t.Fatalf("n did not wrap: %q", model.searchMatchLabel())
 	}
 	updated, _ = model.updateNormal(runeKey("N"))
 	model = updated.(Model)
-	if model.status != "Match 2/2" {
-		t.Fatalf("N did not go back: %q", model.status)
+	if model.searchMatchLabel() != "match 2/2" {
+		t.Fatalf("N did not go back: %q", model.searchMatchLabel())
 	}
 
 	updated, _ = model.updateNormal(tea.KeyPressMsg{Code: tea.KeyEscape})

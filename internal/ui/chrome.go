@@ -1,13 +1,15 @@
 package ui
 
-// The footer: gradient rules, status row, and key hints.
+// The footer: gradient rules and key hints.
 // Split from model.go; see #34.
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/theme"
 )
 
@@ -18,7 +20,6 @@ func (m Model) renderFooter() string {
 	if chord := m.chordHints(); chord != "" {
 		content = chord
 	} else {
-		hints := m.commandHints()
 		hintStyle := mutedStyle()
 		switch {
 		case m.terminalFocused():
@@ -31,11 +32,10 @@ func (m Model) renderFooter() string {
 			// the footer matches whichever side of the seam is lit.
 			hintStyle = lipgloss.NewStyle().Foreground(colorBand())
 		}
-		content = hintStyle.Render(truncate(hints, inner))
+		hints := renderHints(m.commandHints(), hintStyle)
+		content = ansi.Truncate(hints, inner, "…")
 		if m.err != nil {
-			content = renderFooterStatus(inner, m.err.Error(), hints, errorStyle())
-		} else if m.status != "Ready" {
-			content = renderFooterStatus(inner, m.status, hints, successStyle())
+			content = renderFooterError(inner, m.err.Error(), hints)
 		}
 	}
 	glint := lipgloss.NewStyle().
@@ -143,70 +143,116 @@ func (m Model) chordHints() string {
 	return strings.Join(parts, "  ")
 }
 
-func renderFooterStatus(
-	width int,
-	status string,
-	hints string,
-	statusStyle lipgloss.Style,
-) string {
-	available := max(1, width)
-	statusWidth := clamp(available/3, 8, 28)
-	hintWidth := available - statusWidth - 2
-	if hintWidth < 12 {
-		return mutedStyle().Render(truncate(hints, available))
+// renderHints paints each hint as one unit and sets a muted dot between
+// neighbors, so the row reads as separate key–action pairs instead of one
+// run-on line. The items arrive unstyled; the caller picks the ink.
+func renderHints(items []string, style lipgloss.Style) string {
+	separator := mutedStyle().Render(" · ")
+	rendered := make([]string, len(items))
+	for index, item := range items {
+		rendered[index] = style.Render(item)
 	}
-	renderedStatus := statusStyle.Render(truncate(status, statusWidth))
-	renderedHints := mutedStyle().Render(truncate(hints, hintWidth))
-	return renderedStatus + "  " + renderedHints
+	return strings.Join(rendered, separator)
 }
 
-func (m Model) commandHints() string {
+// renderFooterError lets an error talk over the left end of the hint row.
+// Errors are the one message that still shares the row — everything else
+// the footer used to announce either shows where it happens or rides in
+// the hints — and the hints keep their own ink beside it rather than
+// fading to gray.
+func renderFooterError(width int, message, hints string) string {
+	available := max(1, width)
+	messageWidth := clamp(available/3, 8, 28)
+	hintWidth := available - messageWidth - 2
+	if hintWidth < 12 {
+		return errorStyle().Render(truncate(message, available))
+	}
+	return errorStyle().Render(truncate(message, messageWidth)) +
+		"  " + ansi.Truncate(hints, hintWidth, "…")
+}
+
+// searchMatchLabel is the live position among search matches; it rides in
+// the hint row because the search has no other place to answer "which of
+// how many".
+func (m Model) searchMatchLabel() string {
+	if len(m.search.matches) == 0 {
+		return "no match"
+	}
+	return fmt.Sprintf("match %d/%d", m.search.index+1, len(m.search.matches))
+}
+
+func (m Model) commandHints() []string {
 	switch m.mode {
 	case modeCompose:
-		return "Enter send  Ctrl-j newline  Ctrl-v image  Esc cancel"
+		return []string{"Enter send", "Ctrl-j newline", "Ctrl-v image", "Esc cancel"}
 	case modeSearch:
-		return "type to search  Enter keep  n/N move  Esc cancel"
-	case modeDelete:
-		if m.activePane == paneWorkspaces &&
-			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) &&
-			len(m.groups[m.workspaceCursor].agents) > 0 {
-			return "X delete workspace and agents  Esc cancel"
+		hints := []string{"type to search", "Enter keep", "n/N move", "Esc cancel"}
+		if m.search.query != "" {
+			hints = append([]string{m.searchMatchLabel()}, hints[1:]...)
 		}
-		return "x confirm  Esc cancel"
+		return hints
+	case modeDelete:
+		// The confirmation names its victim here: the hint row is the
+		// prompt, so what x is about to delete has to be spelled out.
+		if m.activePane == paneWorkspaces &&
+			m.workspaceCursor >= 0 && m.workspaceCursor < len(m.groups) {
+			if count := len(m.groups[m.workspaceCursor].agents); count > 0 {
+				return []string{
+					fmt.Sprintf("X delete %s and %d agent(s)",
+						m.selectedWorkspaceLabel(), count),
+					"Esc cancel",
+				}
+			}
+			return []string{
+				"x remove " + m.selectedWorkspaceLabel(), "Esc cancel",
+			}
+		}
+		if selected, ok := m.selectedAgent(); ok {
+			return []string{
+				"x delete " + agentDisplayTitle(selected), "Esc cancel",
+			}
+		}
+		return []string{"x confirm", "Esc cancel"}
 	case modeDispatch:
 		switch m.formFocus {
 		case dispatchProvider:
-			hints := "j/k choose  Enter " + m.nextDispatchField() + "  m mode"
+			hints := []string{"j/k choose", "Enter " + m.nextDispatchField(), "m mode"}
 			if m.nvimPath != "" {
-				hints += "  e Neovim"
+				hints = append(hints, "e Neovim")
 			}
-			return hints + "  Esc cancel"
+			return append(hints, "Esc cancel")
 		case dispatchDirectory:
-			return "j/k location  Enter " + m.nextDispatchField() +
-				"  m mode  e edit path  Esc cancel"
+			return []string{
+				"j/k location", "Enter " + m.nextDispatchField(),
+				"m mode", "e edit path", "Esc cancel",
+			}
 		case dispatchCustomPath:
-			return "Enter choose  ↑/↓ pick  Backspace up  Tab " +
-				m.nextDispatchField() + "  Esc cancel"
+			return []string{
+				"Enter choose", "↑/↓ pick", "Backspace up",
+				"Tab " + m.nextDispatchField(), "Esc cancel",
+			}
 		case dispatchName:
-			return "name this agent  Enter " + m.nextDispatchField() +
-				"  Tab fields  Esc cancel"
+			return []string{
+				"name this agent", "Enter " + m.nextDispatchField(),
+				"Tab fields", "Esc cancel",
+			}
 		default:
 			// Enter launches, so the newline key has to be spelled out
 			// here — it is the one affordance in this field with nothing
 			// on screen to suggest it. The name row keeps its own label
 			// and cursor, and the line is only so wide.
-			hints := "Enter launch  Ctrl-j newline"
+			hints := []string{"Enter launch", "Ctrl-j newline"}
 			if m.nvimPath != "" {
-				hints += "  Ctrl-o Neovim"
+				hints = append(hints, "Ctrl-o Neovim")
 			}
-			return hints + "  Esc cancel"
+			return append(hints, "Esc cancel")
 		}
 	case modeAddWorkspace:
-		return "j/k select  Enter add  e edit path  Esc cancel"
+		return []string{"j/k select", "Enter add", "e edit path", "Esc cancel"}
 	case modeRename:
-		return "Enter apply  Esc cancel"
+		return []string{"Enter apply", "Esc cancel"}
 	case modeMark:
-		return "w in progress  a needs attention  c clear  Esc cancel"
+		return []string{"w in progress", "a needs attention", "c clear", "Esc cancel"}
 	}
 	rowMode := "z expand rows"
 	if m.rowsExpanded {
@@ -221,25 +267,36 @@ func (m Model) commandHints() string {
 	if m.activePane == paneInteraction {
 		if selected, ok := m.selectedAgent(); ok &&
 			selected.ProcessLive && selected.Attention.TerminalOwned() {
-			return "Enter answer in terminal  h agents  j/k scroll  M seen"
+			return []string{"Enter answer in terminal", "h agents", "j/k scroll", "M seen"}
 		}
+	}
+	appendCompact := func(hints []string, tail ...string) []string {
+		if rowMode != "" {
+			hints = append(hints, rowMode)
+		}
+		return append(hints, tail...)
 	}
 	switch m.activePane {
 	case paneAgents:
-		return strings.TrimSpace(
-			"h/l panes  j/k select  n new  m mark  M seen  , sort  " +
-				rowMode + "  Enter open",
+		return appendCompact(
+			[]string{"h/l panes", "j/k select", "n new", "m mark", "M seen", ", sort"},
+			"Enter open",
 		)
 	case paneInteraction:
 		if m.search.query != "" {
-			return "h agents  j/k scroll  n/N match  Esc clear  Enter open"
+			return []string{
+				"h agents", "j/k scroll", "n/N " + m.searchMatchLabel(),
+				"Esc clear", "Enter open",
+			}
 		}
-		return strings.TrimSpace(
-			"h agents  j/k scroll  i reply  / search  n new  " + rowMode + "  Enter open",
+		return appendCompact(
+			[]string{"h agents", "j/k scroll", "i reply", "/ search", "n new"},
+			"Enter open",
 		)
 	default:
-		return strings.TrimSpace(
-			"j/k select  l agents  n add  K info  , sort  " + rowMode + "  ? help  q quit",
+		return appendCompact(
+			[]string{"j/k select", "l agents", "n add", "K info", ", sort"},
+			"? help", "q quit",
 		)
 	}
 }

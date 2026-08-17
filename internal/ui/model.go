@@ -179,7 +179,6 @@ type Model struct {
 
 	interactionID       string
 	interactionLoadedAt time.Time
-	status              string
 	err                 error
 	shimmerPhase        int
 	shimmerRunning      bool
@@ -233,8 +232,7 @@ type interactionMsg struct {
 }
 
 type actionMsg struct {
-	status string
-	err    error
+	err error
 }
 
 type attachMsg struct {
@@ -335,7 +333,6 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		modeForDir:         options.ModeForDir,
 		providerForDir:     options.ProviderForDir,
 		shimmerRunning:     true,
-		status:             "Ready",
 		columns:            options.Columns,
 		ptyEnabled:         true,
 		ptyManager:         ptyview.NewManager(backend),
@@ -455,7 +452,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					// the box.
 					m.mode = modeNormal
 					m.sendInput.Blur()
-					m.status = "Agent needs input"
 				}
 			}
 		}
@@ -471,15 +467,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ptyEnabled && m.shouldReloadInteraction(previous) {
 			m.interactionLoadedAt = time.Now()
 			cmds = append(cmds, m.loadInteractionCmd())
-		}
-		if m.ptyEnabled {
-			if selected, ok := m.selectedAgent(); ok &&
-				!selected.ProcessLive && previous.ProcessLive &&
-				selected.ID == previous.ID {
-				// remain-on-exit keeps the pane, so the frame freezes on
-				// the death screen; say why nothing moves anymore.
-				m.status = "Process exited — terminal view frozen"
-			}
 		}
 		return m, tea.Batch(cmds...)
 
@@ -532,7 +519,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case attachMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "Action failed"
 			diagnostic.Logger().Error("dashboard open failed",
 				"agent", msg.name,
 				"error", msg.err,
@@ -540,7 +526,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.result.Command != nil {
-			m.status = "Opening " + msg.name
 			return m, tea.ExecProcess(msg.result.Command, func(err error) tea.Msg {
 				if err != nil {
 					diagnostic.Logger().Error("external attach failed",
@@ -552,16 +537,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		m.err = nil
-		m.status = "Attached"
 		return m, nil
 
 	case attachReturnedMsg:
 		m.err = msg.err
-		if msg.err != nil {
-			m.status = "Action failed"
-		} else {
-			m.status = "Returned from " + msg.name
-		}
 		// The attached client owned the window sizes while it looked;
 		// reassert the herd's 1:1 grid now that the dashboard is back.
 		return m, tea.Batch(m.refreshCmd(), resizeAllPTYCmd(m.ptyManager))
@@ -569,31 +548,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case actionMsg:
 		m.err = msg.err
 		if msg.err != nil {
-			m.status = "Action failed"
 			diagnostic.Logger().Error("dashboard action failed", "error", msg.err)
-		} else {
-			m.status = msg.status
 		}
 		return m, m.refreshCmd()
 
 	case directoryPickedMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "Action failed"
 			diagnostic.Logger().Error("directory picker failed", "error", msg.err)
 			return m, nil
 		}
 		if msg.path == "" {
-			if m.mode == modeAddWorkspace {
-				m.status = "Add workspace"
-			} else {
-				m.status = "New agent"
-			}
 			return m, nil
 		}
 		if m.mode == modeAddWorkspace {
 			m.cwdInput.SetValue(msg.path)
-			m.status = "Adding workspace"
 			return m, addWorkspaceCmd(m.backend, msg.path)
 		}
 		m.prepareDirectoryChoices(msg.path)
@@ -601,13 +570,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.syncTaskComposerSize()
-		m.status = "Directory selected"
 		return m, nil
 
 	case taskEditedMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "Action failed"
 			diagnostic.Logger().Error("task editor failed", "error", msg.err)
 			return m, nil
 		}
@@ -616,13 +583,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.focusForm()
 		m.syncTaskComposerSize()
 		m.err = nil
-		m.status = "Task updated"
 		return m, nil
 
 	case workspaceAddedMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "Action failed"
 			diagnostic.Logger().Error("add workspace failed", "error", msg.err)
 			return m, nil
 		}
@@ -631,7 +596,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.catalogWorkspaces = appendWorkspace(m.catalogWorkspaces, msg.value)
 		m.rebuildGroups(msg.value.ID, "")
 		m.activePane = paneWorkspaces
-		m.status = "Workspace added"
 		return m, nil
 
 	case overlayOpenedMsg:
@@ -669,12 +633,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePaste(msg)
 
 	case tea.KeyPressMsg:
-		if m.err != nil {
-			m.err = nil
-			if m.status == "Action failed" {
-				m.status = "Ready"
-			}
-		}
+		m.err = nil
 		if m.overlay != nil {
 			// The floating program owns the keyboard while it is up;
 			// ctrl+q cancels it.
@@ -707,7 +666,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case modeInfo, modeHelp:
 			// Any key dismisses an informational overlay.
 			m.mode = modeNormal
-			m.status = "Ready"
 			return m, nil
 		default:
 			// Reading the result is the presence proof: if an unseen result
@@ -810,12 +768,10 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "c":
 			mode = sortByCreated
 		default:
-			m.status = "Sort unchanged"
 			return m, nil
 		}
 		m.sortMode = mode
 		m.rebuildGroups(m.selectedWorkspaceID(), m.selectedAgentID())
-		m.status = "Sorted by " + mode.label()
 		return m, m.interactionFollowCmd()
 	}
 	if m.normalPrefix == "g" {
@@ -845,7 +801,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// of the display, via an interactive attachment.
 		if selected, ok := m.selectedAgent(); ok {
 			displayTitle := agentDisplayTitle(selected)
-			m.status = "Opening " + displayTitle
 			return m, attachCmd(m.backend, selected.ID, displayTitle)
 		}
 	case "j", "down":
@@ -898,7 +853,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ptyEnabled = true
 			m.ptyZoom = true
 			m.activePane = paneInteraction
-			m.status = "Ready"
 			return m, tea.Batch(m.ensurePTYCmd(), m.armPTYWait())
 		}
 		return m, nil
@@ -907,7 +861,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.ptyEnabled {
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Ready"
 				return m, m.armPTYWait()
 			}
 		}
@@ -924,14 +877,12 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// zoomed version.
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Ready"
 				return m, m.armPTYWait()
 			}
 			return m, nil
 		}
 		if selected, ok := m.selectedAgent(); ok {
 			displayTitle := agentDisplayTitle(selected)
-			m.status = "Opening " + displayTitle
 			return m, attachCmd(m.backend, selected.ID, displayTitle)
 		}
 	case "/":
@@ -960,7 +911,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.activePane == paneInteraction && m.search.query != "" {
 			m.clearSearch()
-			m.status = "Ready"
 			return m, nil
 		}
 	case "o":
@@ -970,7 +920,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// The live terminal is the composer; walking in is replying.
 			if _, ok := m.selectedAgent(); ok {
 				m.activePane = paneInteraction
-				m.status = "Ready"
 				return m, m.armPTYWait()
 			}
 			return m, nil
@@ -995,38 +944,27 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "x":
 		if selected, ok := m.selectedAgent(); ok {
-			m.status = "Interrupting " + agentDisplayTitle(selected)
 			return m, actionCmd("Interrupted", func(ctx context.Context) error {
 				return m.backend.Interrupt(ctx, selected.ID)
 			})
 		}
 	case "ctrl+x":
+		// The hint row names the victim while modeDelete holds; nothing
+		// else to announce here.
 		if m.activePane == paneWorkspaces {
-			selected, ok := m.selectedWorkspace()
-			if !ok {
+			if _, ok := m.selectedWorkspace(); !ok {
 				return m, nil
 			}
 			m.mode = modeDelete
 			m.err = nil
-			if count := len(m.groups[m.workspaceCursor].agents); count > 0 {
-				m.status = fmt.Sprintf(
-					"Delete %s and %d agent(s)? press X",
-					m.selectedWorkspaceLabel(),
-					count,
-				)
-			} else {
-				m.status = "Remove " + selected.Name + "? press again"
-			}
 			return m, nil
 		}
-		if selected, ok := m.selectedAgent(); ok {
+		if _, ok := m.selectedAgent(); ok {
 			m.mode = modeDelete
 			m.err = nil
-			m.status = "Delete " + agentDisplayTitle(selected) + "? press again"
 			return m, nil
 		}
 	case "r", "ctrl+l":
-		m.status = "Refreshing"
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()
@@ -1038,7 +976,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.activePane == paneWorkspaces {
 			if _, ok := m.selectedWorkspace(); ok {
 				m.mode = modeInfo
-				m.status = "Workspace info"
 			}
 			return m, nil
 		}
@@ -1046,7 +983,6 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.beginHistory()
 	case "?":
 		m.mode = modeHelp
-		m.status = "Keys"
 		return m, nil
 	}
 

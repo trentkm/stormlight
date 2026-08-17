@@ -89,18 +89,20 @@ func shimmerTickCmd() tea.Cmd {
 	})
 }
 
-func actionCmd(status string, action func(context.Context) error) tea.Cmd {
+// actionCmd runs a backend action; label names it in the failure log only —
+// the dashboard does not announce successes.
+func actionCmd(label string, action func(context.Context) error) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := action(ctx)
 		if err != nil {
 			diagnostic.Logger().Error("dashboard command failed",
-				"action", status,
+				"action", label,
 				"error", err,
 			)
 		}
-		return actionMsg{status: status, err: err}
+		return actionMsg{err: err}
 	}
 }
 
@@ -126,7 +128,7 @@ func dispatchCmd(backend Backend, request app.DispatchRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		managedAgent, err := backend.Dispatch(ctx, request)
+		_, err := backend.Dispatch(ctx, request)
 		if err != nil {
 			diagnostic.Logger().Error("dashboard dispatch failed",
 				"provider", request.Provider,
@@ -134,6 +136,6 @@ func dispatchCmd(backend Backend, request app.DispatchRequest) tea.Cmd {
 			)
 			return actionMsg{err: err}
 		}
-		return actionMsg{status: "Dispatched " + agentDisplayTitle(managedAgent)}
+		return actionMsg{}
 	}
 }

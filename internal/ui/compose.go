@@ -66,7 +66,6 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// conversation, Esc leaves it.
 		m.sendInput.SetValue("")
 		m.syncComposerSize()
-		m.status = "Sending to " + selected.Name
 		return m, actionCmd("Message sent", func(ctx context.Context) error {
 			return m.backend.Send(ctx, selected.ID, text)
 		})
@@ -83,7 +82,6 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) closeComposer() Model {
 	m.mode = modeNormal
 	m.sendInput.Blur()
-	m.status = "Ready"
 	return m
 }
 

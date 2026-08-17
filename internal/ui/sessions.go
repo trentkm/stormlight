@@ -24,7 +24,6 @@ import (
 func (m Model) beginHistory() (tea.Model, tea.Cmd) {
 	m.mode = modeHistory
 	m.err = nil
-	m.status = "Session history"
 	m.historyCursor = 0
 	m.historyRecords = nil
 	m.historyLoading = true
@@ -50,7 +49,6 @@ func (m Model) updateHistory(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = modeNormal
-		m.status = "Ready"
 		return m, nil
 	case "/":
 		m.historyFiltering = true
@@ -116,20 +114,14 @@ func (m Model) resumeSelectedHistory() (tea.Model, tea.Cmd) {
 	}
 	record := visible[min(m.historyCursor, len(visible)-1)]
 	m.mode = modeNormal
-	m.status = "Resuming " + historyTitle(record)
 	backend := m.backend
 	return m, tea.Batch(
 		func() tea.Msg {
 			ctx, cancel := context.WithTimeout(
 				context.Background(), resumeTimeout)
 			defer cancel()
-			managedAgent, err := backend.Resume(ctx, record)
-			if err != nil {
-				return actionMsg{err: err}
-			}
-			return actionMsg{
-				status: "Resumed " + agentDisplayTitle(managedAgent),
-			}
+			_, err := backend.Resume(ctx, record)
+			return actionMsg{err: err}
 		},
 		m.refreshCmd(),
 	)

@@ -645,7 +645,6 @@ func (m Model) resizeColumns(key string) (tea.Model, tea.Cmd) {
 	interactionWidth, contentHeight := m.interactionDimensions()
 	m.interaction.SetWidth(interactionWidth)
 	m.interaction.SetHeight(contentHeight)
-	m.status = fmt.Sprintf("Columns %d · %d · %d", afterW, afterA, afterI)
 	if m.ptyEnabled {
 		return m, m.ensurePTYCmd()
 	}

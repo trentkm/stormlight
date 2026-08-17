@@ -24,18 +24,12 @@ func (m Model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.mode = modeNormal
 				return m, nil
 			}
-			if count := len(m.groups[m.workspaceCursor].agents); count > 0 {
+			if len(m.groups[m.workspaceCursor].agents) > 0 {
 				// Deleting agents needs the deliberate keystroke; stay in
-				// the confirmation and say so.
-				m.status = fmt.Sprintf(
-					"%s has %d agent(s) — press X to delete everything",
-					m.selectedWorkspaceLabel(),
-					count,
-				)
+				// the confirmation — the hint row is already asking for X.
 				return m, nil
 			}
 			m.mode = modeNormal
-			m.status = "Removing " + selected.Name
 			return m, actionCmd("Workspace removed", func(ctx context.Context) error {
 				return m.backend.RemoveWorkspace(ctx, selected)
 			})
@@ -45,7 +39,6 @@ func (m Model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		m.status = "Deleting " + agentDisplayTitle(selected)
 		return m, actionCmd("Agent deleted", func(ctx context.Context) error {
 			return m.backend.Delete(ctx, selected.ID)
 		})
@@ -59,9 +52,7 @@ func (m Model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		doomed := slices.Clone(m.groups[m.workspaceCursor].agents)
-		label := m.selectedWorkspaceLabel()
 		m.mode = modeNormal
-		m.status = fmt.Sprintf("Deleting %s and %d agent(s)", label, len(doomed))
 		backend := m.backend
 		return m, actionCmd("Workspace and agents deleted",
 			func(ctx context.Context) error {
@@ -78,7 +69,6 @@ func (m Model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 	case "n", "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
-		m.status = "Ready"
 	}
 	return m, nil
 }
@@ -222,7 +212,6 @@ func (m Model) beginRename() (tea.Model, tea.Cmd) {
 	m.renameInput.Focus()
 	m.mode = modeRename
 	m.err = nil
-	m.status = "Rename"
 	return m, nil
 }
 
@@ -230,7 +219,6 @@ func (m Model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
-		m.status = "Ready"
 		return m, nil
 	case "enter":
 		name := strings.TrimSpace(m.renameInput.Value())
@@ -242,13 +230,11 @@ func (m Model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		backend := m.backend
 		if m.renameAgentID != "" {
 			id := m.renameAgentID
-			m.status = "Renaming agent"
 			return m, actionCmd("Agent renamed", func(ctx context.Context) error {
 				return backend.Rename(ctx, id, name)
 			})
 		}
 		target := m.renameWorkspace
-		m.status = "Renaming workspace"
 		return m, actionCmd("Workspace renamed", func(ctx context.Context) error {
 			return backend.RenameWorkspace(ctx, target, name)
 		})

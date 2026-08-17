@@ -14,7 +14,7 @@ func TestTerminalControlsReplaceDashboardFooterHints(t *testing.T) {
 		width:      120,
 		keys:       defaultKeyBindings(),
 	}
-	hints := model.commandHints()
+	hints := strings.Join(model.commandHints(), " ")
 	for _, want := range []string{"ctrl+space out", "+j/k agents", "+n/p queue", "+z zoom"} {
 		if !strings.Contains(hints, want) {
 			t.Fatalf("terminal footer hints missing %q: %q", want, hints)
