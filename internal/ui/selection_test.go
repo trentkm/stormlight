@@ -16,17 +16,15 @@ const (
 )
 
 type clipboardCopyModel struct {
-	status string
-	err    error
+	err error
 }
 
 func (m clipboardCopyModel) Init() tea.Cmd {
-	return copyToClipboardCmd(clipboardTestText, 2)
+	return copyToClipboardCmd(clipboardTestText)
 }
 
 func (m clipboardCopyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if action, ok := msg.(actionMsg); ok {
-		m.status = action.status
 		m.err = action.err
 		return m, tea.Quit
 	}
@@ -106,9 +104,6 @@ func assertClipboardSuccess(t *testing.T, model clipboardCopyModel) {
 	t.Helper()
 	if model.err != nil {
 		t.Fatalf("copy failed: %v", model.err)
-	}
-	if model.status != "Copied 2 lines" {
-		t.Fatalf("status = %q, want %q", model.status, "Copied 2 lines")
 	}
 }
 

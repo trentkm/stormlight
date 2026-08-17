@@ -43,7 +43,6 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc", "ctrl+c", "ctrl+[":
 		m.mode = modeNormal
 		m.blurForm()
-		m.status = "Ready"
 		return m, nil
 	case "j", "down":
 		if m.formFocus == dispatchDirectory {
@@ -423,7 +422,6 @@ func (m Model) beginAddWorkspace() (tea.Model, tea.Cmd) {
 	m.dispatchPrefix = ""
 	m.focusForm()
 	m.err = nil
-	m.status = "Add workspace"
 	return m, nil
 }
 
@@ -434,6 +432,5 @@ func (m Model) submitAddWorkspace(path string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.blurForm()
-	m.status = "Adding workspace"
 	return m, addWorkspaceCmd(m.backend, path)
 }

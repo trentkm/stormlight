@@ -29,7 +29,6 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// with it, so it always lands back on the roster.
 		m.ptyZoom = false
 		m.activePane = paneAgents
-		m.status = "Ready"
 		return m, m.ensurePTYCmd()
 	case slices.Contains(m.keys.AgentsNext, key):
 		// Switch agents without stepping out: the portal swaps terminals

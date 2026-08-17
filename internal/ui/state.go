@@ -367,7 +367,7 @@ func clearAttentionCmd(backend Backend, ids ...string) tea.Cmd {
 			}
 		}
 		if err := errors.Join(failures...); err != nil {
-			return actionMsg{status: "Attention cleared", err: err}
+			return actionMsg{err: err}
 		}
 		// No actionMsg on success: seen-clearing is ambient, not an
 		// action worth announcing or refreshing over.
@@ -397,6 +397,5 @@ func (m Model) clearAttention() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.markAttentionSeen(ids...)
-	m.status = "Marked seen"
 	return m, clearAttentionCmd(m.backend, ids...)
 }
