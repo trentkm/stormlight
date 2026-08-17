@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspace resolvers — Stormlight</title>
+<meta name="description" content="How Stormlight resolves directories into workspace groups, and the executable resolver protocol.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%3E%3Cpath%20stroke%3D%22%2362aeef%22%20d%3D%22M6%2016.326A7%207%200%201%201%2015.71%208h1.79a4.5%204.5%200%200%201%20.5%208.973%22%2F%3E%3Cpath%20stroke%3D%22%2326799d%22%20d%3D%22m13%2012-3%205h4l-3%205%22%2F%3E%3C%2Fsvg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@300..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="storm"></div>
+<div class="grain"></div>
+
+<header class="wrap nav">
+  <a class="wordmark" href="../">STORMLIGHT<span class="spark"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973"/><path d="m13 12-3 5h4l-3 5"/></svg></span></a>
+  <nav class="nav-links">
+    <a href="../#design">design</a>
+    <a href="../#windrunner">windrunner</a>
+    <a href="./">docs</a>
+    <a href="https://github.com/trentkm/stormlight">github</a>
+  </nav>
+</header>
+
+<div class="docwrap">
+<aside class="side">
+  <p class="side-title">Documentation</p>
+  <ul>
+    <li><a href="./">Overview</a></li>
+    <li><a href="architecture.html">Architecture</a></li>
+    <li class="current"><a href="workspace-resolvers.html">Workspace resolvers</a><ul class="sections">
+    <li><a href="#resolution-order">Resolution order</a></li>
+    <li><a href="#executable-protocol">Executable protocol</a></li>
+    </ul></li>
+    <li><a href="configuration.html">Configuration</a></li>
+  </ul>
+</aside>
+<main class="doc">
+  <h1 class="doc-title">Workspace resolvers</h1>
+  <p class="doc-lede">Stormlight resolves every working directory into three levels:</p>
+
+  <article>
+<pre><code>workspace group
+  execution root
+    agent</code></pre>
+    <p>The workspace ID controls grouping. The execution root identifies the checkout,
+    worktree, or other runnable directory used by an agent. An optional component describes
+    a package inside a larger workspace.</p>
+
+    <h2 id="resolution-order">Resolution order</h2>
+    <p>Resolvers run in this order:</p>
+    <ol>
+      <li>Executable resolvers from <code>~/.config/stormlight/resolvers</code>, sorted by
+      filename.</li>
+      <li>The built-in Git resolver.</li>
+      <li>A canonical-directory fallback.</li>
+    </ol>
+    <p>Set <code>STORMLIGHT_RESOLVERS_DIR</code> to use a different executable directory.
+    External resolvers run first so a monorepo or proprietary workspace can take precedence
+    over Git repositories nested inside it.</p>
+    <p>The Git resolver derives the workspace ID from the canonical
+    <code>git rev-parse --git-common-dir</code> path. Linked worktrees therefore appear in
+    one workspace group with distinct execution roots. Independent clones remain separate
+    groups.</p>
+
+    <h2 id="executable-protocol">Executable protocol</h2>
+    <p>Each non-hidden executable in the resolver directory is invoked as:</p>
+<pre><code>resolver resolve &lt;canonical-directory&gt;</code></pre>
+    <p>The process working directory is also set to the canonical directory.</p>
+    <p>Exit status <code>0</code> means the resolver matched and must emit one JSON object
+    on standard output. Exit status <code>2</code> means the resolver is not applicable. Any
+    other status is logged as a resolver failure and resolution continues.</p>
+    <p>Example:</p>
+<pre><code>{
+  "id": "monorepo:/home/me/src/example",
+  "kind": "monorepo",
+  "name": "example",
+  "root": "/home/me/src/example",
+  "execution_root": "/home/me/src/example",
+  "component_name": "payments",
+  "component_root": "/home/me/src/example/services/payments",
+  "metadata": {
+    "profile": "development"
+  }
+}</code></pre>
+    <p><code>kind</code> and <code>root</code> are required. <code>id</code> defaults to
+    <code>&lt;kind&gt;:&lt;root&gt;</code>, <code>name</code> defaults to the root directory
+    name, and <code>execution_root</code> defaults to <code>root</code>. All returned paths
+    must exist and be directories. IDs must remain stable for directories that belong in the
+    same workspace group.</p>
+    <p>Resolvers are trusted local executables and run during dispatch and workspace catalog
+    loading. Stormlight caches successful results for the life of the process.</p>
+  </article>
+
+  <nav class="doc-pager"><a href="architecture.html">← Architecture</a><a href="configuration.html">Configuration →</a></nav>
+</main>
+</div>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>stormlight · pre-1.0, moving fast</span>
+    <span>
+      <a href="https://github.com/trentkm/stormlight">stormlight</a> ·
+      <a href="https://github.com/trentkm/windrunner">windrunner</a> ·
+      <a href="./">docs</a>
+    </span>
+  </div>
+</footer>
+<script src="../assets/docs.js"></script>
+</body>
+</html>

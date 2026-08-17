@@ -208,6 +208,29 @@ format, the state files — is stable enough that breaking it costs a major
 bump. Cut it when that promise is one worth keeping, not when the minor
 number looks large.
 
+## The website
+
+`site/` is the public site, deployed to GitHub Pages by `pages.yml` whenever
+a push to `main` touches it. It is plain static HTML — no build step — and
+its docs pages are hand-rendered copies of `docs/*.md`, not generated from
+them, so nothing keeps the two in sync automatically.
+
+That makes drift the failure mode to watch for. A change that lands in
+`docs/architecture.md`, `docs/workspace-resolvers.md`, or the config design
+doc without reaching its `site/docs/*.html` counterpart leaves the website
+describing an architecture that no longer exists — worse than no docs,
+because it reads as authoritative. When a PR materially changes what those
+documents say — new layers, renamed contracts, changed state semantics —
+update the matching site page in the same PR. Section headings in the site's
+pages carry `id` anchors that the sidebar links target; keep them consistent
+when adding or removing sections. The landing page (`site/index.html`) tells
+the shorter story and only needs touching when the user-facing pitch changes:
+a new pane, a renamed concept, a different install path.
+
+Cosmetic drift matters less than semantic drift. Wording differences between
+a doc and its site rendering are fine; a site page claiming a contract the
+code no longer honors is not.
+
 ## Headless TUI testing
 
 The dashboard and agent lifecycle can be exercised without a real terminal.
