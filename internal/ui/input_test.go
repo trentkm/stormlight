@@ -1463,6 +1463,113 @@ func TestVimPaneNavigation(t *testing.T) {
 	}
 }
 
+func TestAgentNavigationCrossesWorkspaceBoundaries(t *testing.T) {
+	groups := []workspaceGroup{
+		{
+			context: workspace.DirectoryContext("/workspace/one"),
+			agents: []agent.Agent{
+				{ID: "one"},
+				{ID: "two"},
+			},
+		},
+		{context: workspace.DirectoryContext("/workspace/empty")},
+		{
+			context: workspace.DirectoryContext("/workspace/three"),
+			agents: []agent.Agent{
+				{ID: "three"},
+				{ID: "four"},
+			},
+		},
+	}
+	tests := []struct {
+		name            string
+		workspaceCursor int
+		agentCursor     int
+		delta           int
+		wantWorkspace   int
+		wantAgent       int
+	}{
+		{
+			name:            "down enters next non-empty workspace",
+			workspaceCursor: 0,
+			agentCursor:     1,
+			delta:           1,
+			wantWorkspace:   2,
+			wantAgent:       0,
+		},
+		{
+			name:            "up enters previous non-empty workspace",
+			workspaceCursor: 2,
+			agentCursor:     0,
+			delta:           -1,
+			wantWorkspace:   0,
+			wantAgent:       1,
+		},
+		{
+			name:            "multi-row movement crosses workspaces",
+			workspaceCursor: 0,
+			agentCursor:     0,
+			delta:           3,
+			wantWorkspace:   2,
+			wantAgent:       1,
+		},
+		{
+			name:            "down from empty workspace finds next agent",
+			workspaceCursor: 1,
+			agentCursor:     0,
+			delta:           1,
+			wantWorkspace:   2,
+			wantAgent:       0,
+		},
+		{
+			name:            "up from empty workspace finds previous agent",
+			workspaceCursor: 1,
+			agentCursor:     0,
+			delta:           -1,
+			wantWorkspace:   0,
+			wantAgent:       1,
+		},
+		{
+			name:            "top boundary clamps",
+			workspaceCursor: 0,
+			agentCursor:     0,
+			delta:           -1,
+			wantWorkspace:   0,
+			wantAgent:       0,
+		},
+		{
+			name:            "bottom boundary clamps",
+			workspaceCursor: 2,
+			agentCursor:     1,
+			delta:           1,
+			wantWorkspace:   2,
+			wantAgent:       1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := NewModel(stubBackend{})
+			model.groups = groups
+			model.workspaceCursor = test.workspaceCursor
+			model.agentCursor = test.agentCursor
+
+			model.moveSelectionIn(paneAgents, test.delta)
+
+			if model.workspaceCursor != test.wantWorkspace ||
+				model.agentCursor != test.wantAgent {
+				t.Fatalf(
+					"selection = workspace %d agent %d, want workspace %d agent %d",
+					model.workspaceCursor,
+					model.agentCursor,
+					test.wantWorkspace,
+					test.wantAgent,
+				)
+			}
+		})
+	}
+}
+
 func TestWorkspaceGroupingDrivesAgentPane(t *testing.T) {
 	gitWorkspace := workspace.Context{
 		ID:            "git:/repo/.git",

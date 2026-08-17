@@ -269,11 +269,7 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 		m.workspaceCursor = clamp(m.workspaceCursor+delta, 0, len(m.groups)-1)
 		m.agentCursor = 0
 	case paneAgents:
-		agents := m.agentsForSelectedWorkspace()
-		if len(agents) == 0 {
-			return
-		}
-		m.agentCursor = clamp(m.agentCursor+delta, 0, len(agents)-1)
+		m.moveAgentSelection(delta)
 	case paneInteraction:
 		if m.ptyEnabled {
 			// The PTY view scrolls the emulator's history; positive delta
@@ -290,6 +286,42 @@ func (m *Model) moveSelectionIn(target pane, delta int) {
 		} else {
 			m.interaction.ScrollUp(-delta)
 		}
+	}
+}
+
+func (m *Model) moveAgentSelection(delta int) {
+	direction := 1
+	if delta < 0 {
+		direction = -1
+	}
+
+	for delta != 0 {
+		agents := m.agentsForSelectedWorkspace()
+		if len(agents) > 0 {
+			m.agentCursor = clamp(m.agentCursor, 0, len(agents)-1)
+			nextAgent := m.agentCursor + direction
+			if nextAgent >= 0 && nextAgent < len(agents) {
+				m.agentCursor = nextAgent
+				delta -= direction
+				continue
+			}
+		}
+
+		nextWorkspace := m.workspaceCursor + direction
+		for nextWorkspace >= 0 && nextWorkspace < len(m.groups) &&
+			len(m.groups[nextWorkspace].agents) == 0 {
+			nextWorkspace += direction
+		}
+		if nextWorkspace < 0 || nextWorkspace >= len(m.groups) {
+			return
+		}
+
+		m.workspaceCursor = nextWorkspace
+		m.agentCursor = 0
+		if direction < 0 {
+			m.agentCursor = len(m.groups[nextWorkspace].agents) - 1
+		}
+		delta -= direction
 	}
 }
 
