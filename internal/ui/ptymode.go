@@ -250,8 +250,12 @@ func (m Model) terminalHints() []string {
 		return []string{fmt.Sprintf(
 			"scrolled %d lines up — wheel down to follow", widget.Scrolled())}
 	}
+	out := "left/ctrl+space out"
+	if m.ptyZoom {
+		out = "ctrl+space out"
+	}
 	return []string{
-		"ctrl+space out",
+		out,
 		chordPair(m.keys.AgentsNext, m.keys.AgentsPrevious) + " agents",
 		chordPair(m.keys.QueueNext, m.keys.QueuePrevious) + " queue",
 		chordName(m.keys.Zoom[0]) + " zoom",

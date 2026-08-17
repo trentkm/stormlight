@@ -1,9 +1,11 @@
 package ui
 
 import (
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTerminalControlsReplaceDashboardFooterHints(t *testing.T) {
@@ -25,6 +27,33 @@ func TestTerminalControlsReplaceDashboardFooterHints(t *testing.T) {
 	}
 	if strings.Contains(hints, "i reply") {
 		t.Fatalf("dashboard interaction hints remained in terminal footer: %q", hints)
+	}
+
+	model.ptyZoom = true
+	hints = strings.Join(model.commandHints(), " ")
+	if strings.Contains(hints, "left/") {
+		t.Fatalf("zoomed terminal advertises docked navigation: %q", hints)
+	}
+	if !strings.Contains(hints, "ctrl+space out") {
+		t.Fatalf("zoomed terminal lost its exit chord: %q", hints)
+	}
+}
+
+func TestLeftLeavesDockedTerminalForAgentRoster(t *testing.T) {
+	model := Model{
+		mode:       modeNormal,
+		activePane: paneInteraction,
+		ptyEnabled: true,
+	}
+
+	updated, cmd := model.updateTerminalKey(tea.KeyPressMsg{Code: tea.KeyLeft})
+	model = updated.(Model)
+
+	if model.activePane != paneAgents {
+		t.Fatalf("active pane = %d, want agents", model.activePane)
+	}
+	if cmd != nil {
+		t.Fatal("left produced a terminal command")
 	}
 }
 

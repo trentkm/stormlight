@@ -1,8 +1,8 @@
 package ui
 
 // Keyboard routing for Stormlight's PTY view: while the pane holds focus the
-// keyboard belongs to the agent's terminal, byte for byte. ctrl+q hands it
-// back to the dashboard.
+// keyboard belongs to the agent's terminal, byte for byte. The docked view's
+// left arrow and the seam chords hand it back to the dashboard.
 
 import (
 	tea "charm.land/bubbletea/v2"
@@ -24,6 +24,12 @@ import (
 func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch {
+	case key == "left" && !m.ptyZoom:
+		// Docked, left follows the visible pane hierarchy back to the roster.
+		// Zoomed, the hidden hierarchy cannot suggest that meaning, so the
+		// hosted terminal keeps the key for cursor movement.
+		m.activePane = paneAgents
+		return m, nil
 	case key == "ctrl+q" || key == "ctrl+space" || key == "ctrl+@":
 		// The seam key: one step out, from anywhere inside. Zoom collapses
 		// with it, so it always lands back on the roster.
