@@ -193,6 +193,10 @@ open between messages. Press `Enter` to send, `Ctrl-j` for a newline, and
 Press `/` to search the transcript (`n`/`N` between matches). Drag with the
 mouse to highlight transcript lines — releasing copies them to the system
 clipboard.
+Stormlight enables terminal mouse reporting for these controls, so the
+terminal's usual hyperlink gesture needs its mouse-capture override. In
+Ghostty on macOS, open links with `Shift-Command-click`; without mouse
+reporting, the usual `Command-click` is enough.
 Provider slash commands (`/compact`, `/clear`, custom skills) work from the
 reply box too — a single-line message starting with `/` is typed into the
 agent as a command instead of pasted as text. In terminal view the agent's
