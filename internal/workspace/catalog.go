@@ -10,9 +10,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/trentkm/stormlight/internal/filelock"
 )
 
-const catalogVersion = 1
+const (
+	catalogVersion     = 1
+	catalogLockTimeout = time.Second
+)
 
 type Catalog struct {
 	path string
@@ -52,6 +58,11 @@ func (c *Catalog) Add(path string) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	unlock, err := c.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	data, err := c.read()
 	if err != nil {
@@ -72,6 +83,11 @@ func (c *Catalog) Remove(path string) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	unlock, err := c.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	data, err := c.read()
 	if err != nil {
@@ -95,6 +111,11 @@ func (c *Catalog) SetName(path, name string) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	unlock, err := c.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	data, err := c.read()
 	if err != nil {
@@ -187,6 +208,23 @@ func (c *Catalog) write(data catalogData) error {
 		return fmt.Errorf("replace workspace catalog: %w", err)
 	}
 	return nil
+}
+
+// lock serializes read-modify-write mutations across Stormlight processes.
+// The sibling lock file survives the catalog's atomic rename, so every
+// process continues to lock the same inode.
+func (c *Catalog) lock() (func(), error) {
+	if strings.TrimSpace(c.path) == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
+		return nil, fmt.Errorf("create workspace catalog directory: %w", err)
+	}
+	unlock, err := filelock.Acquire(c.path+".lock", 0o600, catalogLockTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("lock workspace catalog: %w", err)
+	}
+	return unlock, nil
 }
 
 func catalogPath() string {

@@ -65,6 +65,25 @@ defaults to the root directory name, and `execution_root` defaults to `root`.
 All returned paths must exist and be directories. IDs must remain stable for
 directories that belong in the same workspace group.
 
+Resolvers may also enumerate every runnable location in a workspace:
+
+```text
+resolver roots <canonical-workspace-root>
+```
+
+Exit status `0` must emit a JSON array of workspace context objects. Every
+object must carry the same workspace ID and root, with its own
+`execution_root`. Exit status `2` means enumeration is not applicable. Other
+failures are logged and Stormlight falls back to the resolved context.
+
+An execution-root context may set `metadata.execution_root_label` to control
+the directory picker's label and the agent's dashboard badge, including for
+the primary root. Without it, custom non-primary roots use
+`root <directory-name>`.
+
 Resolvers are trusted local executables and run during dispatch and workspace
-catalog loading. Stormlight caches successful results for the life of the
-process.
+catalog loading. Stormlight caches successful resolution for the life of the
+process. Root enumeration runs only on the resolver that claimed the workspace,
+has a one-second deadline, and caches successful, unsupported, and failed
+outcomes for five seconds. A failed or timed-out inventory never blocks
+dashboard refresh; it logs the failure and exposes the resolved primary root.

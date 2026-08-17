@@ -94,8 +94,12 @@
     agent.</p>
     <p>Workspace resolvers return a stable group ID, a group root, an execution root, and
     optional component metadata. External executable resolvers run before the built-in Git
-    resolver, followed by a canonical-directory fallback. This keeps environment-specific
-    workspace semantics outside the public runtime.</p>
+    resolver, followed by a canonical-directory fallback. Resolvers may also enumerate a
+    group's current execution roots; the application service exposes that same inventory to
+    the CLI and dashboard directory picker. Enumeration is routed back to the resolver that
+    claimed the workspace and is bounded, cached, and best-effort, so a failed external
+    integration cannot block dashboard refresh. This keeps environment-specific workspace
+    semantics outside the public runtime.</p>
 
     <h3 id="windrunner-runtime">windrunner runtime</h3>
     <p>Process and terminal ownership live in a daemon built on the

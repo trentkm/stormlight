@@ -23,10 +23,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/filelock"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -177,6 +177,7 @@ func (l *Log) load() ([]Record, int, error) {
 // so the file grows past its information content by design; below this
 // floor a rewrite saves less than it costs.
 const compactionSlack = 256
+const lockTimeout = 5 * time.Second
 
 // Compact rewrites the log as one line per session when enough redundant
 // lines have accumulated. It is meant for a startup path — the dashboard
@@ -221,18 +222,11 @@ func (l *Log) Compact() error {
 // lock file's path never changes, so its inode is the one thing every
 // writer agrees on.
 func (l *Log) lock() (func(), error) {
-	file, err := os.OpenFile(l.path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	unlock, err := filelock.Acquire(l.path+".lock", 0o644, lockTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("open session history lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		file.Close()
 		return nil, fmt.Errorf("lock session history: %w", err)
 	}
-	return func() {
-		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		file.Close()
-	}, nil
+	return unlock, nil
 }
 
 func logPath() string {

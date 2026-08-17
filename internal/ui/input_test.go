@@ -2148,6 +2148,35 @@ func TestCheckoutBadgeColors(t *testing.T) {
 	}
 }
 
+func TestCustomAgentNamesItsExecutionRoot(t *testing.T) {
+	badge := agentCheckout(agent.Agent{Workspace: workspace.Context{
+		ID:            "custom:/workspace",
+		Kind:          "custom",
+		Name:          "workspace",
+		Root:          "/workspace",
+		ExecutionRoot: "/workspace/worktrees/fix-auth",
+	}})
+	if badge.text != "root fix-auth" || badge.primary {
+		t.Fatalf("badge = %#v", badge)
+	}
+}
+
+func TestCustomAgentHonorsPrimaryExecutionRootLabel(t *testing.T) {
+	badge := agentCheckout(agent.Agent{Workspace: workspace.Context{
+		ID:            "custom:/workspace",
+		Kind:          "custom",
+		Name:          "workspace",
+		Root:          "/workspace",
+		ExecutionRoot: "/workspace",
+		Metadata: map[string]string{
+			"execution_root_label": "development root",
+		},
+	}})
+	if badge.text != "development root" || !badge.primary {
+		t.Fatalf("badge = %#v", badge)
+	}
+}
+
 // A narrow pane drops the path before the badge: the path restates the
 // checkout, the badge is the only token that names it. Tokens fall from the
 // tail, so the state and the provider outlive both.
@@ -2273,6 +2302,43 @@ func TestAddWorkspaceCommandUpdatesDashboard(t *testing.T) {
 	}
 }
 
+func TestDirectoryPickerIncludesDiscoveredExecutionRoots(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(t.TempDir(), "feature-one")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	primary := workspace.Context{
+		ID:            "custom:" + root,
+		Kind:          "custom",
+		Name:          "example",
+		Root:          root,
+		ExecutionRoot: root,
+		Metadata: map[string]string{
+			"execution_root_label": "primary root",
+		},
+	}
+	linked := primary
+	linked.ExecutionRoot = worktree
+	linked.Metadata = map[string]string{
+		"execution_root_label": "feature root",
+	}
+	model := NewModel(&recordingBackend{})
+	model.workspaceRoots = []workspace.Context{primary, linked}
+	model.prepareDirectoryChoices(root)
+
+	labels := make(map[string]string)
+	for _, choice := range model.directories {
+		if choice.kind == directoryPath {
+			labels[choice.path] = choice.label
+		}
+	}
+	if labels[root] != "example / primary root" ||
+		labels[worktree] != "example / feature root" {
+		t.Fatalf("directory labels = %#v", labels)
+	}
+}
+
 func TestActionErrorSurvivesSuccessfulRefresh(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.err = errors.New("attach failed")
@@ -2301,6 +2367,10 @@ func (stubBackend) ListAgents(context.Context) ([]agent.Agent, error) {
 }
 
 func (stubBackend) ListWorkspaces(context.Context) ([]workspace.Context, error) {
+	return nil, nil
+}
+
+func (stubBackend) ListWorkspaceRoots(context.Context) ([]workspace.Context, error) {
 	return nil, nil
 }
 
@@ -2374,12 +2444,13 @@ func (stubBackend) Resume(context.Context, history.Record) (agent.Agent, error) 
 
 type recordingBackend struct {
 	stubBackend
-	providers   []provider.Info
-	request     app.DispatchRequest
-	addedPath   string
-	sentID      string
-	sentMessage string
-	attachedID  string
+	providers      []provider.Info
+	workspaceRoots []workspace.Context
+	request        app.DispatchRequest
+	addedPath      string
+	sentID         string
+	sentMessage    string
+	attachedID     string
 }
 
 func (b *recordingBackend) Dispatch(_ context.Context, request app.DispatchRequest) (agent.Agent, error) {
@@ -2392,6 +2463,12 @@ func (b *recordingBackend) Dispatch(_ context.Context, request app.DispatchReque
 
 func (b *recordingBackend) Providers() []provider.Info {
 	return b.providers
+}
+
+func (b *recordingBackend) ListWorkspaceRoots(
+	context.Context,
+) ([]workspace.Context, error) {
+	return b.workspaceRoots, nil
 }
 
 func (b *recordingBackend) AddWorkspace(

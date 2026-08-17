@@ -149,6 +149,29 @@ stormlight delete <id>
 stormlight logs
 ```
 
+Manage workspaces without opening the dashboard:
+
+```bash
+stormlight workspace add ~/src/project
+stormlight workspace list --json
+stormlight workspace roots ~/src/project --json
+```
+
+Managed agents receive `$STORMLIGHT_BIN`, so they can add workspaces and create
+peer agents when a task calls for parallel work:
+
+```bash
+"$STORMLIGHT_BIN" workspace add ~/src/project
+"$STORMLIGHT_BIN" dispatch --cwd ~/src/project \
+  "Investigate the failing integration test"
+```
+
+`workspace roots` defaults to the current directory and emits every runnable
+location in the resolved workspace. An orchestrating agent can use that
+inventory to dispatch one peer per checkout. The dashboard polls the same
+workspace catalog, root inventory, and managed-agent roster, so all changes
+appear without a restart.
+
 Agent renames set the stored name, which the dashboard prefers over the
 generated task title. Workspace renames (press `R` in the Workspaces pane)
 are display-name overrides stored in the workspace catalog; the directory on
@@ -275,6 +298,12 @@ active agents remain visible even when they are not in the catalog, so the
 ordinary confirmation only removes agent-free workspaces. For a workspace
 that still has agents, the confirmation demands a deliberate capital `X`,
 which deletes the workspace and every agent in it.
+
+Executable workspace resolvers may enumerate execution roots as well as resolve
+individual paths. The New Agent location picker shows those roots before they
+contain an agent, while proprietary and environment-specific workspace
+semantics remain outside Stormlight. See
+[workspace resolvers](docs/workspace-resolvers.md).
 
 Compact rows are the default and show the primary workspace or agent line.
 Press `z` to reveal the path and resolver or provider details. Narrow

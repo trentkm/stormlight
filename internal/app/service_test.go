@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/trentkm/stormlight/internal/agent"
@@ -16,6 +19,30 @@ type recordingRuntime struct {
 	session.Runtime
 	agents      []agent.Agent
 	workspaceID string
+}
+
+type rootsResolver struct {
+	root  workspace.Context
+	roots []workspace.Context
+	err   error
+}
+
+func (r rootsResolver) Name() string {
+	return "roots"
+}
+
+func (r rootsResolver) Resolve(
+	context.Context,
+	string,
+) (workspace.Context, bool, error) {
+	return r.root, true, nil
+}
+
+func (r rootsResolver) ExecutionRoots(
+	context.Context,
+	workspace.Context,
+) ([]workspace.Context, bool, error) {
+	return r.roots, true, r.err
 }
 
 func (r *recordingRuntime) Update(
@@ -126,5 +153,108 @@ func TestUpdateRecordsSessionHistory(t *testing.T) {
 	}
 	if len(past) != 1 || past[0].SessionID != records[0].SessionID {
 		t.Fatalf("past = %#v", past)
+	}
+}
+
+func TestListWorkspaceRootsExpandsCatalogWorkspaces(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktreeBase, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(worktreeBase, "feature")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	value := workspace.Context{
+		ID:            "example:" + root,
+		Kind:          "example",
+		Name:          "example",
+		Root:          root,
+		ExecutionRoot: root,
+	}
+	linked := value
+	linked.ExecutionRoot = worktree
+	catalog := workspace.NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
+	if err := catalog.Add(root); err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithCatalog(
+		&recordingRuntime{},
+		provider.NewRegistry(),
+		workspace.NewRegistryWithResolvers(rootsResolver{
+			root:  value,
+			roots: []workspace.Context{linked, value},
+		}),
+		catalog,
+		history.NewLogAt(filepath.Join(t.TempDir(), "sessions.jsonl")),
+	)
+
+	roots, err := service.ListWorkspaceRoots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 2 ||
+		roots[0].ExecutionRoot != root ||
+		roots[1].ExecutionRoot != worktree {
+		t.Fatalf("roots = %#v", roots)
+	}
+}
+
+func TestListWorkspaceRootsDegradesOnResolverFailure(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := workspace.Context{
+		ID:            "example:" + root,
+		Kind:          "example",
+		Name:          "example",
+		Root:          root,
+		ExecutionRoot: root,
+	}
+	catalog := workspace.NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
+	if err := catalog.Add(root); err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithCatalog(
+		&recordingRuntime{},
+		provider.NewRegistry(),
+		workspace.NewRegistryWithResolvers(rootsResolver{
+			root: value,
+			err:  errors.New("enumeration failed"),
+		}),
+		catalog,
+		history.NewLogAt(filepath.Join(t.TempDir(), "sessions.jsonl")),
+	)
+
+	roots, err := service.ListWorkspaceRoots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 1 || roots[0].ExecutionRoot != root {
+		t.Fatalf("roots = %#v", roots)
+	}
+}
+
+func TestSortWorkspaceRootsGroupsEachWorkspace(t *testing.T) {
+	values := []workspace.Context{
+		{ID: "a", Name: "alpha", Root: "/a", ExecutionRoot: "/a/feature"},
+		{ID: "b", Name: "beta", Root: "/b", ExecutionRoot: "/b"},
+		{ID: "a", Name: "alpha", Root: "/a", ExecutionRoot: "/a"},
+		{ID: "b", Name: "beta", Root: "/b", ExecutionRoot: "/b/feature"},
+	}
+	sortWorkspaceRoots(values)
+
+	got := make([]string, 0, len(values))
+	for _, value := range values {
+		got = append(got, value.ExecutionRoot)
+	}
+	want := []string{"/a", "/a/feature", "/b", "/b/feature"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("roots = %#v, want %#v", got, want)
 	}
 }

@@ -943,6 +943,18 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 		return index
 	}
 
+	for _, value := range m.workspaceRoots {
+		label := value.Name
+		if rootLabel := strings.TrimSpace(
+			value.Metadata["execution_root_label"],
+		); rootLabel != "" {
+			label += " / " + rootLabel
+		} else if directoryKey(value.ExecutionRoot) != directoryKey(value.Root) {
+			label += " / " + filepath.Base(value.ExecutionRoot)
+		}
+		addPath(value.ExecutionRoot, label, value.Kind)
+	}
+
 	for _, group := range m.groups {
 		groupRoot := group.context.ExecutionRoot
 		if groupRoot == "" {
@@ -956,7 +968,11 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 				executionRoot = value.Root
 			}
 			label := value.Name
-			if directoryKey(executionRoot) != directoryKey(groupRoot) {
+			if rootLabel := strings.TrimSpace(
+				value.Metadata["execution_root_label"],
+			); rootLabel != "" {
+				label += " / " + rootLabel
+			} else if directoryKey(executionRoot) != directoryKey(groupRoot) {
 				label += " / " + filepath.Base(executionRoot)
 			}
 			addPath(executionRoot, label, value.Kind)

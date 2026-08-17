@@ -52,6 +52,39 @@ func (r externalResolver) Resolve(ctx context.Context, path string) (Context, bo
 	return value, true, nil
 }
 
+func (r externalResolver) ExecutionRoots(
+	ctx context.Context,
+	value Context,
+) ([]Context, bool, error) {
+	command := exec.CommandContext(ctx, r.path, "roots", value.Root)
+	command.Dir = value.Root
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err := command.Run()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 2 {
+			return nil, false, nil
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return nil, false, fmt.Errorf("%s", detail)
+	}
+
+	var values []Context
+	if err := json.Unmarshal(stdout.Bytes(), &values); err != nil {
+		return nil, false, fmt.Errorf("decode resolver roots: %w", err)
+	}
+	return values, true, nil
+}
+
 func loadExternalResolvers(directory string) ([]Resolver, error) {
 	if directory == "" {
 		return nil, nil
