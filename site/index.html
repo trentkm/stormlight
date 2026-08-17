@@ -15,7 +15,7 @@
 <style>
 /* ---------- hero ---------- */
 
-.hero { padding: 6rem 0 4rem; }
+.hero { padding-top: 6rem; padding-bottom: 4rem; }
 
 .hero h1 {
   font-size: clamp(2.6rem, 6.5vw, 4.6rem);
@@ -49,7 +49,7 @@
 
 /* ---------- demo video ---------- */
 
-.mockwrap { padding: 2.5rem 0 0; }
+.mockwrap { padding-top: 2.5rem; }
 video.demo { display: block; width: 100%; height: auto; }
 .mock-caption {
   margin-top: 1.1rem;
@@ -61,7 +61,7 @@ video.demo { display: block; width: 100%; height: auto; }
 
 /* ---------- sections ---------- */
 
-section { padding: 6.5rem 0 0; }
+section.wrap { padding-top: 6.5rem; }
 
 .section-head h2 {
   font-size: clamp(1.9rem, 4vw, 2.7rem);
@@ -193,7 +193,7 @@ section { padding: 6.5rem 0 0; }
     <p class="sub">Dispatches <strong>Claude</strong>, <strong>Codex</strong>, and any agent CLI
     onto a daemon that owns each agent's PTY and terminal. The dashboard runs in yours.</p>
     <div class="hero-actions">
-      <span class="install"><span class="p">$</span><span id="brew-cmd">brew install trentkm/stormlight/stormlight</span><button data-copy="brew-cmd">copy</button></span>
+      <span class="install"><span class="p">$</span><span class="cmd" id="brew-cmd">brew install trentkm/stormlight/stormlight</span><button data-copy="brew-cmd">copy</button></span>
       <a class="ghost-link" href="https://github.com/trentkm/stormlight">source on github →</a>
     </div>
   </div>
@@ -292,7 +292,7 @@ section { padding: 6.5rem 0 0; }
   <div class="wrap closing reveal">
     <p class="kicker">install</p>
     <div class="hero-actions">
-      <span class="install"><span class="p">$</span><span id="brew-cmd2">brew install trentkm/stormlight/stormlight</span><button data-copy="brew-cmd2">copy</button></span>
+      <span class="install"><span class="p">$</span><span class="cmd" id="brew-cmd2">brew install trentkm/stormlight/stormlight</span><button data-copy="brew-cmd2">copy</button></span>
     </div>
     <div class="docrow">
       <a href="docs/architecture.html">architecture</a>
