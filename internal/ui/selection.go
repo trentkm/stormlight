@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -235,16 +236,7 @@ func (m Model) copyTerminalSelectionCmd() tea.Cmd {
 	}
 	text := strings.Join(selected, "\n")
 	count := len(selected)
-	return func() tea.Msg {
-		if err := copyToClipboard(text); err != nil {
-			return actionMsg{status: "Action failed", err: err}
-		}
-		label := "line"
-		if count != 1 {
-			label = "lines"
-		}
-		return actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
-	}
+	return copyToClipboardCmd(text, count)
 }
 
 // paintTerminalSelection reverses the video of the selected span over the
@@ -362,8 +354,7 @@ func (m Model) selectionRange() (int, int) {
 }
 
 // copySelectionCmd extracts the highlighted lines and hands them to the
-// clipboard: the tmux buffer plus the system clipboard through tmux's
-// OSC 52 (-w) when inside tmux, pbcopy/xclip otherwise.
+// system clipboard through the transport appropriate to this session.
 func (m Model) copySelectionCmd() tea.Cmd {
 	start, end := m.selectionRange()
 	lines := strings.Split(ansi.Strip(m.interactionContent), "\n")
@@ -377,39 +368,83 @@ func (m Model) copySelectionCmd() tea.Cmd {
 	}
 	text := strings.Join(selected, "\n")
 	count := end - start + 1
+	return copyToClipboardCmd(text, count)
+}
+
+func copyToClipboardCmd(text string, count int) tea.Cmd {
+	label := "line"
+	if count != 1 {
+		label = "lines"
+	}
+	success := actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
 	return func() tea.Msg {
-		if err := copyToClipboard(text); err != nil {
-			return actionMsg{status: "Action failed", err: err}
+		if os.Getenv("TMUX") != "" {
+			if err := runClipboardCommand(
+				"tmux", []string{"load-buffer", "-w", "-"}, text,
+			); err != nil {
+				return actionMsg{err: fmt.Errorf("copy with tmux: %w", err)}
+			}
+			return success
 		}
-		label := "line"
-		if count != 1 {
-			label = "lines"
+		if remoteTerminalSession() {
+			return osc52ClipboardCmd(text, success)()
 		}
-		return actionMsg{status: fmt.Sprintf("Copied %d %s", count, label)}
+		for _, candidate := range nativeClipboardCommands() {
+			path, err := findClipboardCommand(candidate[0])
+			if err != nil {
+				continue
+			}
+			if err := runClipboardCommand(path, candidate[1:], text); err == nil {
+				return success
+			}
+		}
+		return osc52ClipboardCmd(text, success)()
 	}
 }
 
-// copyToClipboard prefers tmux: load-buffer -w fills the tmux paste buffer
-// and forwards to the system clipboard via OSC 52 in one step.
-func copyToClipboard(text string) error {
-	if os.Getenv("TMUX") != "" {
-		command := exec.Command("tmux", "load-buffer", "-w", "-")
-		command.Stdin = strings.NewReader(text)
-		if err := command.Run(); err == nil {
-			return nil
-		}
-	}
-	for _, candidate := range [][]string{
-		{"pbcopy"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"},
+var findClipboardCommand = exec.LookPath
+
+var runClipboardCommand = func(path string, args []string, text string) error {
+	command := exec.Command(path, args...)
+	command.Stdin = strings.NewReader(text)
+	return command.Run()
+}
+
+func remoteTerminalSession() bool {
+	for _, name := range []string{
+		"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY",
+		"MOSH_CONNECTION", "MOSH_IP",
 	} {
-		if _, err := exec.LookPath(candidate[0]); err != nil {
-			continue
+		if os.Getenv(name) != "" {
+			return true
 		}
-		command := exec.Command(candidate[0], candidate[1:]...)
-		command.Stdin = strings.NewReader(text)
-		return command.Run()
 	}
-	return fmt.Errorf("no clipboard tool found (tmux, pbcopy, wl-copy, xclip)")
+	return false
+}
+
+func nativeClipboardCommands() [][]string {
+	switch runtime.GOOS {
+	case "darwin":
+		return [][]string{{"pbcopy"}}
+	case "linux":
+		return [][]string{
+			{"wl-copy"},
+			{"xclip", "-selection", "clipboard"},
+		}
+	case "windows":
+		return [][]string{{"clip.exe"}}
+	default:
+		return nil
+	}
+}
+
+func osc52ClipboardCmd(text string, success actionMsg) tea.Cmd {
+	return tea.Sequence(
+		tea.SetClipboard(text),
+		func() tea.Msg {
+			return success
+		},
+	)
 }
 
 // paneAt maps a screen column to the dashboard pane rendered there.
