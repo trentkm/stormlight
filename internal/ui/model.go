@@ -288,6 +288,9 @@ type Model struct {
 	ptyWaiting bool
 	// keys are the seam chords, config-rebindable; see KeyBindings.
 	keys KeyBindings
+	// ptyInput shadows enough of the selected terminal's edit line to keep
+	// Left available until the cursor reaches the draft's left edge.
+	ptyInput terminalInputState
 
 	// Terminal drag selection: character-precise over the grid, tmux
 	// style — first line from the anchor, middles whole, last to the
@@ -776,6 +779,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// Paste lands in the agent's terminal as one bracketed paste,
 			// the same shape Send uses — never a burst of keystrokes.
 			if widget, ok := m.selectedPTY(); ok {
+				m.trackTerminalPaste(msg.Content)
 				widget.ScrollToBottom()
 				return m, writeTerminalCmd(widget,
 					[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
