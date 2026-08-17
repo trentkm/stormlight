@@ -25,9 +25,18 @@ func (m Model) refreshCmd() tea.Cmd {
 		if err != nil {
 			return dashboardMsg{agents: agents, err: err}
 		}
+		roots, err := m.backend.ListWorkspaceRoots(ctx)
+		if err != nil {
+			return dashboardMsg{
+				agents:     agents,
+				workspaces: workspaces,
+				err:        err,
+			}
+		}
 		return dashboardMsg{
 			agents:     agents,
 			workspaces: workspaces,
+			roots:      roots,
 		}
 	}
 }

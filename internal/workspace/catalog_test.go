@@ -1,9 +1,15 @@
 package workspace
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/trentkm/stormlight/internal/filelock"
 )
 
 func TestCatalogPersistsCanonicalUniquePaths(t *testing.T) {
@@ -241,5 +247,95 @@ func TestCatalogPathPrefersExplicitFileThenStateHome(t *testing.T) {
 	// silently edit the real catalog.
 	if got := NewCatalog().path; got != want {
 		t.Fatalf("NewCatalog path = %q, want %q", got, want)
+	}
+}
+
+func TestCatalogSerializesConcurrentProcesses(t *testing.T) {
+	const writers = 12
+	base := t.TempDir()
+	catalogPath := filepath.Join(base, "state", "workspaces.json")
+	barrier := filepath.Join(base, "start")
+	commands := make([]*exec.Cmd, 0, writers)
+	outputs := make([]*bytes.Buffer, 0, writers)
+	for index := range writers {
+		root := filepath.Join(base, "roots", string(rune('a'+index)))
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command(os.Args[0], "-test.run=^TestCatalogProcessWriter$")
+		command.Env = append(os.Environ(),
+			"STORMLIGHT_CATALOG_WRITER=1",
+			"STORMLIGHT_CATALOG_PATH="+catalogPath,
+			"STORMLIGHT_CATALOG_ROOT="+root,
+			"STORMLIGHT_CATALOG_BARRIER="+barrier,
+		)
+		output := &bytes.Buffer{}
+		command.Stdout = output
+		command.Stderr = output
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		commands = append(commands, command)
+		outputs = append(outputs, output)
+	}
+	if err := os.WriteFile(barrier, []byte("start"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for index, command := range commands {
+		if err := command.Wait(); err != nil {
+			t.Fatalf("writer %d: %v\n%s", index, err, outputs[index].String())
+		}
+	}
+	paths, err := NewCatalogAt(catalogPath).Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != writers {
+		t.Fatalf("catalog retained %d/%d concurrent writes: %#v",
+			len(paths), writers, paths)
+	}
+}
+
+func TestCatalogLockWaitIsBounded(t *testing.T) {
+	root := t.TempDir()
+	catalogPath := filepath.Join(t.TempDir(), "workspaces.json")
+	unlock, err := filelock.Acquire(
+		catalogPath+".lock",
+		0o600,
+		100*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	started := time.Now()
+	err = NewCatalogAt(catalogPath).Add(root)
+	elapsed := time.Since(started)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("Add error = %v", err)
+	}
+	if elapsed < 900*time.Millisecond || elapsed > 3*time.Second {
+		t.Fatalf("Add waited %s for the lock", elapsed)
+	}
+}
+
+func TestCatalogProcessWriter(t *testing.T) {
+	if os.Getenv("STORMLIGHT_CATALOG_WRITER") != "1" {
+		return
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("STORMLIGHT_CATALOG_BARRIER")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for process barrier")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := NewCatalogAt(os.Getenv("STORMLIGHT_CATALOG_PATH")).
+		Add(os.Getenv("STORMLIGHT_CATALOG_ROOT")); err != nil {
+		t.Fatal(err)
 	}
 }

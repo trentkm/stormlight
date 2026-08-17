@@ -238,6 +238,72 @@ func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, erro
 	return values, nil
 }
 
+// ListWorkspaceRoots expands every catalog workspace into its currently
+// available execution roots. It is the shared source for headless callers and
+// the dashboard's dispatch picker.
+func (s *Service) ListWorkspaceRoots(ctx context.Context) ([]workspace.Context, error) {
+	workspaces, err := s.ListWorkspaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var roots []workspace.Context
+	for _, value := range workspaces {
+		values, rootErr := s.workspaces.ExecutionRoots(ctx, value)
+		if rootErr != nil {
+			return nil, rootErr
+		}
+		roots = append(roots, values...)
+	}
+	s.applyWorkspaceNames(roots)
+	sortWorkspaceRoots(roots)
+	return roots, nil
+}
+
+// WorkspaceRoots resolves one path without adding it to the catalog, then
+// returns all execution roots belonging to the same workspace.
+func (s *Service) WorkspaceRoots(
+	ctx context.Context,
+	path string,
+) ([]workspace.Context, error) {
+	value, err := s.workspaces.Resolve(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	values, err := s.workspaces.ExecutionRoots(ctx, value)
+	if err != nil {
+		return nil, err
+	}
+	s.applyWorkspaceNames(values)
+	sortWorkspaceRoots(values)
+	return values, nil
+}
+
+func sortWorkspaceRoots(values []workspace.Context) {
+	slices.SortStableFunc(values, func(a, b workspace.Context) int {
+		if order := cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(strings.ToLower(a.Root), strings.ToLower(b.Root)); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(a.ID, b.ID); order != 0 {
+			return order
+		}
+		aPrimary := a.ExecutionRoot == a.Root
+		bPrimary := b.ExecutionRoot == b.Root
+		if aPrimary != bPrimary {
+			if aPrimary {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(
+			strings.ToLower(a.ExecutionRoot),
+			strings.ToLower(b.ExecutionRoot),
+		)
+	})
+}
+
 func (s *Service) resolveCached(
 	ctx context.Context,
 	path string,

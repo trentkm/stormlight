@@ -107,6 +107,7 @@ func newRootCommand() *cobra.Command {
 		newStopCommand(cfg),
 		newDeleteCommand(cfg),
 		newMarkCommand(cfg),
+		newWorkspaceCommand(),
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
@@ -370,6 +371,14 @@ func newService(cfg config.Config) (*app.Service, error) {
 	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
 }
 
+func newWorkspaceService() *app.Service {
+	return app.NewService(
+		nil,
+		provider.NewRegistry(),
+		workspace.NewRegistry(),
+	)
+}
+
 func newDispatchCommand(cfg config.Config) *cobra.Command {
 	var providerName string
 	var cwd string
@@ -481,6 +490,117 @@ func newListCommand(cfg config.Config) *cobra.Command {
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
 	return command
+}
+
+func newWorkspaceCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "workspace",
+		Short: "Inspect and manage workspaces",
+	}
+	command.AddCommand(
+		newWorkspaceAddCommand(),
+		newWorkspaceListCommand(),
+		newWorkspaceRootsCommand(),
+	)
+	return command
+}
+
+func newWorkspaceAddCommand() *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "add <path>",
+		Short: "Add a workspace to the dashboard",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service := newWorkspaceService()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			value, err := service.AddWorkspace(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return encodeJSON(cmd.OutOrStdout(), value)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", value.Name, value.Root)
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
+	return command
+}
+
+func newWorkspaceListCommand() *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "list",
+		Short: "List catalog workspaces",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service := newWorkspaceService()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			values, err := service.ListWorkspaces(ctx)
+			if err != nil {
+				return err
+			}
+			return writeWorkspaces(cmd.OutOrStdout(), values, asJSON)
+		},
+	}
+	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
+	return command
+}
+
+func newWorkspaceRootsCommand() *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "roots [path]",
+		Short: "List runnable roots in a workspace",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service := newWorkspaceService()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			var values []workspace.Context
+			var err error
+			if len(args) == 1 {
+				values, err = service.WorkspaceRoots(ctx, args[0])
+			} else {
+				values, err = service.WorkspaceRoots(ctx, "")
+			}
+			if err != nil {
+				return err
+			}
+			return writeWorkspaces(cmd.OutOrStdout(), values, asJSON)
+		},
+	}
+	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
+	return command
+}
+
+func writeWorkspaces(out io.Writer, values []workspace.Context, asJSON bool) error {
+	if asJSON {
+		return encodeJSON(out, values)
+	}
+	if len(values) == 0 {
+		fmt.Fprintln(out, "No workspaces.")
+		return nil
+	}
+	fmt.Fprintf(out, "%-12s %-24s %s\n", "KIND", "NAME", "PATH")
+	for _, value := range values {
+		fmt.Fprintf(out, "%-12s %-24s %s\n",
+			value.Kind,
+			truncatePlain(value.Name, 24),
+			value.ExecutionRoot,
+		)
+	}
+	return nil
+}
+
+func encodeJSON(out io.Writer, value any) error {
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
 
 func newAttachCommand(cfg config.Config) *cobra.Command {

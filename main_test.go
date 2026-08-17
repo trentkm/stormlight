@@ -1,15 +1,42 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 func TestRootCommandUsesStormlightIdentity(t *testing.T) {
 	command := newRootCommand()
 	if command.Use != "stormlight [path]" {
 		t.Fatalf("command use = %q", command.Use)
+	}
+	for _, path := range [][]string{
+		{"workspace", "add"},
+		{"workspace", "list"},
+		{"workspace", "roots"},
+	} {
+		if _, _, err := command.Find(path); err != nil {
+			t.Fatalf("missing command %v: %v", path, err)
+		}
+	}
+}
+
+func TestWriteWorkspacesEmitsStructuredJSON(t *testing.T) {
+	value := workspace.DirectoryContext(t.TempDir())
+	var output bytes.Buffer
+	if err := writeWorkspaces(&output, []workspace.Context{value}, true); err != nil {
+		t.Fatal(err)
+	}
+	var decoded []workspace.Context
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 1 || decoded[0].ID != value.ID {
+		t.Fatalf("decoded = %#v", decoded)
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 type Backend interface {
 	ListAgents(context.Context) ([]agent.Agent, error)
 	ListWorkspaces(context.Context) ([]workspace.Context, error)
+	ListWorkspaceRoots(context.Context) ([]workspace.Context, error)
 	AddWorkspace(context.Context, string) (workspace.Context, error)
 	RemoveWorkspace(context.Context, workspace.Context) error
 	Dispatch(context.Context, app.DispatchRequest) (agent.Agent, error)
@@ -130,6 +131,7 @@ type Model struct {
 
 	agents            []agent.Agent
 	catalogWorkspaces []workspace.Context
+	workspaceRoots    []workspace.Context
 	groups            []workspaceGroup
 	workspaceCursor   int
 	agentCursor       int
@@ -222,6 +224,7 @@ type Model struct {
 type dashboardMsg struct {
 	agents     []agent.Agent
 	workspaces []workspace.Context
+	roots      []workspace.Context
 	err        error
 }
 
@@ -441,6 +444,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
+			m.workspaceRoots = msg.roots
 			m.rebuildGroups(workspaceID, agentID)
 			m.initialWorkspaceID = ""
 			if m.mode == modeCompose {

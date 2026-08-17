@@ -60,3 +60,37 @@ func (gitResolver) Resolve(ctx context.Context, path string) (Context, bool, err
 		ExecutionRoot: executionRoot,
 	}, true, nil
 }
+
+func (r gitResolver) ExecutionRoots(
+	ctx context.Context,
+	value Context,
+) ([]Context, bool, error) {
+	if value.Kind != KindGit {
+		return nil, false, nil
+	}
+	command := exec.CommandContext(ctx,
+		"git", "-C", value.Root, "worktree", "list", "--porcelain",
+	)
+	output, err := command.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, true, ctx.Err()
+		}
+		return nil, true, fmt.Errorf("list Git worktrees: %w", err)
+	}
+	var values []Context
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.HasPrefix(line, "worktree ") {
+			continue
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+		resolved, matched, resolveErr := r.Resolve(ctx, path)
+		if resolveErr != nil {
+			continue
+		}
+		if matched && resolved.ID == value.ID {
+			values = append(values, resolved)
+		}
+	}
+	return values, true, nil
+}
