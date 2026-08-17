@@ -1,0 +1,173 @@
+/* docs — traditional two-column documentation layout */
+
+.docwrap {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: 4.5rem;
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+/* ---------- left sidebar ---------- */
+
+.side {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: 2.8rem 0 2rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.side-title {
+  font-size: 0.66rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 1rem;
+}
+
+.side ul { list-style: none; margin: 0; padding: 0; }
+.side > ul > li { margin-bottom: 0.15rem; }
+.side > ul > li > a {
+  display: block;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  color: var(--ink-dim);
+}
+.side > ul > li > a:hover { color: var(--cyan); background: var(--hover-bg); text-decoration: none; }
+.side > ul > li.current > a {
+  color: var(--cyan-deep);
+  background: rgba(98, 174, 239, 0.12);
+  font-weight: 500;
+}
+
+/* nested section links for the current page */
+.side .sections {
+  margin: 0.3rem 0 0.6rem 0.7rem;
+  padding-left: 0.85rem;
+  border-left: 1px solid var(--line);
+}
+.side .sections li a {
+  display: block;
+  padding: 0.22rem 0.55rem 0.22rem 1.4rem;
+  margin-left: -0.9rem;
+  color: var(--ink-faint);
+  border-left: 1px solid transparent;
+}
+.side .sections li a:hover { color: var(--cyan); text-decoration: none; }
+.side .sections li a.active {
+  color: var(--cyan-deep);
+  border-left-color: var(--cyan-deep);
+}
+.side .sections li.sub a { padding-left: 2.2rem; font-size: 0.72rem; }
+
+/* ---------- content column ---------- */
+
+.doc { padding: 2.8rem 0 2rem; min-width: 0; }
+
+.doc-title { font-size: clamp(1.9rem, 4vw, 2.6rem); color: var(--heading); margin: 0.5rem 0 0.8rem; }
+.doc-lede { color: var(--ink-dim); font-size: 1.08rem; max-width: 40em; }
+
+article { padding-top: 1.8rem; max-width: 46rem; }
+
+article h2, article h3, article h4 { scroll-margin-top: 2rem; }
+
+article h2 {
+  font-size: 1.5rem;
+  color: var(--heading);
+  margin: 3rem 0 1rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line-soft);
+}
+article h3 {
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--cyan);
+  margin: 2.2rem 0 0.8rem;
+}
+article h4 {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 1.8rem 0 0.6rem;
+}
+article p { margin-bottom: 1.1rem; color: var(--prose); }
+article ul, article ol { margin: 0 0 1.2rem 1.4rem; color: var(--prose); }
+article li { margin-bottom: 0.5rem; }
+article pre { margin: 1.4rem 0; }
+article strong { color: var(--ink); font-weight: 500; }
+article em { color: var(--ink); }
+
+article table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.92rem;
+}
+article th {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-faint);
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+article td {
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-dim);
+  vertical-align: top;
+}
+
+/* prev / next footer links */
+.doc-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 46rem;
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.doc-pager a { color: var(--ink-dim); }
+.doc-pager a:hover { color: var(--cyan); text-decoration: none; }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 900px) {
+  .docwrap { grid-template-columns: 1fr; gap: 0; }
+  .side {
+    position: static;
+    max-height: none;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .doc { padding-top: 2rem; }
+}
+
+/* docs hub cards (Overview page) */
+.doc-list { margin-top: 2.5rem; display: grid; gap: 1.2rem; max-width: 46rem; }
+.doc-card {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  padding: 1.6rem 1.8rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+.doc-card:hover { border-color: rgba(38, 121, 157, 0.35); background: var(--hover-bg); text-decoration: none; }
+.doc-card h3 { font-size: 1.25rem; font-weight: 400; color: var(--heading); margin-bottom: 0.4rem; font-family: var(--serif); }
+.doc-card p { color: var(--ink-dim); font-size: 0.95rem; }
+.doc-card .go { font-family: var(--mono); font-size: 0.72rem; color: var(--cyan-deep); }

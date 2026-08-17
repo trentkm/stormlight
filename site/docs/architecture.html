@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — Stormlight</title>
+<meta name="description" content="How Stormlight separates agent semantics from terminal and process ownership.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%3E%3Cpath%20stroke%3D%22%2362aeef%22%20d%3D%22M6%2016.326A7%207%200%201%201%2015.71%208h1.79a4.5%204.5%200%200%201%20.5%208.973%22%2F%3E%3Cpath%20stroke%3D%22%2326799d%22%20d%3D%22m13%2012-3%205h4l-3%205%22%2F%3E%3C%2Fsvg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@300..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="storm"></div>
+<div class="grain"></div>
+
+<header class="wrap nav">
+  <a class="wordmark" href="../">STORMLIGHT<span class="spark"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973"/><path d="m13 12-3 5h4l-3 5"/></svg></span></a>
+  <nav class="nav-links">
+    <a href="../#design">design</a>
+    <a href="../#windrunner">windrunner</a>
+    <a href="./">docs</a>
+    <a href="https://github.com/trentkm/stormlight">github</a>
+  </nav>
+</header>
+
+<div class="docwrap">
+<aside class="side">
+  <p class="side-title">Documentation</p>
+  <ul>
+    <li><a href="./">Overview</a></li>
+    <li class="current"><a href="architecture.html">Architecture</a><ul class="sections">
+    <li><a href="#layers">Layers</a></li>
+    <li class="sub"><a href="#provider-adapters">Provider adapters</a></li>
+    <li class="sub"><a href="#application-service">Application service</a></li>
+    <li class="sub"><a href="#windrunner-runtime">windrunner runtime</a></li>
+    <li class="sub"><a href="#terminal-seam">The terminal seam</a></li>
+    <li><a href="#state-model">State model</a></li>
+    <li><a href="#persistence">Persistence</a></li>
+    <li><a href="#workspace-boundary">Workspace boundary</a></li>
+    </ul></li>
+    <li><a href="workspace-resolvers.html">Workspace resolvers</a></li>
+    <li><a href="configuration.html">Configuration</a></li>
+  </ul>
+</aside>
+<main class="doc">
+  <h1 class="doc-title">Architecture</h1>
+  <p class="doc-lede"><code>stormlight</code> separates agent semantics from terminal and
+  process ownership.</p>
+
+  <article>
+    <h2 id="layers">Layers</h2>
+
+    <h3 id="provider-adapters">Provider adapters</h3>
+    <p>Provider adapters translate a task into an executable plus arguments. The built-ins
+    are Claude and Codex; custom provider specs cover other agent CLIs. Adapters
+    deliberately do not own process or terminal behavior.</p>
+    <p>The CLI adapters currently add provider-native lifecycle callbacks:</p>
+    <ul>
+      <li><strong>Codex:</strong> per-launch prompt and stop hooks report state, passed as a
+      <code>-c</code> config override, over the external completion notifier. The notifier
+      alone carried only turn ends, so a turn begun in the agent's own terminal was
+      invisible; it is retained because Codex holds injected hooks inert behind a one-time
+      trust review, and an agent reporting nothing would sit at <code>working</code> until
+      its process exited. The notifier has no trust gate, so it is the floor and the hooks
+      are the ceiling. Both surfaces report a turn end once trusted; the two events carry
+      identical state, so applying both is idempotent.</li>
+      <li><strong>Claude:</strong> per-launch prompt, notification, and stop hooks report
+      state. Permission prompts raise attention through the notification hook; they are
+      answered in the agent's own terminal, never intercepted.</li>
+      <li><strong>Generic agents:</strong> PTY state and optional lifecycle hooks.</li>
+    </ul>
+    <p>Both CLIs accept the same hook schema — an event name mapping to matcher groups of
+    command handlers, with the payload arriving on the handler's stdin — so one set of types
+    describes both and only the encoding differs: Claude takes JSON through
+    <code>--settings</code>, Codex takes inline TOML through <code>-c</code>. Codex parses
+    that value as TOML and rejects JSON, so the override has to encode to a single inline
+    line.</p>
+    <p>Hooks that resolve rather than observe are deliberately left unregistered for both
+    providers. Claude's <code>PreToolUse</code> and Codex's <code>PermissionRequest</code>
+    answer whether a tool call may proceed, and an approval Stormlight never answers is an
+    agent stuck waiting on it.</p>
+    <p>The next Codex revision should use App Server JSON-RPC for threads, turns, approvals,
+    and streamed items. Claude background-agent discovery or the Agent SDK can similarly
+    replace its CLI hook bridge. The runtime exposes <code>stormlight event</code> so
+    generic providers can report semantic state.</p>
+
+    <h3 id="application-service">Application service</h3>
+    <p>The application service validates requests, resolves a provider and workspace, and
+    delegates terminal operations to the runtime. The TUI and CLI use the same service. A
+    persistent workspace catalog supplies workspaces that do not currently contain an
+    agent.</p>
+    <p>Workspace resolvers return a stable group ID, a group root, an execution root, and
+    optional component metadata. External executable resolvers run before the built-in Git
+    resolver, followed by a canonical-directory fallback. This keeps environment-specific
+    workspace semantics outside the public runtime.</p>
+
+    <h3 id="windrunner-runtime">windrunner runtime</h3>
+    <p>Process and terminal ownership live in a daemon built on the
+    <a href="https://github.com/trentkm/windrunner">windrunner</a> session engine. Each
+    session the daemon holds is one PTY plus an authoritative terminal emulator, so a
+    snapshot of an agent's screen and scrollback is exact serialized state, and attaching is
+    a byte stream from that state forward — never a capture of whatever happened to be
+    visible.</p>
+    <p>The daemon is Stormlight itself: <code>internal/windrun.NewRuntime</code> connects to
+    a unix socket (<code>daemon.sock</code> under <code>$WINDRUNNER_DIR</code>, else
+    <code>$XDG_STATE_HOME/windrunner</code>, else <code>~/.local/state/windrunner</code> —
+    the windrunner library's own default, so <code>windrunner ls</code> lists Stormlight's
+    agents too) and, when nothing answers, starts <code>stormlight _wrdaemon</code> from the
+    running binary's resolved path (<code>internal/selfpath</code>) and waits for it to come
+    up. The daemon outlives every dashboard: agents, their terminals, and their scrollback
+    persist across dashboard restarts, and the daemon's sessions are the roster — there is
+    no second record to reconcile.</p>
+    <p>The daemon never learns what an agent is; that is the library's boundary. Agent
+    identity and state ride in the session's opaque metadata as one JSON document under the
+    <code>stormlight_agent</code> key — the serialized <code>agent.Agent</code>: id,
+    provider, task, name, workspace context, permission mode, activity, attention, mark,
+    session id, and transcript path. Two rules keep the document honest:</p>
+    <ul>
+      <li>Liveness and exit are the daemon's facts. Listing decodes the document and then
+      overwrites process state from the session itself — <code>Alive</code>,
+      <code>ExitCode</code> — so stale metadata can never claim a dead agent is working. An
+      exited process with no recorded completion is classified from its exit code.</li>
+      <li>Updates are read-modify-write on the whole document
+      (<code>Runtime.mutateAgent</code>). Two near-simultaneous writers — a hook event
+      racing the dashboard — can lose one update; events are sparse enough that the next one
+      repairs it, and a daemon-side compare-and-swap is noted for later.</li>
+    </ul>
+    <p>Dispatch spawns the provider directly: the adapter's launch command becomes the
+    session's process, with <code>STORMLIGHT_ID</code> (how hook subprocesses name their
+    agent), <code>STORMLIGHT_BIN</code> (how they find Stormlight across upgrades), and
+    <code>WINDRUNNER_DIR</code> (how a hook's own <code>stormlight _provider-event</code>
+    invocation reaches the same daemon) in its environment. There is no supervisor process
+    between the daemon and the provider; exit state is read from the daemon. The daemon
+    names the session; that id is not adopted as the agent's id — the metadata carries
+    Stormlight's id, and the session id fills the display fields that expect a pane
+    handle.</p>
+    <p>Messages are delivered as terminal input: multi-line messages inside a bracketed
+    paste so they arrive as one message, slash commands typed verbatim (providers ignore
+    pasted slash commands), then a beat later the Enter that submits. Nothing is ever
+    interpolated into a shell command string.</p>
+
+    <h4 id="terminal-seam">The terminal seam</h4>
+    <p>Live terminals reach the dashboard through one narrow seam, declared as an optional
+    runtime capability:</p>
+    <ul>
+      <li><code>session.TerminalStreamer</code> (<code>internal/session</code>) is the
+      contract: attach to an agent's terminal at a size and get a
+      <code>TerminalStream</code> — an exact snapshot seed, a channel of everything after
+      it, and input and resize flowing back.</li>
+      <li><code>windrun.Runtime.AttachTerminal</code> implements it over one dedicated
+      daemon connection per attachment, resizing first so the snapshot arrives pre-wrapped
+      for the view it is about to fill.</li>
+      <li><code>app.Service.AttachTerminal</code> surfaces the capability to the UI as a
+      <code>pty.Transport</code>, failing cleanly when a runtime cannot stream.</li>
+      <li><code>ptyview.Manager</code> keeps one live terminal per agent for the agent's
+      whole life, reconciling the set against the roster on every refresh: agents without a
+      terminal get one, departed agents lose theirs, and all of them follow the pane's
+      dimensions. Selecting an agent switches which terminal is rendered; it never starts
+      one.</li>
+      <li><code>pty.Model</code> (<code>internal/pty</code>) is the widget: a
+      <code>charmbracelet/x/vt</code> emulator fed by the transport, with scrollback,
+      coalesced frame notifications (~30fps) so a chatty agent cannot flood the event loop,
+      and wheel-burst batching for high-resolution scrolling.</li>
+    </ul>
+    <p>The Spanreed pane renders the selected agent's widget. While the pane holds focus the
+    keyboard belongs to the agent's terminal byte for byte, and the real terminal cursor is
+    placed where the agent's program put it — the pane is the terminal, not a picture of
+    one. The dashboard's own keys in that mode are modifier chords the hosted TUIs don't
+    bind: <code>ctrl+space</code> steps out, <code>alt+j</code>/<code>k</code> moves the
+    roster cursor so the portal swaps terminals under the keyboard, <code>alt+z</code> zooms
+    the grid over the full body, and <code>alt+t</code> flips to the transcript reading
+    view. Typing into an agent's terminal is the strongest form of having seen its result,
+    so attention clears on the way through.</p>
+    <p><code>F</code> is the full-screen escape hatch: the runtime's <code>Attach</code>
+    returns a command (<code>stormlight _wrattach &lt;session&gt;</code>) that the dashboard
+    runs through <code>tea.ExecProcess</code>, suspending itself while the attachment owns
+    the whole terminal; <code>ctrl+q</code> detaches and the dashboard returns, reasserting
+    every widget's size because the attached client resized the daemon's sessions.</p>
+    <p>The transcript view renders the conversation from the provider's own JSONL transcript
+    once hooks have reported its path — the terminal screen is all a snapshot can see of an
+    alternate-screen agent, so the transcript file is the only complete history. The
+    renderer paints it: prompts, replies, tool calls, and trimmed results take the palette
+    in <code>internal/theme</code>, and the markdown Claude writes is read back as styling
+    by Glamour, against a stylesheet built from that same palette in
+    <code>internal/provider/markdown.go</code>. Glamour's own wrapping is switched off — the
+    pane is resizable, so line breaking belongs to the pane, which knows the current width.
+    While a turn is in flight the live screen is appended under a divider so streaming
+    output stays visible; an agent with no transcript falls back to its terminal
+    snapshot.</p>
+    <p>External overlays — the Yazi directory picker and the Neovim task editor — float over
+    the dashboard in a popup: the program runs in its own runtime-owned session
+    (<code>session.OverlayHost</code>, a runtime capability beside
+    <code>TerminalStreamer</code>), and the dashboard renders its terminal through the same
+    widget as the Spanreed, composited into a modal frame. The keyboard belongs to the
+    floating program while it is up — <code>Ctrl-q</code> cancels, which destroys the
+    session — and results return through permission-restricted temporary handoff files when
+    the program exits. Overlay sessions carry no agent document, so the roster never sees
+    them, and Close always removes them from the daemon: an overlay resurrected from
+    persistence would be a ghost with nothing waiting on its exit.</p>
+
+    <h2 id="state-model">State model</h2>
+    <p>The public agent record keeps process lifetime, activity, and attention separate,
+    with a fourth axis for the human's own reading:</p>
+    <ul>
+      <li><strong>Process:</strong> live or exited, with an optional exit code.</li>
+      <li><strong>Activity:</strong> starting, working, idle, completed, failed, or
+      stopped.</li>
+      <li><strong>Attention:</strong> question, approval, authentication, waiting, or
+      none.</li>
+      <li><strong>Mark:</strong> working, attention, or none — set by a human, never
+      derived.</li>
+    </ul>
+    <p>Attention is tiered. Question, approval, and authentication are urgent — the agent is
+    blocked on an explicit human decision. Waiting is soft — the turn finished with a result
+    the human has not seen. Every turn end is classified from the final assistant message
+    (providers emit one event for both "done" and "asked a question", so content is the only
+    instant discriminator): a closing question is urgent, anything else is an unseen result.
+    The provider's delayed idle notification is deliberately ignored — it would re-raise
+    attention the human already cleared. Attention clears on engagement: a new prompt,
+    typing into the agent's terminal, replying, interrupting, paging through the result
+    while it is on screen, or an explicit mark-seen. Navigating between panes and rows is
+    deliberately not engagement — those are the keys a human presses on the way past a
+    result, and counting them cleared the amber before it was ever read. The runtime refuses
+    to let a soft signal downgrade an urgent state. Exited agents carry no attention — their
+    exit status is the story.</p>
+    <p>This prevents a resumable completed conversation from being conflated with a
+    currently running process, and keeps "needs me now" distinct from "idle on me" and from
+    "just idle".</p>
+    <p>Entry into the amber inbox is stamped, by either route, and the stamp is what the
+    attention sort orders by: first in, first out. It records entry rather than the latest
+    signal, so a summary or an escalation arriving mid-wait does not send an agent to the
+    back of a line it never left. An agent leaves the inbox only through engagement, never
+    through mere navigation.</p>
+    <p>A mark is the one signal nothing derives. Everything above is inference, and
+    inference is sometimes wrong, so a human can say otherwise (<code>m</code> in the
+    dashboard, <code>stormlight mark</code> outside it) and the mark outranks the derived
+    reading everywhere it is displayed or counted. The two marks retire differently, because
+    different parties can answer them: a working mark claims the agent is still running,
+    which the agent settles as soon as it reports anything, so the next state-bearing update
+    retires it; an attention mark claims the human has something to return to, which no
+    provider event can answer, so only an explicit clear or the same engagement that clears
+    amber takes it down. Like attention, a mark stops applying once the process has
+    exited.</p>
+
+    <h2 id="persistence">Persistence</h2>
+    <p>Session metadata in the daemon is the source of truth for the running roster, and the
+    daemon's persistence is what makes it durable: agents outlive every dashboard because
+    their PTYs and terminals never belonged to one. The workspace catalog is an atomic JSON
+    file independent of the daemon, as are the dashboard's column preferences.</p>
+    <p>The daemon's lifetime bounds the roster's. A reboot or a killed daemon takes the
+    processes and their terminals with it — but not the conversations.
+    <code>internal/history</code> keeps an append-only session log
+    (<code>sessions.jsonl</code>) recording every session id the providers ever report, with
+    the task, workspace, and transcript path; the log is compacted once per dashboard
+    launch, off every event path. A provider adapter's <code>Resume</code> maps a session
+    id — the one the agent's hooks reported, or failing that the one the provider's
+    transcript naming encodes — to a launch that reopens the conversation, and that launch
+    carries no prompt: a resumed agent idles at its composer. Nothing resumes work by
+    itself. An agent that never reported a turn has no session id and no transcript, so
+    there is nothing to reopen — re-dispatching its original task would be a materially
+    different act performed under the same name. The dashboard's history browser
+    (<code>H</code>) serves the same records long after their agents are deleted.</p>
+
+    <h2 id="workspace-boundary">Workspace boundary</h2>
+    <p>Workspace discovery is intentionally outside provider adapters. Provisioning and
+    cleanup remain separate concerns: a future worktree manager can prepare a directory
+    before dispatch and pass it through the same resolver and runtime. Cleanup must refuse
+    to remove worktrees containing uncommitted changes or unpushed commits.</p>
+  </article>
+
+  <nav class="doc-pager"><span></span><a href="workspace-resolvers.html">Workspace resolvers →</a></nav>
+</main>
+</div>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>stormlight · pre-1.0, moving fast</span>
+    <span>
+      <a href="https://github.com/trentkm/stormlight">stormlight</a> ·
+      <a href="https://github.com/trentkm/windrunner">windrunner</a> ·
+      <a href="./">docs</a>
+    </span>
+  </div>
+</footer>
+<script src="../assets/docs.js"></script>
+</body>
+</html>

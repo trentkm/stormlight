@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration — Stormlight</title>
+<meta name="description" content="The design rationale behind Stormlight's config.toml: zero-config defaults, one precedence rule, custom providers.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%3E%3Cpath%20stroke%3D%22%2362aeef%22%20d%3D%22M6%2016.326A7%207%200%201%201%2015.71%208h1.79a4.5%204.5%200%200%201%20.5%208.973%22%2F%3E%3Cpath%20stroke%3D%22%2326799d%22%20d%3D%22m13%2012-3%205h4l-3%205%22%2F%3E%3C%2Fsvg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@300..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="storm"></div>
+<div class="grain"></div>
+
+<header class="wrap nav">
+  <a class="wordmark" href="../">STORMLIGHT<span class="spark"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973"/><path d="m13 12-3 5h4l-3 5"/></svg></span></a>
+  <nav class="nav-links">
+    <a href="../#design">design</a>
+    <a href="../#windrunner">windrunner</a>
+    <a href="./">docs</a>
+    <a href="https://github.com/trentkm/stormlight">github</a>
+  </nav>
+</header>
+
+<div class="docwrap">
+<aside class="side">
+  <p class="side-title">Documentation</p>
+  <ul>
+    <li><a href="./">Overview</a></li>
+    <li><a href="architecture.html">Architecture</a></li>
+    <li><a href="workspace-resolvers.html">Workspace resolvers</a></li>
+    <li class="current"><a href="configuration.html">Configuration</a><ul class="sections">
+    <li><a href="#purpose">What config is for</a></li>
+    <li><a href="#principles">Principles</a></li>
+    <li><a href="#file-location">File location</a></li>
+    <li><a href="#format">Format</a></li>
+    <li><a href="#schema">Schema</a></li>
+    <li><a href="#wiring">Wiring</a></li>
+    <li><a href="#project-local">Project-local config</a></li>
+    </ul></li>
+  </ul>
+</aside>
+<main class="doc">
+  <h1 class="doc-title">Configuration</h1>
+  <p class="doc-lede">The design rationale behind <code>config.toml</code> —
+  <code>internal/config</code>, <code>stormlight config</code>, and
+  <code>stormlight config init</code>. The
+  <a href="https://github.com/trentkm/stormlight#configuration">README's Configuration
+  section</a> is the user-facing reference.</p>
+
+  <article>
+    <h2 id="purpose">What config is — and is not — for</h2>
+    <p>A workspace is a directory. How agents behave inside it belongs to the tree itself
+    (<code>CLAUDE.md</code> / <code>AGENTS.md</code>, read natively by the provider CLIs),
+    and what groups directories into one workspace belongs to resolvers. The config file
+    therefore holds only <em>user preferences about Stormlight's own behavior</em>: which
+    provider and permission mode to reach for, how the UI looks, where the logs go. It never
+    defines workspace semantics and never injects agent context.</p>
+
+    <h2 id="principles">Principles</h2>
+    <ol>
+      <li><strong>Zero-config.</strong> The file is optional; every setting has the default
+      the binary ships with. <code>brew install</code> → <code>stormlight</code> must keep
+      working with no file present.</li>
+      <li><strong>One precedence rule everywhere:</strong> <code>flags &gt; environment &gt;
+      config file &gt; built-in defaults</code>.</li>
+      <li><strong>Config never breaks determinism.</strong> Config keys select among
+      behaviors Stormlight owns (which mode, which provider, which binary) — they do not
+      open the door to arbitrary per-machine drift in how managed agents run.</li>
+      <li><strong>Config cannot silently escalate permissions.</strong> Nothing a repository
+      checkout contains may raise an agent's permission mode (see "Project-local config"
+      below).</li>
+    </ol>
+
+    <h2 id="file-location">File location</h2>
+    <p><code>~/.config/stormlight/config.toml</code>, honoring
+    <code>$XDG_CONFIG_HOME</code>. Everything Stormlight owns lives under one directory each
+    for config and state — dev-tool convention (git, gh, nvim do the same on macOS), and one
+    directory to document:</p>
+<pre><code>~/.config/stormlight/
+  config.toml     <span class="c"># user configuration</span>
+  resolvers/      <span class="c"># executable workspace resolvers</span>
+~/.local/state/stormlight/
+  workspaces.json <span class="c"># workspace catalog</span>
+  sessions.jsonl  <span class="c"># session history log</span></code></pre>
+
+    <h2 id="format">Format</h2>
+    <p>TOML, parsed with <code>pelletier/go-toml/v2</code>. Rationale: comments (a config
+    file that can't explain itself is a bug), obvious sectioning, no significant whitespace,
+    the standard choice in the Go/Homebrew tooling ecosystem. JSON has no comments; YAML has
+    too many footguns for a file this small.</p>
+
+    <h2 id="schema">Schema</h2>
+<pre><code><span class="c"># ~/.config/stormlight/config.toml — all keys optional.</span>
+
+<span class="k">[defaults]</span>
+provider = <span class="s">"claude"</span>            <span class="c"># codex | claude | shell</span>
+mode     = <span class="s">"edits"</span>             <span class="c"># ask | edits | auto</span>
+
+<span class="k">[ui]</span>
+rows = <span class="s">"compact"</span>               <span class="c"># compact | expanded</span>
+
+<span class="k">[log]</span>
+level = <span class="s">"info"</span>                 <span class="c"># debug | info | warn | error</span>
+<span class="c"># file = "…"                   # overrides the default log location</span>
+
+<span class="k">[tools]</span>
+<span class="c"># yazi = "/opt/homebrew/bin/yazi"   # override PATH lookup</span>
+<span class="c"># nvim = "/opt/homebrew/bin/nvim"</span>
+
+<span class="c"># Per-workspace overrides, keyed by workspace root.</span>
+<span class="k">[workspaces."/Volumes/repos/stormlight"]</span>
+mode     = <span class="s">"auto"</span>
+provider = <span class="s">"claude"</span>
+
+<span class="c"># Provider adapter tweaks. extra_args append after Stormlight's own</span>
+<span class="c"># flags, so they can refine but not remove lifecycle hooks.</span>
+<span class="k">[providers.codex]</span>
+<span class="c"># binary     = "codex"</span>
+<span class="c"># extra_args = ["--model", "o4"]</span>
+
+<span class="c"># User-defined providers. args is an exec-style array with a {task}</span>
+<span class="c"># placeholder — never a shell string.</span>
+<span class="k">[providers.aider]</span>
+<span class="c"># label  = "Aider"</span>
+<span class="c"># binary = "aider"</span>
+<span class="c"># args   = ["--message", "{task}"]</span>
+<span class="c"># [providers.aider.mode_args]</span>
+<span class="c"># auto = ["--yes-always"]</span></code></pre>
+    <p>Custom providers appear in the New Agent picker and dispatch like any other.
+    Lifecycle integration is the public contract: managed processes receive
+    <code>STORMLIGHT_ID</code> and can report state with <code>stormlight event</code> from
+    any hook mechanism the CLI provides. Stormlight never reimplements an agent.</p>
+
+    <h2 id="wiring">Wiring</h2>
+    <ul>
+      <li><code>internal/config</code>: <code>config.Load()</code> → <code>Config</code>
+      struct with the defaults filled in, called once before command construction.</li>
+      <li>Cobra flag defaults are <em>initialized from</em> the loaded config, so the
+      precedence rule falls out of the existing machinery instead of being reimplemented per
+      flag.</li>
+      <li>Validation errors name the key and file
+      (<code>config.toml: defaults.mode: invalid permission mode "always"</code>), and a
+      broken config falls back to defaults with a visible warning rather than refusing to
+      start — the dashboard is also how you'd notice the problem.</li>
+      <li><code>stormlight config</code> prints the effective merged config and the file
+      path; <code>stormlight config init</code> writes a fully commented template.</li>
+    </ul>
+
+    <h2 id="project-local">Project-local config (deliberately deferred)</h2>
+    <p>A <code>.stormlight.toml</code> in a repo root ("this project defaults to codex") is
+    attractive for teams but dangerous: a cloned repository must never be able to grant
+    itself <code>mode = "auto"</code>. If it is added later, it needs direnv-style trust
+    ("stormlight noticed project config, run <code>stormlight trust</code> to apply") and a
+    hard rule that permission mode can only be <em>lowered</em> by untrusted project files.
+    For now, overrides live in the user's own config file, keyed by path.</p>
+  </article>
+
+  <nav class="doc-pager"><a href="workspace-resolvers.html">← Workspace resolvers</a><span></span></nav>
+</main>
+</div>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>stormlight · pre-1.0, moving fast</span>
+    <span>
+      <a href="https://github.com/trentkm/stormlight">stormlight</a> ·
+      <a href="https://github.com/trentkm/windrunner">windrunner</a> ·
+      <a href="./">docs</a>
+    </span>
+  </div>
+</footer>
+<script src="../assets/docs.js"></script>
+</body>
+</html>
