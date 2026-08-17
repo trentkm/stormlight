@@ -17,6 +17,7 @@ func (m Model) renderFooter() string {
 	width := max(1, m.width-1)
 	inner := max(1, width-3)
 	var content string
+	rightAligned := false
 	if chord := m.chordHints(); chord != "" {
 		content = chord
 	} else {
@@ -36,16 +37,29 @@ func (m Model) renderFooter() string {
 		content = ansi.Truncate(hints, inner, "…")
 		if m.err != nil {
 			content = renderFooterError(inner, m.err.Error(), hints)
+		} else {
+			// The portal is the right pane, so its controls sit under it:
+			// the footer's alignment follows the seam the same way its
+			// color does.
+			rightAligned = m.terminalFocused()
 		}
 	}
-	glint := lipgloss.NewStyle().
+	glintStyle := lipgloss.NewStyle().
 		Foreground(theme.Color(theme.Pair{
 			Light: wordmarkStopsLight[1],
 			Dark:  wordmarkStopsDark[1],
-		})).
-		Render("✦ ")
+		}))
+	row := " " + glintStyle.Render("✦ ") + content
+	if rightAligned {
+		// A true mirror of the left layout: the hints lead and the glint
+		// caps the row at the outermost position, one column in.
+		if pad := inner - lipgloss.Width(content); pad > 0 {
+			row = strings.Repeat(" ", pad) + content +
+				glintStyle.Render(" ✦") + " "
+		}
+	}
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(
-		renderFooterRule(width) + "\n " + glint + content,
+		renderFooterRule(width) + "\n" + row,
 	)
 }
 
