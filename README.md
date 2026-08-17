@@ -15,6 +15,11 @@ Stormlight itself is named after.
 Workspace-aware grouping keeps agents from the same repository together while
 preserving the checkout or worktree each agent is using.
 
+[![The Stormlight dashboard — live agents, the transcript view, and the
+Spanreed terminal](site/assets/poster.jpg)](https://stormlight.sh)
+
+*A 30-second tour — it plays at [stormlight.sh](https://stormlight.sh).*
+
 ## Design
 
 - A dedicated daemon owns process and terminal lifetime, and nothing else.
