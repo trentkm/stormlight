@@ -1167,7 +1167,7 @@ func TestTaskEditorRoundTripsThroughTheHandoffFile(t *testing.T) {
 
 	// The editor "session": what is in the handoff when it exits is the
 	// task that comes back.
-	message := spec.result(nil)
+	message := spec.result("", nil)
 	edited, ok := message.(taskEditedMsg)
 	if !ok || edited.err != nil || edited.task != "Review this workspace" {
 		t.Fatalf("editor result = %#v", message)
@@ -1324,83 +1324,47 @@ func TestDirectorySelectorUpdatesPathAndPickerResult(t *testing.T) {
 	}
 }
 
-func TestResolveYaziDirectory(t *testing.T) {
-	cwd := t.TempDir()
-	choice := t.TempDir()
-	file := filepath.Join(choice, "selected.go")
-	if err := os.WriteFile(file, []byte("package selected"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	tests := []struct {
-		name   string
-		choice string
-		cwd    string
-		want   string
-	}{
-		{
-			name:   "selected directory",
-			choice: choice + "\n",
-			cwd:    cwd,
-			want:   choice,
-		},
-		{
-			name:   "selected file uses parent",
-			choice: file + "\n",
-			cwd:    cwd,
-			want:   choice,
-		},
-		{
-			name: "quit uses current directory",
-			cwd:  cwd + "\n",
-			want: cwd,
-		},
-		{
-			name: "cancel leaves directory unchanged",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := resolveYaziDirectory(
-				[]byte(test.choice),
-				[]byte(test.cwd),
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != test.want {
-				t.Fatalf("got %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestYaziPickerBuildsHandoffsAndResolvesTheChoice(t *testing.T) {
+func TestYaziPickerRunsStormlightOnTheMachineBeingBrowsed(t *testing.T) {
 	start := t.TempDir()
-	spec, err := yaziPickerSpec("/usr/local/bin/yazi", start)
-	if err != nil {
-		t.Fatal(err)
+	local := yaziPickerSpec("", start, "/usr/local/bin/yazi")
+
+	// An empty path is "this host's Stormlight" — the runtime fills it in
+	// on whichever machine the overlay lands on.
+	if local.path != "" || local.dir != start || local.host != "" {
+		t.Fatalf("picker spec = %#v", local)
+	}
+	args := strings.Join(local.args, " ")
+	if !strings.Contains(args, "_pick") || !strings.Contains(args, start) {
+		t.Fatalf("picker args = %#v", local.args)
+	}
+	// The configured Yazi is this machine's, so it is only offered here.
+	if !strings.Contains(args, "--yazi /usr/local/bin/yazi") {
+		t.Fatalf("local picker should use the configured yazi: %#v", local.args)
 	}
 
-	if spec.path != "/usr/local/bin/yazi" || spec.dir != start {
-		t.Fatalf("picker spec = %#v", spec)
+	remote := yaziPickerSpec("devbox", start, "/usr/local/bin/yazi")
+	if remote.host != "devbox" {
+		t.Fatalf("picker spec = %#v", remote)
 	}
-	args := strings.Join(spec.args, " ")
-	if !strings.Contains(args, "--chooser-file") ||
-		!strings.Contains(args, "--cwd-file") {
-		t.Fatalf("Yazi handoff args = %#v", spec.args)
+	if strings.Contains(strings.Join(remote.args, " "), "--yazi") {
+		t.Fatalf("this machine's yazi path means nothing over there: %#v", remote.args)
 	}
 
-	// Empty handoffs are a cancelled pick, which completes cleanly with
-	// no path.
-	message := spec.result(nil)
+	// Quitting without choosing leaves no answer, and that is not a
+	// failure — the form keeps whatever it had.
+	message := remote.result("", nil)
 	picked, ok := message.(directoryPickedMsg)
 	if !ok || picked.err != nil || picked.path != "" {
+		t.Fatalf("cancelled picker = %#v", message)
+	}
+
+	// An answer carries the machine it was chosen on.
+	message = remote.result("/srv/api", nil)
+	picked, ok = message.(directoryPickedMsg)
+	if !ok || picked.path != "/srv/api" || picked.host != "devbox" {
 		t.Fatalf("picker result = %#v", message)
 	}
 }
-
 func TestVimPaneNavigation(t *testing.T) {
 	firstWorkspace := workspace.DirectoryContext("/workspace/one")
 	secondWorkspace := workspace.DirectoryContext("/workspace/two")

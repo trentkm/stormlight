@@ -19,11 +19,15 @@ import (
 // overlaySpec is one floating program the dashboard can host: what to run,
 // how to read its answer back, and how to clean up if it never answers.
 type overlaySpec struct {
-	title   string
-	path    string
-	args    []string
-	dir     string
-	result  func(error) tea.Msg
+	title string
+	host  string
+	path  string
+	args  []string
+	dir   string
+	// result turns the program's exit into a message. answer is what it
+	// left in its session — empty when it left none, which is what
+	// quitting without choosing looks like.
+	result  func(answer string, err error) tea.Msg
 	cleanup func()
 }
 
@@ -65,6 +69,7 @@ func (m *Model) openOverlay(spec overlaySpec) tea.Cmd {
 	generation := m.overlayGeneration
 	outerWidth, outerHeight := m.overlayDimensions()
 	request := app.OverlayRequest{
+		Host: spec.host,
 		Path: spec.path,
 		Args: spec.args,
 		Dir:  spec.dir,
@@ -127,12 +132,18 @@ func (m Model) handleOverlayExited(msg overlayExitedMsg) (tea.Model, tea.Cmd) {
 	view := m.overlay
 	m.overlay = nil
 	return m, func() tea.Msg {
+		// Read the answer before closing: Close destroys the session, and
+		// the session is where the answer is.
+		answer, answerErr := view.session.Result(context.Background())
 		view.widget.Close()
 		if msg.code != 0 {
-			return view.spec.result(fmt.Errorf(
+			return view.spec.result("", fmt.Errorf(
 				"%s exited with status %d", strings.TrimSpace(view.spec.title), msg.code))
 		}
-		return view.spec.result(nil)
+		if answerErr != nil {
+			return view.spec.result("", answerErr)
+		}
+		return view.spec.result(answer, nil)
 	}
 }
 
@@ -223,7 +234,10 @@ func taskEditorSpec(binary, cwd, task string) (overlaySpec, error) {
 		return overlaySpec{}, fmt.Errorf("close task editor file: %w", err)
 	}
 
-	result := func(runErr error) tea.Msg {
+	// The editor stays file-based: it is seeded with the task as it
+	// stands, so it needs a file written before it opens, and it only
+	// ever edits text this dashboard already holds.
+	result := func(_ string, runErr error) tea.Msg {
 		defer cleanup()
 		if runErr != nil {
 			return taskEditedMsg{err: fmt.Errorf("run Neovim: %w", runErr)}
@@ -262,114 +276,44 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	if !isDirectory(start) {
 		start = m.initialCwd
 	}
-	spec, err := yaziPickerSpec(m.yaziPath, start)
-	if err != nil {
-		m.err = err
-		return m, nil
-	}
-	return m, m.openOverlay(spec)
+	return m, m.openOverlay(yaziPickerSpec("", start, m.yaziPath))
 }
 
-// yaziPickerSpec builds the picker overlay: the invocation, and the
-// completion handler that resolves the chosen directory from the handoff
-// files.
-func yaziPickerSpec(binary, start string) (overlaySpec, error) {
-	choiceHandoff, err := createYaziHandoff("choice")
-	if err != nil {
-		return overlaySpec{}, err
+// yaziPickerSpec builds the picker overlay.
+//
+// The program is Stormlight itself on the machine being browsed, because
+// the answer has to be recorded there: Yazi writes its choice into files
+// beside itself, and on another machine those are paths this process
+// cannot read. `_pick` runs Yazi, reads them where they are, and leaves
+// the answer in the session both ends already hold.
+//
+// The configured Yazi path is only passed for this machine. On another
+// one it names a binary that may not be there, and that host's own PATH
+// is the right place to look.
+func yaziPickerSpec(host, start, localYazi string) overlaySpec {
+	args := []string{"_pick"}
+	if host == "" && strings.TrimSpace(localYazi) != "" {
+		args = append(args, "--yazi", localYazi)
 	}
-	cwdHandoff, err := createYaziHandoff("cwd")
-	if err != nil {
-		_ = os.Remove(choiceHandoff)
-		return overlaySpec{}, err
-	}
-
-	pickerArgs := []string{
-		"--chooser-file", choiceHandoff,
-		"--cwd-file", cwdHandoff,
-		start,
-	}
-	result := func(runErr error) tea.Msg {
-		defer os.Remove(choiceHandoff)
-		defer os.Remove(cwdHandoff)
-		if runErr != nil {
-			return directoryPickedMsg{err: fmt.Errorf("run Yazi: %w", runErr)}
-		}
-		choice, err := os.ReadFile(choiceHandoff)
-		if err != nil {
-			return directoryPickedMsg{err: fmt.Errorf("read Yazi choice: %w", err)}
-		}
-		cwd, err := os.ReadFile(cwdHandoff)
-		if err != nil {
-			return directoryPickedMsg{err: fmt.Errorf("read Yazi directory: %w", err)}
-		}
-		selected, err := resolveYaziDirectory(choice, cwd)
-		if err != nil {
-			return directoryPickedMsg{err: err}
-		}
-		if selected == "" {
-			return directoryPickedMsg{}
-		}
-		return directoryPickedMsg{path: selected}
-	}
+	args = append(args, start)
 
 	return overlaySpec{
-		title:  "Yazi",
-		path:   binary,
-		args:   pickerArgs,
-		dir:    start,
-		result: result,
-		cleanup: func() {
-			_ = os.Remove(choiceHandoff)
-			_ = os.Remove(cwdHandoff)
+		title: "Yazi",
+		host:  host,
+		// Empty path means this host's Stormlight, whichever machine
+		// that turns out to be.
+		path: "",
+		args: args,
+		dir:  start,
+		result: func(answer string, runErr error) tea.Msg {
+			if runErr != nil {
+				return directoryPickedMsg{err: runErr}
+			}
+			// No answer is a picker someone quit, not a failure.
+			return directoryPickedMsg{host: host, path: answer}
 		},
-	}, nil
-}
-
-func createYaziHandoff(kind string) (string, error) {
-	file, err := os.CreateTemp("", "stormlight-yazi-"+kind+"-*")
-	if err != nil {
-		return "", fmt.Errorf("create Yazi handoff file: %w", err)
+		cleanup: func() {},
 	}
-	path := file.Name()
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close Yazi handoff file: %w", err)
-	}
-	return path, nil
-}
-
-func resolveYaziDirectory(choice, cwd []byte) (string, error) {
-	selected := firstYaziPath(choice)
-	if selected == "" {
-		selected = firstYaziPath(cwd)
-	}
-	if selected == "" {
-		return "", nil
-	}
-
-	selected = filepath.Clean(selected)
-	info, err := os.Stat(selected)
-	if err != nil {
-		return "", fmt.Errorf("Yazi selected path is unavailable: %s", selected)
-	}
-	if !info.IsDir() {
-		selected = filepath.Dir(selected)
-	}
-	if !isDirectory(selected) {
-		return "", fmt.Errorf("Yazi selected directory is unavailable: %s", selected)
-	}
-	return selected, nil
-}
-
-func firstYaziPath(data []byte) string {
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 // choiceKey identifies a directory choice. The host is part of it: the

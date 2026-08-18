@@ -71,6 +71,15 @@ type OverlayRequest struct {
 type Overlay interface {
 	TerminalStream
 	Exited() <-chan int
+	// Result is the answer the program left behind, read after it exits
+	// and before Close takes the session with it. Empty means it left
+	// none: a picker the user quit without choosing.
+	//
+	// The answer comes back through the session rather than through a
+	// file, because the program runs on the machine it is choosing from
+	// and a file it wrote there is not one this process can read. The
+	// session is the one thing both ends already hold.
+	Result(ctx context.Context) (string, error)
 }
 
 // OverlayHost is an optional runtime capability: run a short-lived

@@ -252,6 +252,10 @@ type attachMsg struct {
 }
 
 type directoryPickedMsg struct {
+	// host is the machine the picker browsed; empty is this one. It
+	// travels with the path because a path alone does not say where it
+	// is, and the two are one answer.
+	host string
 	path string
 	err  error
 }
@@ -574,10 +578,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == modeAddWorkspace {
 			m.cwdInput.SetValue(msg.path)
-			return m, addWorkspaceCmd(m.backend, msg.path)
+			return m, addWorkspaceCmd(m.backend, msg.host, msg.path)
 		}
-		// The picker runs on this machine, so what it returns is here.
-		m.prepareDirectoryChoices("", msg.path)
+		m.prepareDirectoryChoices(msg.host, msg.path)
 		m.cwdInput.SetValue(msg.path)
 		m.formFocus = dispatchTask
 		m.focusForm()

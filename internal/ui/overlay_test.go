@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -15,11 +16,26 @@ type fakeOverlaySession struct {
 	seed   string
 	output chan []byte
 	exited chan int
+	answer string
 
 	mu     sync.Mutex
 	writes []byte
 	closed bool
 }
+
+// Result is what the program left in its session. Reading it after Close
+// would be reading a session that no longer exists, so the test records
+// whether that happened.
+func (f *fakeOverlaySession) Result(context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return "", errClosedBeforeRead
+	}
+	return f.answer, nil
+}
+
+var errClosedBeforeRead = errors.New("session was closed before its answer was read")
 
 func newFakeOverlaySession(seed string) *fakeOverlaySession {
 	return &fakeOverlaySession{
@@ -119,7 +135,7 @@ func TestOverlayCancelDestroysTheSessionUnread(t *testing.T) {
 	model = openFakeOverlay(t, model, session, overlaySpec{
 		title:   "Yazi",
 		cleanup: func() { cleaned = true },
-		result:  func(error) tea.Msg { resultRan = true; return nil },
+		result:  func(string, error) tea.Msg { resultRan = true; return nil },
 	})
 	generation := model.overlay.generation
 
@@ -147,11 +163,13 @@ func TestOverlayCancelDestroysTheSessionUnread(t *testing.T) {
 func TestOverlayExitReadsTheAnswerBack(t *testing.T) {
 	model := flowModelFixture(t, stubBackend{})
 	session := newFakeOverlaySession("seed")
+	// What the program left behind, in the session it was running in.
+	session.answer = "/picked"
 	model = openFakeOverlay(t, model, session, overlaySpec{
 		title:   "Yazi",
 		cleanup: func() {},
-		result: func(err error) tea.Msg {
-			return directoryPickedMsg{path: "/picked", err: err}
+		result: func(answer string, err error) tea.Msg {
+			return directoryPickedMsg{path: answer, err: err}
 		},
 	})
 
@@ -163,6 +181,9 @@ func TestOverlayExitReadsTheAnswerBack(t *testing.T) {
 	if model.overlay != nil {
 		t.Fatal("exit left the overlay up")
 	}
+	// The answer has to be read before Close, because Close destroys the
+	// session holding it. The fake returns an error if it is asked after
+	// closing, so the order is asserted rather than assumed.
 	picked, ok := cmd().(directoryPickedMsg)
 	if !ok || picked.err != nil || picked.path != "/picked" {
 		t.Fatalf("exit result = %#v", picked)

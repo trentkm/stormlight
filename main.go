@@ -21,6 +21,7 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/fleet"
 	"github.com/trentkm/stormlight/internal/history"
+	"github.com/trentkm/stormlight/internal/picker"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/selfpath"
@@ -125,6 +126,7 @@ func newRootCommand() *cobra.Command {
 		newWindrunnerBridgeCommand(),
 		newResolveCommand(),
 		newReadCommand(),
+		newPickCommand(),
 		newBenchCommand(),
 		newServeCommand(cfg),
 	)
@@ -250,6 +252,69 @@ func newReadCommand() *cobra.Command {
 			return err
 		},
 	}
+}
+
+// newPickCommand is the directory chooser, running on the machine whose
+// directories are being chosen.
+//
+// It answers through its own windrunner session rather than through a
+// file: Yazi writes its choice beside itself, and on another machine that
+// is a path the dashboard cannot read. The session is the one thing both
+// ends already hold, so the answer goes into its metadata — written to
+// the daemon on this machine, read by the dashboard over the tunnel it
+// already has.
+func newPickCommand() *cobra.Command {
+	var yaziPath string
+	command := &cobra.Command{
+		Use:    "_pick <start-directory>",
+		Hidden: true,
+		Args:   cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			start := ""
+			if len(args) == 1 {
+				start = args[0]
+			}
+			chosen, err := picker.Choose(yaziPath, start)
+			if err != nil {
+				return err
+			}
+			return recordPick(chosen)
+		},
+	}
+	command.Flags().StringVar(&yaziPath, "yazi", "",
+		"path to yazi; found on PATH when unset")
+	return command
+}
+
+// recordPick writes the answer into this process's own session. Quitting
+// without choosing records nothing, which is how the dashboard tells a
+// cancelled picker from one that chose.
+func recordPick(chosen string) error {
+	if strings.TrimSpace(chosen) == "" {
+		return nil
+	}
+	sessionID := os.Getenv("WINDRUNNER_SESSION")
+	if sessionID == "" {
+		// Run by hand rather than as an overlay: say the answer instead
+		// of filing it.
+		fmt.Println(chosen)
+		return nil
+	}
+	c, err := wrclient.Dial(windrun.SocketPath())
+	if err != nil {
+		return fmt.Errorf("reach the daemon holding this session: %w", err)
+	}
+	defer c.Close()
+	info, err := c.Info(sessionID)
+	if err != nil {
+		return err
+	}
+	metadata := info.Metadata
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	metadata[windrun.OverlayResultKey] = chosen
+	return c.SetMetadata(sessionID, metadata)
 }
 
 // newWindrunnerAttachCommand is the F key's other half: a full-terminal
