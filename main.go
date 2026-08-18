@@ -117,6 +117,7 @@ func newRootCommand() *cobra.Command {
 		newDeleteCommand(cfg),
 		newMarkCommand(cfg),
 		newWorkspaceCommand(cfg),
+		newRemoteCommand(cfg),
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
@@ -276,6 +277,10 @@ func newPickCommand() *cobra.Command {
 			}
 			chosen, err := picker.Choose(yaziPath, start)
 			if err != nil {
+				// The popup closes with this process, taking its stderr
+				// with it, so the reason goes where the dashboard can
+				// still read it.
+				_ = recordPickFailure(err)
 				return err
 			}
 			return recordPick(chosen)
@@ -286,6 +291,13 @@ func newPickCommand() *cobra.Command {
 	return command
 }
 
+// recordPickFailure records why there is no answer, so the dashboard can
+// say "yazi is not installed on devbox" rather than "exited with status
+// 1".
+func recordPickFailure(reason error) error {
+	return writeOverlayMetadata(windrun.OverlayErrorKey, reason.Error())
+}
+
 // recordPick writes the answer into this process's own session. Quitting
 // without choosing records nothing, which is how the dashboard tells a
 // cancelled picker from one that chose.
@@ -293,11 +305,17 @@ func recordPick(chosen string) error {
 	if strings.TrimSpace(chosen) == "" {
 		return nil
 	}
+	return writeOverlayMetadata(windrun.OverlayResultKey, chosen)
+}
+
+// writeOverlayMetadata leaves a value in this process's own session, for
+// whoever is holding the other end of it.
+func writeOverlayMetadata(key, value string) error {
 	sessionID := os.Getenv("WINDRUNNER_SESSION")
 	if sessionID == "" {
-		// Run by hand rather than as an overlay: say the answer instead
-		// of filing it.
-		fmt.Println(chosen)
+		// Run by hand rather than as an overlay: say it instead of
+		// filing it.
+		fmt.Println(value)
 		return nil
 	}
 	c, err := wrclient.Dial(windrun.SocketPath())
@@ -313,7 +331,7 @@ func recordPick(chosen string) error {
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
-	metadata[windrun.OverlayResultKey] = chosen
+	metadata[key] = value
 	return c.SetMetadata(sessionID, metadata)
 }
 
@@ -606,14 +624,27 @@ func fleetHosts(cfg config.Config, catalog *workspace.Catalog) []string {
 // dashboardHosts is every machine worth offering, in a stable order:
 // what ~/.ssh/config names first, then anything configured here that it
 // did not.
-func dashboardHosts(cfg config.Config) []string {
-	hosts := remote.KnownHosts()
-	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
-		if !slices.Contains(hosts, name) {
-			hosts = append(hosts, name)
-		}
+func dashboardHosts(cfg config.Config) []ui.HostChoice {
+	var choices []ui.HostChoice
+	named := map[string]bool{}
+	for _, host := range remote.KnownHosts() {
+		named[host.Name] = true
+		choices = append(choices, ui.HostChoice{
+			Name:    host.Name,
+			Summary: host.Summary(),
+		})
 	}
-	return hosts
+	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
+		if named[name] {
+			continue
+		}
+		summary := cfg.Hosts[name].Destination
+		if summary == name {
+			summary = ""
+		}
+		choices = append(choices, ui.HostChoice{Name: name, Summary: summary})
+	}
+	return choices
 }
 
 func remoteMember(cfg config.Config, name string) fleet.Member {
@@ -771,6 +802,133 @@ func newListCommand(cfg config.Config) *cobra.Command {
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
 	return command
+}
+
+// newRemoteCommand groups what a machine needs before it can hold
+// agents. Reaching a host is one binary and one optional tool, and the
+// difference between "it does not work" and "it needs yazi" is worth a
+// command rather than a guess.
+func newRemoteCommand(cfg config.Config) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "remote",
+		Short: "Inspect and prepare machines Stormlight can reach",
+	}
+	command.AddCommand(newRemoteListCommand(cfg), newRemoteSetupCommand(cfg))
+	return command
+}
+
+func newRemoteListCommand(cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List the machines this dashboard would offer",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			hosts := dashboardHosts(cfg)
+			if len(hosts) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(),
+					"No machines in ~/.ssh/config or [hosts.*]. Any name works anyway.")
+				return nil
+			}
+			for _, host := range hosts {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", host.Name, host.Summary)
+			}
+			return nil
+		},
+	}
+}
+
+func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
+	var install bool
+	var withYazi bool
+	var wait bool
+	command := &cobra.Command{
+		Use:   "setup <host>",
+		Short: "Report what a machine is missing, and optionally install it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			host := remoteHostFrom(args[0], cfg.Hosts[args[0]])
+			transport := remote.NewTransport(host)
+			out := cmd.OutOrStdout()
+
+			report, err := remote.Probe(cmd.Context(), transport)
+			if err != nil {
+				return err
+			}
+			writeRemoteReport(out, report)
+			if !install {
+				if !report.Ready() || !report.Yazi.Present() {
+					fmt.Fprintf(out, "\nRun with --install to fix this.\n")
+				}
+				holdOpen(out, wait)
+				return nil
+			}
+
+			if !report.Stormlight.Present() {
+				binary, err := selfpath.Resolve()
+				if err != nil {
+					return err
+				}
+				if err := remote.InstallStormlight(
+					cmd.Context(), transport, report, binary, out); err != nil {
+					return err
+				}
+			}
+			if withYazi && !report.Yazi.Present() {
+				if err := remote.InstallYazi(cmd.Context(), transport, report, out); err != nil {
+					return err
+				}
+			}
+			fresh, err := remote.Probe(cmd.Context(), transport)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(out)
+			writeRemoteReport(out, fresh)
+			holdOpen(out, wait)
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&install, "install", false,
+		"install what is missing rather than only reporting it")
+	command.Flags().BoolVar(&withYazi, "yazi", false,
+		"also install yazi, using the host's own package manager")
+	command.Flags().BoolVar(&wait, "wait", false,
+		"hold the terminal open at the end, for a popup nobody else closes")
+	return command
+}
+
+// holdOpen keeps a popup up long enough to be read. The overlay closes
+// when its program exits, and a report that scrolls past in a tenth of a
+// second is a report nobody has seen.
+func holdOpen(out io.Writer, wait bool) {
+	if !wait {
+		return
+	}
+	fmt.Fprintf(out, "\nPress any key to close.\n")
+	var one [1]byte
+	_, _ = os.Stdin.Read(one[:])
+}
+
+func writeRemoteReport(out io.Writer, report remote.Report) {
+	fmt.Fprintf(out, "%s\t%s\n", report.Host, report.Platform)
+	line := func(requirement remote.Requirement, note string) {
+		state := "missing"
+		detail := note
+		if requirement.Present() {
+			state = "ok"
+			detail = requirement.Path
+			if requirement.Version != "" {
+				detail += "  " + requirement.Version
+			}
+		}
+		fmt.Fprintf(out, "  %-11s %-8s %s\n", requirement.Name, state, detail)
+	}
+	line(report.Stormlight, "required — the bridge, the resolver and the picker are all this binary")
+	yaziNote := "optional — browsing needs it; a typed path does not"
+	if !report.Yazi.Present() && report.YaziInstallCommand() != "" {
+		yaziNote = "optional — " + report.YaziInstallCommand()
+	}
+	line(report.Yazi, yaziNote)
 }
 
 func newWorkspaceCommand(cfg config.Config) *cobra.Command {

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -12,6 +11,39 @@ import (
 // two deep; anything past this is a loop, and following it forever is a
 // dashboard that never opens its own modal.
 const maxIncludeDepth = 8
+
+// ConfigHost is one machine named in the user's SSH configuration.
+type ConfigHost struct {
+	// Name is the alias, and what Stormlight calls the machine.
+	Name string
+	// HostName, User, and Port are what ssh would use for it, when the
+	// configuration says. Empty means ssh's own default — for HostName
+	// that is the alias itself.
+	HostName string
+	User     string
+	Port     string
+}
+
+// Summary is the machine in one phrase, for a list that has to say which
+// `builder` this is. It says nothing when the configuration adds nothing
+// to the name, rather than repeating it back.
+func (h ConfigHost) Summary() string {
+	hostName := h.HostName
+	if hostName == "" {
+		hostName = h.Name
+	}
+	summary := hostName
+	if h.User != "" {
+		summary = h.User + "@" + hostName
+	}
+	if h.Port != "" && h.Port != "22" {
+		summary += ":" + h.Port
+	}
+	if summary == h.Name {
+		return ""
+	}
+	return summary
+}
 
 // KnownHosts reads the host names out of the user's SSH configuration, in
 // the order they appear, as suggestions for a machine to work on.
@@ -25,11 +57,11 @@ const maxIncludeDepth = 8
 // whatever matches them; neither is a machine anyone can connect to, so
 // offering them as choices would be offering something that cannot work.
 // A negated pattern (`!prod`) is exclusion, not a name.
-func KnownHosts() []string {
+func KnownHosts() []ConfigHost {
 	return knownHostsFrom(defaultSSHConfigPath(), 0)
 }
 
-func knownHostsFrom(path string, depth int) []string {
+func knownHostsFrom(path string, depth int) []ConfigHost {
 	if depth > maxIncludeDepth || strings.TrimSpace(path) == "" {
 		return nil
 	}
@@ -40,7 +72,25 @@ func knownHostsFrom(path string, depth int) []string {
 	}
 	defer file.Close()
 
-	var hosts []string
+	var hosts []ConfigHost
+	// Directives belong to the Host block above them, and one block can
+	// name several machines — `Host build ci` configures both.
+	var current []int
+	add := func(host ConfigHost) int {
+		for index, known := range hosts {
+			if known.Name == host.Name {
+				return index
+			}
+		}
+		hosts = append(hosts, host)
+		return len(hosts) - 1
+	}
+	set := func(apply func(*ConfigHost)) {
+		for _, index := range current {
+			apply(&hosts[index])
+		}
+	}
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		keyword, rest, ok := splitDirective(scanner.Text())
@@ -49,21 +99,24 @@ func knownHostsFrom(path string, depth int) []string {
 		}
 		switch keyword {
 		case "host":
+			current = nil
 			for _, pattern := range strings.Fields(rest) {
 				if isHostPattern(pattern) {
 					continue
 				}
-				if !slices.Contains(hosts, pattern) {
-					hosts = append(hosts, pattern)
-				}
+				current = append(current, add(ConfigHost{Name: pattern}))
 			}
+		case "hostname":
+			set(func(host *ConfigHost) { host.HostName = rest })
+		case "user":
+			set(func(host *ConfigHost) { host.User = rest })
+		case "port":
+			set(func(host *ConfigHost) { host.Port = rest })
 		case "include":
 			for _, included := range strings.Fields(rest) {
 				for _, match := range expandInclude(included) {
 					for _, host := range knownHostsFrom(match, depth+1) {
-						if !slices.Contains(hosts, host) {
-							hosts = append(hosts, host)
-						}
+						add(host)
 					}
 				}
 			}

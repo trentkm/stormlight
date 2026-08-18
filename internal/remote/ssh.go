@@ -122,6 +122,36 @@ func (t *Transport) Command(env []string, args ...string) *exec.Cmd {
 	return exec.Command(t.host.sshProgram(), t.sshArgs(false, env, args)...)
 }
 
+// ShellCommand runs a script on the host rather than Stormlight — for
+// the questions asked before Stormlight is known to be there at all, and
+// for putting it there.
+//
+// The script travels on stdin, to a POSIX shell asked for by name. Both
+// halves of that matter. `ssh host <command>` hands the command to the
+// account's *login* shell, which is as likely to be fish as sh, and a
+// POSIX script is not fish — nor does any amount of quoting make it one,
+// since the quoting itself is what fish parses differently. Reading the
+// script from stdin means nothing quotes it at all.
+func (t *Transport) ShellCommand(ctx context.Context, script string) *exec.Cmd {
+	sshArgs := t.sshOptions(false)
+	sshArgs = append(sshArgs, t.host.destination(), "/bin/sh", "-s")
+	command := exec.CommandContext(ctx, t.host.sshProgram(), sshArgs...)
+	command.Stdin = strings.NewReader(script)
+	return command
+}
+
+// PipeCommand runs one command on the host with something of the
+// caller's on its stdin — a file being copied there, most of the time.
+// The arguments are quoted words rather than a script, which every shell
+// agrees about.
+func (t *Transport) PipeCommand(ctx context.Context, stdin io.Reader, args ...string) *exec.Cmd {
+	sshArgs := t.sshOptions(false)
+	sshArgs = append(sshArgs, t.host.destination(), shellQuote(args))
+	command := exec.CommandContext(ctx, t.host.sshProgram(), sshArgs...)
+	command.Stdin = stdin
+	return command
+}
+
 // CommandContext is Command bound to a context, for the calls a caller
 // gives up on: workspace resolution runs on the dashboard's refresh path,
 // where an unreachable host must not hold the frame.
@@ -135,12 +165,17 @@ func (t *Transport) TTYCommand(env []string, args ...string) *exec.Cmd {
 	return exec.Command(t.host.sshProgram(), t.sshArgs(true, env, args)...)
 }
 
-func (t *Transport) sshArgs(tty bool, env, args []string) []string {
+// sshOptions is everything before the destination.
+func (t *Transport) sshOptions(tty bool) []string {
 	// BatchMode is not about scripting convenience. The dashboard owns
 	// the terminal, and ssh prompting for a password or a host key on
 	// /dev/tty would paint over it with something nobody can answer. Fail
 	// with a message instead.
-	sshArgs := []string{"-o", "BatchMode=yes"}
+	// ConnectTimeout bounds every call. Without it a host that is merely
+	// asleep takes ssh's own default to fail — long enough that the
+	// dashboard looks broken rather than patient — and this runs on the
+	// refresh path.
+	sshArgs := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10"}
 	if tty {
 		sshArgs = append(sshArgs, "-t")
 	}
@@ -151,7 +186,11 @@ func (t *Transport) sshArgs(tty bool, env, args []string) []string {
 			"-o", "ControlPersist=60s",
 		)
 	}
-	sshArgs = append(sshArgs, t.host.Options...)
+	return append(sshArgs, t.host.Options...)
+}
+
+func (t *Transport) sshArgs(tty bool, env, args []string) []string {
+	sshArgs := t.sshOptions(tty)
 	sshArgs = append(sshArgs, t.host.destination())
 	remote := make([]string, 0, len(args)+1)
 	remote = append(remote, t.host.bin())
@@ -215,6 +254,25 @@ func Handshake(conn net.Conn) (Hello, error) {
 			hello.Protocol, Protocol, hello.Version, localVersion)
 	}
 	return hello, nil
+}
+
+// Explain turns ssh's own diagnostics into something with a next step.
+// The dashboard runs ssh in BatchMode, which is right — a password prompt
+// would paint over the TUI with something nobody can answer — but it
+// turns "should I trust this host?" into a refusal with no way to say
+// yes. The answer is to say yes once, in a terminal, and ssh remembers.
+func Explain(host string, message string) string {
+	if strings.Contains(message, "Host key verification failed") {
+		return fmt.Sprintf(
+			"%s: its host key is not known yet — run `ssh %s` once to accept it",
+			host, host)
+	}
+	if strings.Contains(message, "Permission denied") {
+		return fmt.Sprintf(
+			"%s: %s (Stormlight cannot answer a password prompt; it needs key-based login)",
+			host, message)
+	}
+	return host + ": " + message
 }
 
 // readHello consumes the greeting line, one byte at a time so that not a

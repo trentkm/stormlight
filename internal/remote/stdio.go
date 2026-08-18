@@ -128,7 +128,7 @@ func (c *stdioConn) exitFailure() error {
 		return nil
 	}
 	if message := c.stderr.String(); message != "" {
-		return fmt.Errorf("%s: %s", c.address, message)
+		return errors.New(Explain(string(c.address), message))
 	}
 	return fmt.Errorf("%s: %w", c.address, c.waitErr)
 }

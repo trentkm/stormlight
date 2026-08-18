@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -136,7 +137,7 @@ func (r remoteResolver) run(ctx context.Context, args ...string) ([]byte, error)
 		// problems this is: no stormlight there, no such directory, a
 		// key that is not accepted.
 		if message := strings.TrimSpace(stderr.String()); message != "" {
-			return nil, fmt.Errorf("%s: %s", r.Name(), message)
+			return nil, errors.New(remote.Explain(r.host, message))
 		}
 		return nil, fmt.Errorf("%s: %w", r.Name(), err)
 	}

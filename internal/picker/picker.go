@@ -20,9 +20,9 @@ import (
 // choosing, which is not an error.
 func Choose(binary, start string) (string, error) {
 	if strings.TrimSpace(binary) == "" {
-		resolved, err := exec.LookPath("yazi")
+		resolved, err := findYazi()
 		if err != nil {
-			return "", fmt.Errorf("yazi is not installed or not on PATH")
+			return "", err
 		}
 		binary = resolved
 	}
@@ -67,6 +67,32 @@ func Choose(binary, start string) (string, error) {
 		return "", fmt.Errorf("read Yazi directory: %w", err)
 	}
 	return resolveDirectory(choice, cwd)
+}
+
+// findYazi looks for the chooser the way a person would.
+//
+// A command run over ssh gets a non-interactive shell, whose PATH is
+// often the bare system one — no /opt/homebrew/bin, no ~/.local/bin, none
+// of what a version manager adds. So a plain lookup failing does not mean
+// yazi is absent, and asking a login shell is the difference between
+// "browse that machine" working and appearing to be unsupported.
+func findYazi() (string, error) {
+	if resolved, err := exec.LookPath("yazi"); err == nil {
+		return resolved, nil
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	// -l is a login shell: the one that reads the profile the user
+	// actually configures.
+	output, err := exec.Command(shell, "-lc", "command -v yazi").Output()
+	if resolved := strings.TrimSpace(string(output)); err == nil && resolved != "" {
+		return resolved, nil
+	}
+	host, _ := os.Hostname()
+	return "", fmt.Errorf(
+		"yazi is not installed on %s, or not on the PATH its login shell sets", host)
 }
 
 // resolveDirectory reads the two answers Yazi leaves: the file or

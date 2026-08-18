@@ -31,6 +31,22 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	m.dispatchPrefix = ""
 
+	// Naming a machine the SSH configuration does not: the row's own
+	// input, which takes everything but the keys that leave it.
+	if m.showingMachines() && m.formFocus == dispatchCustomPath &&
+		key != "esc" && key != "ctrl+c" && key != "ctrl+[" {
+		if key == "enter" {
+			destination := strings.TrimSpace(m.hostInput.Value())
+			if destination == "" {
+				return m, nil
+			}
+			m.enterMachine(destination)
+			return m, nil
+		}
+		m.hostInput = m.hostInput.Update(msg)
+		return m, nil
+	}
+
 	if m.formFocus == dispatchCustomPath &&
 		key != "esc" && key != "ctrl+c" && key != "ctrl+[" {
 		if confirmed := m.handlePathNavKey(msg); confirmed {
@@ -41,25 +57,41 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "esc", "ctrl+c", "ctrl+[":
+		// Inside a machine, Esc steps back out to the list rather than
+		// abandoning the whole modal.
+		if m.addWorkspaceTab == tabRemote && m.addWorkspaceHost != "" {
+			m.leaveMachine()
+			return m, nil
+		}
+		if m.showingMachines() && m.formFocus == dispatchCustomPath {
+			m.hostInput.Blur()
+			m.formFocus = dispatchDirectory
+			return m, nil
+		}
 		m.mode = modeNormal
 		m.blurForm()
 		return m, nil
-	case "h", "left":
-		if m.formFocus == dispatchDirectory {
-			m.selectAddWorkspaceHost(-1)
-			return m, nil
+	case "tab", "shift+tab", "h", "left", "l", "right":
+		if m.addWorkspaceTab == tabLocal {
+			m.switchAddWorkspaceTab(tabRemote)
+		} else {
+			m.switchAddWorkspaceTab(tabLocal)
 		}
-	case "l", "right":
-		if m.formFocus == dispatchDirectory {
-			m.selectAddWorkspaceHost(1)
-			return m, nil
-		}
+		return m, nil
 	case "j", "down":
+		if m.showingMachines() {
+			m.selectMachine(1)
+			return m, nil
+		}
 		if m.formFocus == dispatchDirectory {
 			m.selectDirectory(1)
 			return m, nil
 		}
 	case "k", "up":
+		if m.showingMachines() {
+			m.selectMachine(-1)
+			return m, nil
+		}
 		if m.formFocus == dispatchDirectory {
 			m.selectDirectory(-1)
 			return m, nil
@@ -80,11 +112,17 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "enter":
+		if m.showingMachines() {
+			m.openMachine()
+			return m, nil
+		}
 		selected, ok := m.selectedDirectory()
 		if !ok {
 			return m, nil
 		}
 		switch selected.kind {
+		case directorySetup:
+			return m.openSetup(selected.host)
 		case directoryYazi:
 			return m.openYazi()
 		case directoryCustom:
@@ -146,6 +184,15 @@ func (m Model) renderWorkspaceRow(
 		nameNeed,
 	)
 	suffix := chipsPlain(chips)
+	// A workspace on another machine is marked in the column itself, not
+	// only in the subtitle: compact rows have no subtitle, and which
+	// machine a workspace is on is the one thing about it not worth
+	// guessing at. The marker rides with the counts rather than the name
+	// so that a remote workspace is not also a truncated one.
+	remote := group.context.Host != ""
+	if remote {
+		suffix = remoteMarker + " " + suffix
+	}
 	// Nothing marks this column. A selected-but-unfocused workspace is
 	// already named by the row that stays at full strength while its
 	// neighbours dim, and by the connector arc pointing out of it — an arrow
@@ -199,10 +246,14 @@ func (m Model) renderWorkspaceRow(
 	case stats.Working > 0:
 		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
+	styledSuffix := chipsStyled(chips)
+	if remote {
+		styledSuffix = mutedStyle().Render(remoteMarker+" ") + styledSuffix
+	}
 	top := gutter +
 		renderedName +
 		strings.Repeat(" ", gap) +
-		chipsStyled(chips)
+		styledSuffix
 	bottom := mutedStyle().Render(" " + bottomContent)
 	if !m.expandedRows() {
 		return top
@@ -373,6 +424,11 @@ func renderSelectedWorkspaceRow(
 // tokens — resolver kind, home-relative root, and the component when it
 // adds information — indented under the name rather than justified across
 // the row.
+// remoteMarker prefixes a workspace that lives on another machine. It is
+// the same geometric vocabulary as the status glyphs rather than a Nerd
+// Font icon, which not every terminal Stormlight runs in would have.
+const remoteMarker = "⇢"
+
 func workspaceDetail(value workspace.Context, width int) string {
 	width = max(1, width)
 	kind := strings.ToLower(strings.TrimSpace(value.Kind))
