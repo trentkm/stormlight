@@ -113,6 +113,51 @@ verbatim (providers ignore pasted slash commands), then a beat later the
 Enter that submits. Nothing is ever interpolated into a shell command
 string.
 
+#### Remote hosts
+
+A host that is not this machine runs its own daemon, and the dashboard
+reaches it over SSH. That is the whole of the design: the daemon runs
+where the agents run, so an agent's PTY, its provider process, its hooks,
+its transcript file, and the repository it is working in all stay on one
+machine, and what crosses the network is the windrunner wire protocol and
+nothing else. Closing the laptop stops nothing.
+
+- `remote.Transport` (`internal/remote`) dials `ssh <host> stormlight
+  _wrbridge`, wraps the subprocess's stdio as a `net.Conn`, and hands it
+  to windrunner's client, whose transport is injectable. The real `ssh`
+  is executed rather than reimplemented, so the user's own config comes
+  along: keys, agent, `ProxyJump`, `ControlMaster`, and a tailnet name
+  where one is in use. Multiplexing is on by default — a client opens one
+  connection for the control plane, one for the event feed, and one per
+  attached terminal.
+- `_wrbridge` is the far side. It runs `EnsureDaemon` on that host — the
+  one thing no tunnel can do for the far end — writes a single greeting
+  line naming its protocol version, its own binary path, and its socket
+  directory, and then splices its stdio onto the daemon's socket.
+- The greeting exists because dispatch has to describe the machine the
+  agent runs on. `STORMLIGHT_BIN` and `WINDRUNNER_DIR` are how a hook
+  subprocess finds its way back, and this machine's answers are wrong for
+  both.
+- The environment underneath is the far side's. A dashboard's own environ
+  describes a different host — its PATH, its home directory, its
+  secrets — so a remote dispatch sends only the variables it means, as
+  windrunner's `EnvOverride`, and the daemon over there supplies the rest.
+- `F` runs `ssh -t <host> stormlight _wrattach`, carrying the socket
+  directory explicitly: a tty session runs a login shell where a bridge
+  does not, and the two can disagree about where XDG state lives.
+
+The trust boundary comes along unchanged. The wire protocol has no
+authentication of its own and needs none: reaching the socket means being
+the user who owns it, enforced by directory permissions locally and by the
+host's own login remotely, with the bridge running as that user. Nothing
+binds a port. This is also why the transport is SSH rather than a
+tailnet-native listener — Tailscale is a network the transport runs over,
+and `stormlight remote add` works on one without a line of code about it.
+
+Today `--host` swaps which daemon the whole dashboard talks to. Making the
+host a dimension of workspace identity, so local and remote agents share
+one roster, is the next step ([#127](https://github.com/trentkm/stormlight/issues/127)).
+
 #### The terminal seam
 
 Live terminals reach the dashboard through one narrow seam, declared as an

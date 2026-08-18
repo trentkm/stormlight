@@ -19,6 +19,8 @@ import (
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/remote"
+	"github.com/trentkm/stormlight/internal/selfpath"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/windrun"
@@ -47,6 +49,9 @@ func newRootCommand() *cobra.Command {
 	var logLevel string
 
 	cfg, configWarnings, configErr := config.Load()
+	// A protocol mismatch across a bridge should name both sides, and
+	// only main knows what this one is.
+	remote.SetLocalVersion(version)
 
 	root := &cobra.Command{
 		Use:          "stormlight [path]",
@@ -89,6 +94,8 @@ func newRootCommand() *cobra.Command {
 			return runDashboard(cmd, cfg, openPath)
 		},
 	}
+	root.PersistentFlags().StringVar(&remoteHost, "host", "",
+		"work on a remote machine over SSH: its daemon, its agents, its repositories (experimental)")
 	root.PersistentFlags().StringVar(&logFile, "log-file",
 		envFirstOr(cfg.Log.File, "STORMLIGHT_LOG_FILE"),
 		"diagnostic log file",
@@ -114,6 +121,7 @@ func newRootCommand() *cobra.Command {
 		newConfigCommand(cfg),
 		newWindrunnerDaemonCommand(),
 		newWindrunnerAttachCommand(),
+		newWindrunnerBridgeCommand(),
 		newBenchCommand(),
 	)
 	return root
@@ -138,6 +146,45 @@ func newWindrunnerDaemonCommand() *cobra.Command {
 			defer engine.Close()
 			diagnostic.Logger().Info("windrunner daemon serving", "socket", path)
 			return server.Serve(engine, listener)
+		},
+	}
+}
+
+// newWindrunnerBridgeCommand is the far side of a remote dashboard's
+// connection: the process `ssh <host> stormlight _wrbridge` starts. It
+// makes sure this machine has a daemon — nothing else can, from where the
+// dashboard is standing — says who it is, and then becomes a pipe onto
+// that daemon's socket.
+//
+// Everything after the greeting line is the windrunner wire protocol
+// verbatim, so nothing may be written to stdout but the bridge itself.
+// Diagnostics go to the log file, as everywhere else.
+func newWindrunnerBridgeCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "_wrbridge",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			binPath, err := selfpath.Resolve()
+			if err != nil {
+				return err
+			}
+			// Ensuring the daemon is the reason this runs as a program
+			// rather than as a forwarded socket: starting one means
+			// running a process on this host.
+			c, err := wrclient.EnsureDaemon(
+				windrun.SocketPath(), []string{binPath, "_wrdaemon"}, 5*time.Second)
+			if err != nil {
+				return err
+			}
+			c.Close()
+			hostname, _ := os.Hostname()
+			return remote.Serve(windrun.SocketPath(), remote.Hello{
+				Protocol:  remote.Protocol,
+				Version:   version,
+				Bin:       binPath,
+				SocketDir: windrun.SocketDir(),
+				Hostname:  hostname,
+			}, os.Stdin, os.Stdout)
 		},
 	}
 }
@@ -363,12 +410,25 @@ func newLogsCommand(logFile *string) *cobra.Command {
 // authoritative state rather than sampled panes — so they outlive every
 // dashboard and every terminal the dashboard ran in.
 func newService(cfg config.Config) (*app.Service, error) {
-	runtime, err := windrun.NewRuntime()
+	runtime, err := newRuntime()
 	if err != nil {
 		return nil, err
 	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
 	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
+}
+
+// remoteHost names a machine to work on instead of this one. Experimental
+// and deliberately whole-dashboard for now: the service holds one runtime,
+// so --host swaps which daemon it is, rather than showing local and remote
+// agents together. Per-workspace hosts are the next step (#127).
+var remoteHost string
+
+func newRuntime() (session.Runtime, error) {
+	if remoteHost == "" {
+		return windrun.NewRuntime()
+	}
+	return windrun.NewRemoteRuntime(remote.Host{Name: remoteHost})
 }
 
 func newWorkspaceService() *app.Service {

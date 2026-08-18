@@ -24,6 +24,7 @@ import (
 	"github.com/trentkm/windrunner/wire"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/selfpath"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -32,19 +33,44 @@ import (
 // metadataKey holds the serialized agent.Agent in a session's metadata.
 const metadataKey = "stormlight_agent"
 
-// scrubbedEnviron is os.Environ() without another Claude session's
-// identity. Deliberate CLAUDE_CODE_* values are re-added by the caller.
-func scrubbedEnviron() []string {
+// agentEnviron is this machine's environment as an agent should receive
+// it: os.Environ() with two classes of entry removed, then the caller's
+// own on the end.
+//
+// The first class is another Claude session's identity. The daemon is
+// auto-started from whatever shell first needed it — including a Claude
+// Code session's own tool shell — and the ambient CLAUDE*/ANTHROPIC_*
+// variables would wire every agent into that session: child-session mode,
+// its messaging socket and token, its session id. An agent is nobody's
+// child.
+//
+// The second is anything the caller is about to set. Appending onto an
+// environment that already names the variable leaves two entries for one
+// name, and POSIX does not say which a child reads — a shell here
+// resolved the last, another libc may resolve the first. Dispatch would
+// hand an agent its parent's STORMLIGHT_ID and the hooks would report the
+// wrong agent, on some platforms only. One entry per name is the only
+// portable answer.
+func agentEnviron(overrides []string) []string {
+	setting := make(map[string]bool, len(overrides))
+	for _, entry := range overrides {
+		if name, _, ok := strings.Cut(entry, "="); ok {
+			setting[name] = true
+		}
+	}
 	environ := os.Environ()
 	kept := environ[:0]
 	for _, entry := range environ {
-		if strings.HasPrefix(entry, "CLAUDE") ||
-			strings.HasPrefix(entry, "ANTHROPIC_") {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "CLAUDE") || strings.HasPrefix(name, "ANTHROPIC_") {
+			continue
+		}
+		if setting[name] {
 			continue
 		}
 		kept = append(kept, entry)
 	}
-	return kept
+	return append(kept, overrides...)
 }
 
 // sendSubmitDelay separates pasted text from the Enter that submits it:
@@ -53,6 +79,23 @@ const sendSubmitDelay = 150 * time.Millisecond
 
 type Runtime struct {
 	client *client.Client
+	// transport is the SSH tunnel to another machine's daemon, and nil
+	// for the daemon on this one. It is the only thing that differs: the
+	// wire protocol, the agent document, and every operation below are
+	// the same either way. What it changes is the handful of places that
+	// were quietly speaking about this machine — where the binary is,
+	// which socket directory a hook should reach, whose environment an
+	// agent inherits, and what "attach in your own terminal" runs.
+	transport *remote.Transport
+}
+
+// Remote reports the host this runtime's daemon runs on, or the zero
+// value when it is this machine.
+func (r *Runtime) Remote() (remote.Host, bool) {
+	if r.transport == nil {
+		return remote.Host{}, false
+	}
+	return r.transport.Host(), true
 }
 
 // SocketDir is where the daemon's socket lives: WINDRUNNER_DIR when set
@@ -91,6 +134,37 @@ func NewRuntime() (*Runtime, error) {
 		return nil, fmt.Errorf("reach windrunner daemon: %w", err)
 	}
 	return &Runtime{client: c}, nil
+}
+
+// NewRemoteRuntime connects to the daemon on another machine, over SSH.
+// The daemon runs where the agents run — that is what makes them outlive
+// this dashboard, this terminal, and this laptop's next lid close.
+//
+// There is no EnsureDaemon here: starting one is the bridge's job,
+// because it is the only part of Stormlight standing on that host.
+func NewRemoteRuntime(host remote.Host) (*Runtime, error) {
+	transport := remote.NewTransport(host)
+	c, err := client.DialWith(transport.Dial)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{client: c, transport: transport}, nil
+}
+
+// dispatchTarget answers the two questions a spawn asks about the machine
+// it is spawning on: where Stormlight is, and which socket directory its
+// daemon listens in. A hook subprocess needs both to report anything, and
+// on a remote host the local answers are simply wrong.
+func (r *Runtime) dispatchTarget() (binPath, socketDir string, err error) {
+	if r.transport == nil {
+		binPath, err = selfpath.Resolve()
+		return binPath, SocketDir(), err
+	}
+	hello := r.transport.Hello()
+	if hello.Bin == "" {
+		return "", "", fmt.Errorf("%s has not reported its stormlight", r.transport.Host().Name)
+	}
+	return hello.Bin, hello.SocketDir, nil
 }
 
 func (r *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
@@ -146,7 +220,7 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	binPath, err := selfpath.Resolve()
+	binPath, socketDir, err := r.dispatchTarget()
 	if err != nil {
 		return agent.Agent{}, err
 	}
@@ -170,18 +244,12 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	// The agent's own environment is how its hook subprocesses find their
 	// way back: the id names the session, the binary answers
 	// $STORMLIGHT_BIN, and the socket dir rebuilds this same service
-	// inside `stormlight _provider-event`.
-	//
-	// It starts from a scrubbed environment: the daemon is auto-started
-	// from whatever shell first needed it — including a Claude Code
-	// session's own tool shell — and the ambient CLAUDE*/ANTHROPIC_*
-	// variables would wire every agent into that session's identity:
-	// child-session mode, its messaging socket and token, its session id.
-	// An agent is nobody's child.
-	env := append(scrubbedEnviron(),
-		"STORMLIGHT_ID="+managedAgent.ID,
-		"STORMLIGHT_BIN="+binPath,
-		"WINDRUNNER_DIR="+SocketDir(),
+	// inside `stormlight _provider-event`. All three describe the machine
+	// the agent runs on, which is not always this one.
+	overrides := []string{
+		"STORMLIGHT_ID=" + managedAgent.ID,
+		"STORMLIGHT_BIN=" + binPath,
+		"WINDRUNNER_DIR=" + socketDir,
 		// The terminal the agent runs in is the daemon's emulator, not
 		// whatever terminal the daemon was started from — and the daemon
 		// is auto-started from shells, scripts, and hooks, so the
@@ -205,12 +273,11 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		// reader here anyway — the window bar carries agent identity —
 		// so the machinery is switched off rather than chased.
 		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
-	)
-	info, err := r.client.Spawn(wire.Request{
+	}
+	spawn := wire.Request{
 		Command: request.Launch.Path,
 		Args:    request.Launch.Args,
 		Dir:     request.Cwd,
-		Env:     env,
 		// Peer input is how the dashboard and CLI speak to an agent
 		// without an attachment — Send, Interrupt, `stormlight send` —
 		// and how agents will speak to each other over the daemon's
@@ -219,7 +286,18 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		Cols:     80,
 		Rows:     24,
 		Metadata: map[string]string{metadataKey: string(encoded)},
-	})
+	}
+	if r.transport == nil {
+		spawn.Env = agentEnviron(overrides)
+	} else {
+		// This machine's environment describes this machine: its PATH,
+		// its home directory, its secrets. None of it belongs on another
+		// host, and sending it would leave the agent without the PATH
+		// that finds its own provider. The daemon over there supplies the
+		// environment; these few entries go on top.
+		spawn.EnvOverride = overrides
+	}
+	info, err := r.client.Spawn(spawn)
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("start provider: %w", err)
 	}
@@ -283,6 +361,19 @@ func (r *Runtime) Attach(ctx context.Context, id string) (session.AttachResult, 
 	sessionID, err := r.sessionIDFor(id)
 	if err != nil {
 		return session.AttachResult{}, err
+	}
+	if r.transport != nil {
+		// The attachment runs where the daemon is, over a tty ssh
+		// allocates. WINDRUNNER_DIR is passed rather than left to the far
+		// side's own resolution: a tty session runs a login shell and a
+		// bridge does not, so the two can disagree about XDG_STATE_HOME —
+		// and then `F` would attach to a daemon nobody else is talking
+		// to. The bridge already reported the answer.
+		hello := r.transport.Hello()
+		return session.AttachResult{Command: r.transport.TTYCommand(
+			[]string{"WINDRUNNER_DIR=" + hello.SocketDir},
+			"_wrattach", sessionID,
+		)}, nil
 	}
 	binPath, err := selfpath.Resolve()
 	if err != nil {
