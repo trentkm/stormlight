@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,14 +19,14 @@ func TestCatalogPersistsCanonicalUniquePaths(t *testing.T) {
 	catalogPath := filepath.Join(t.TempDir(), "state", "workspaces.json")
 	catalog := NewCatalogAt(catalogPath)
 
-	if err := catalog.Add(root); err != nil {
+	if err := catalog.Add(Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.Add(filepath.Join(root, ".")); err != nil {
+	if err := catalog.Add(Entry{Path: filepath.Join(root, ".")}); err != nil {
 		t.Fatal(err)
 	}
 
-	paths, err := NewCatalogAt(catalogPath).Paths()
+	paths, err := NewCatalogAt(catalogPath).Entries()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,7 @@ func TestCatalogPersistsCanonicalUniquePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 1 || paths[0] != canonicalRoot {
+	if len(paths) != 1 || paths[0] != (Entry{Path: canonicalRoot}) {
 		t.Fatalf("paths = %#v", paths)
 	}
 	info, err := os.Stat(catalogPath)
@@ -47,13 +49,13 @@ func TestCatalogPersistsCanonicalUniquePaths(t *testing.T) {
 func TestCatalogRemovesPath(t *testing.T) {
 	root := t.TempDir()
 	catalog := NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
-	if err := catalog.Add(root); err != nil {
+	if err := catalog.Add(Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.Remove(root); err != nil {
+	if err := catalog.Remove(Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := catalog.Paths()
+	paths, err := catalog.Entries()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,23 +74,23 @@ func TestSetNamePersistsTrimmedOverrideAndAddsMissingPath(t *testing.T) {
 
 	// The path is not in the catalog yet; SetName must add it so the name
 	// survives for workspaces discovered through their agents.
-	if err := NewCatalogAt(catalogPath).SetName(root, "  Stormlight  "); err != nil {
+	if err := NewCatalogAt(catalogPath).SetName(Entry{Path: root}, "  Stormlight  "); err != nil {
 		t.Fatal(err)
 	}
 
 	reopened := NewCatalogAt(catalogPath)
-	paths, err := reopened.Paths()
+	paths, err := reopened.Entries()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 1 || paths[0] != canonicalRoot {
+	if len(paths) != 1 || paths[0] != (Entry{Path: canonicalRoot}) {
 		t.Fatalf("paths = %#v", paths)
 	}
 	names, err := reopened.Names()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names[canonicalRoot] != "Stormlight" {
+	if names[Entry{Path: canonicalRoot}] != "Stormlight" {
 		t.Fatalf("names = %#v", names)
 	}
 }
@@ -101,33 +103,33 @@ func TestSetNameOverwritesAndEmptyNameClearsOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := catalog.SetName(root, "first"); err != nil {
+	if err := catalog.SetName(Entry{Path: root}, "first"); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.SetName(root, "second"); err != nil {
+	if err := catalog.SetName(Entry{Path: root}, "second"); err != nil {
 		t.Fatal(err)
 	}
 	names, err := catalog.Names()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names[canonicalRoot] != "second" {
+	if names[Entry{Path: canonicalRoot}] != "second" {
 		t.Fatalf("names = %#v", names)
 	}
 
 	// Whitespace-only is treated as empty and removes the override without
 	// dropping the path itself.
-	if err := catalog.SetName(root, "   "); err != nil {
+	if err := catalog.SetName(Entry{Path: root}, "   "); err != nil {
 		t.Fatal(err)
 	}
 	names, err = catalog.Names()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := names[canonicalRoot]; ok {
+	if _, ok := names[Entry{Path: canonicalRoot}]; ok {
 		t.Fatalf("override survived clearing: %#v", names)
 	}
-	paths, err := catalog.Paths()
+	paths, err := catalog.Entries()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,22 +147,22 @@ func TestRemoveDiscardsTheNameOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := catalog.SetName(root, "Stormlight"); err != nil {
+	if err := catalog.SetName(Entry{Path: root}, "Stormlight"); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.Remove(root); err != nil {
+	if err := catalog.Remove(Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
 
 	// A stale name would resurface if the same path were added back later.
-	if err := catalog.Add(root); err != nil {
+	if err := catalog.Add(Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
 	names, err := NewCatalogAt(catalogPath).Names()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := names[canonicalRoot]; ok {
+	if _, ok := names[Entry{Path: canonicalRoot}]; ok {
 		t.Fatalf("removed name came back: %#v", names)
 	}
 }
@@ -172,7 +174,7 @@ func TestNamesReturnsACopyCallersCannotMutate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.SetName(root, "Stormlight"); err != nil {
+	if err := catalog.SetName(Entry{Path: root}, "Stormlight"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,14 +182,14 @@ func TestNamesReturnsACopyCallersCannotMutate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	names[canonicalRoot] = "mutated"
-	delete(names, canonicalRoot)
+	names[Entry{Path: canonicalRoot}] = "mutated"
+	delete(names, Entry{Path: canonicalRoot})
 
 	fresh, err := catalog.Names()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fresh[canonicalRoot] != "Stormlight" {
+	if fresh[Entry{Path: canonicalRoot}] != "Stormlight" {
 		t.Fatalf("caller mutation leaked into the catalog: %#v", fresh)
 	}
 }
@@ -202,7 +204,7 @@ func TestCatalogRejectsCorruptAndFutureVersionFiles(t *testing.T) {
 			if err := os.WriteFile(path, []byte(testCase.content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := NewCatalogAt(path).Paths(); err == nil {
+			if _, err := NewCatalogAt(path).Entries(); err == nil {
 				t.Fatal("corrupt catalog was accepted")
 			}
 		})
@@ -210,7 +212,7 @@ func TestCatalogRejectsCorruptAndFutureVersionFiles(t *testing.T) {
 }
 
 func TestMissingCatalogFileReadsAsEmpty(t *testing.T) {
-	paths, err := NewCatalogAt(filepath.Join(t.TempDir(), "absent.json")).Paths()
+	paths, err := NewCatalogAt(filepath.Join(t.TempDir(), "absent.json")).Entries()
 	if err != nil {
 		t.Fatalf("missing catalog was an error: %v", err)
 	}
@@ -286,7 +288,7 @@ func TestCatalogSerializesConcurrentProcesses(t *testing.T) {
 			t.Fatalf("writer %d: %v\n%s", index, err, outputs[index].String())
 		}
 	}
-	paths, err := NewCatalogAt(catalogPath).Paths()
+	paths, err := NewCatalogAt(catalogPath).Entries()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +312,7 @@ func TestCatalogLockWaitIsBounded(t *testing.T) {
 	defer unlock()
 
 	started := time.Now()
-	err = NewCatalogAt(catalogPath).Add(root)
+	err = NewCatalogAt(catalogPath).Add(Entry{Path: root})
 	elapsed := time.Since(started)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("Add error = %v", err)
@@ -335,7 +337,141 @@ func TestCatalogProcessWriter(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if err := NewCatalogAt(os.Getenv("STORMLIGHT_CATALOG_PATH")).
-		Add(os.Getenv("STORMLIGHT_CATALOG_ROOT")); err != nil {
+		Add(Entry{Path: os.Getenv("STORMLIGHT_CATALOG_ROOT")}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestVersionOneCatalogMigrates: everything version 1 held was on this
+// machine, and it has to keep working. A user upgrading does not
+// re-add their workspaces, and does not re-type the names they chose.
+func TestVersionOneCatalogMigrates(t *testing.T) {
+	root, err := canonicalDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := canonicalDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "workspaces.json")
+	legacy := fmt.Sprintf(
+		`{"version":1,"paths":[%q,%q],"names":{%q:"Stormlight"}}`, root, other, root)
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog := NewCatalogAt(path)
+	entries, err := catalog.Entries()
+	if err != nil {
+		t.Fatalf("a version 1 catalog must still load: %v", err)
+	}
+	if len(entries) != 2 || entries[0] != (Entry{Path: root}) || entries[1] != (Entry{Path: other}) {
+		t.Fatalf("entries = %#v", entries)
+	}
+	// Order matters: it is the order of the workspace pane.
+	names, err := catalog.Names()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names[Entry{Path: root}] != "Stormlight" {
+		t.Fatalf("a chosen name was lost in migration: %#v", names)
+	}
+
+	// The next write puts it in the new shape, and leaves no copy of the
+	// old one behind to be read again.
+	if err := catalog.Add(Entry{Host: "devbox", Path: "/srv/api"}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(content, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["version"] != float64(catalogVersion) {
+		t.Fatalf("version = %v", raw["version"])
+	}
+	if _, stale := raw["paths"]; stale {
+		t.Fatalf("version 1 fields must not survive a write: %s", content)
+	}
+	if _, stale := raw["names"]; stale {
+		t.Fatalf("version 1 fields must not survive a write: %s", content)
+	}
+}
+
+// TestRemoteEntriesAreNotResolvedHere: a catalogued path on another
+// machine must not be canonicalized against this filesystem, and must not
+// have to exist here at all.
+func TestRemoteEntriesAreNotResolvedHere(t *testing.T) {
+	catalog := NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
+	remote := Entry{Host: "devbox", Path: "/srv/api"}
+	if err := catalog.Add(remote); err != nil {
+		t.Fatalf("a remote entry should not need to exist here: %v", err)
+	}
+	entries, err := catalog.Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0] != remote {
+		t.Fatalf("entries = %#v", entries)
+	}
+	if err := catalog.Add(Entry{Host: "devbox", Path: "/srv/api/"}); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := catalog.Entries(); len(entries) != 1 {
+		t.Fatalf("the same path twice is one workspace: %#v", entries)
+	}
+	// A relative path means "here", and here is the wrong machine.
+	if err := catalog.Add(Entry{Host: "devbox", Path: "srv/api"}); err == nil {
+		t.Fatal("a relative remote path must be refused")
+	}
+}
+
+// TestTheSamePathOnTwoMachinesIsTwoWorkspaces: the whole reason the
+// catalog stopped being a list of paths.
+func TestTheSamePathOnTwoMachinesIsTwoWorkspaces(t *testing.T) {
+	local, err := canonicalDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
+	if err := catalog.Add(Entry{Path: local}); err != nil {
+		t.Fatal(err)
+	}
+	if err := catalog.Add(Entry{Host: "devbox", Path: local}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := catalog.Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("one path on two machines is two workspaces: %#v", entries)
+	}
+
+	// And naming one does not name the other.
+	if err := catalog.SetName(Entry{Host: "devbox", Path: local}, "There"); err != nil {
+		t.Fatal(err)
+	}
+	names, err := catalog.Names()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names[Entry{Host: "devbox", Path: local}] != "There" {
+		t.Fatalf("names = %#v", names)
+	}
+	if _, named := names[Entry{Path: local}]; named {
+		t.Fatalf("naming one machine's workspace named the other's: %#v", names)
+	}
+
+	// Removing one leaves the other.
+	if err := catalog.Remove(Entry{Host: "devbox", Path: local}); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := catalog.Entries(); len(entries) != 1 || entries[0].Host != "" {
+		t.Fatalf("entries = %#v", entries)
 	}
 }

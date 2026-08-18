@@ -179,7 +179,7 @@ func TestListWorkspaceRootsExpandsCatalogWorkspaces(t *testing.T) {
 	linked := value
 	linked.ExecutionRoot = worktree
 	catalog := workspace.NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
-	if err := catalog.Add(root); err != nil {
+	if err := catalog.Add(workspace.Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
 	service := NewServiceWithCatalog(
@@ -217,7 +217,7 @@ func TestListWorkspaceRootsDegradesOnResolverFailure(t *testing.T) {
 		ExecutionRoot: root,
 	}
 	catalog := workspace.NewCatalogAt(filepath.Join(t.TempDir(), "workspaces.json"))
-	if err := catalog.Add(root); err != nil {
+	if err := catalog.Add(workspace.Entry{Path: root}); err != nil {
 		t.Fatal(err)
 	}
 	service := NewServiceWithCatalog(

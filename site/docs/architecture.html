@@ -304,7 +304,12 @@
     <p>Session metadata in the daemon is the source of truth for the running roster, and the
     daemon's persistence is what makes it durable: agents outlive every dashboard because
     their PTYs and terminals never belonged to one. The workspace catalog is an atomic JSON
-    file independent of the daemon, as are the dashboard's column preferences.</p>
+    file independent of the daemon, as are the dashboard's column preferences. Its entries
+    carry the machine they are on, because a path stopped identifying a workspace once one
+    could be on another: the same directory on two hosts is two workspaces, named and
+    removed separately. Entries for a host that is asleep stay in the catalog and resolve
+    when it comes back; a host that cannot answer costs its own rows and not the
+    listing.</p>
     <p>The daemon's lifetime bounds the roster's. A reboot or a killed daemon takes the
     processes and their terminals with it — but not the conversations.
     <code>internal/history</code> keeps an append-only session log

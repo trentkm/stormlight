@@ -114,7 +114,7 @@ func newRootCommand() *cobra.Command {
 		newStopCommand(cfg),
 		newDeleteCommand(cfg),
 		newMarkCommand(cfg),
-		newWorkspaceCommand(),
+		newWorkspaceCommand(cfg),
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
@@ -366,7 +366,7 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 		Columns:         ui.LoadColumnPrefs(),
 	}
 	if openPath != "" {
-		value, err := service.AddWorkspace(context.Background(), openPath)
+		value, err := service.AddWorkspace(context.Background(), "", openPath)
 		if err != nil {
 			return fmt.Errorf("open workspace %s: %w", openPath, err)
 		}
@@ -450,13 +450,9 @@ func newService(cfg config.Config) (*app.Service, error) {
 		return nil, err
 	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
-	workspaces := workspace.NewRegistry()
 	// Resolution follows a path to the machine that has it, so the
 	// registry needs the same host list the runtime has.
-	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
-		workspaces.AddHost(remoteHostFrom(name, cfg.Hosts[name]))
-	}
-	return app.NewService(runtime, registry, workspaces), nil
+	return app.NewService(runtime, registry, workspacesWithHosts(cfg)), nil
 }
 
 // newRuntime builds the fleet: this machine's daemon, and one per
@@ -492,12 +488,24 @@ func remoteHostFrom(name string, host config.Host) remote.Host {
 	}
 }
 
-func newWorkspaceService() *app.Service {
+// newWorkspaceService is the runtime-free service the workspace commands
+// use: they read and edit the catalog and never touch an agent. It still
+// needs the host list, because a catalog entry can name another machine
+// and only that machine can resolve it.
+func newWorkspaceService(cfg config.Config) *app.Service {
 	return app.NewService(
 		nil,
 		provider.NewRegistry(),
-		workspace.NewRegistry(),
+		workspacesWithHosts(cfg),
 	)
+}
+
+func workspacesWithHosts(cfg config.Config) *workspace.Registry {
+	workspaces := workspace.NewRegistry()
+	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
+		workspaces.AddHost(remoteHostFrom(name, cfg.Hosts[name]))
+	}
+	return workspaces
 }
 
 func newDispatchCommand(cfg config.Config) *cobra.Command {
@@ -619,30 +627,31 @@ func newListCommand(cfg config.Config) *cobra.Command {
 	return command
 }
 
-func newWorkspaceCommand() *cobra.Command {
+func newWorkspaceCommand(cfg config.Config) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "workspace",
 		Short: "Inspect and manage workspaces",
 	}
 	command.AddCommand(
-		newWorkspaceAddCommand(),
-		newWorkspaceListCommand(),
-		newWorkspaceRootsCommand(),
+		newWorkspaceAddCommand(cfg),
+		newWorkspaceListCommand(cfg),
+		newWorkspaceRootsCommand(cfg),
 	)
 	return command
 }
 
-func newWorkspaceAddCommand() *cobra.Command {
+func newWorkspaceAddCommand(cfg config.Config) *cobra.Command {
 	var asJSON bool
+	var host string
 	command := &cobra.Command{
 		Use:   "add <path>",
 		Short: "Add a workspace to the dashboard",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := newWorkspaceService()
+			service := newWorkspaceService(cfg)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			value, err := service.AddWorkspace(ctx, args[0])
+			value, err := service.AddWorkspace(ctx, host, args[0])
 			if err != nil {
 				return err
 			}
@@ -654,17 +663,19 @@ func newWorkspaceAddCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
+	command.Flags().StringVar(&host, "host", "",
+		"the configured host the path is on; omit for this machine")
 	return command
 }
 
-func newWorkspaceListCommand() *cobra.Command {
+func newWorkspaceListCommand(cfg config.Config) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List catalog workspaces",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := newWorkspaceService()
+			service := newWorkspaceService(cfg)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 			values, err := service.ListWorkspaces(ctx)
@@ -678,14 +689,14 @@ func newWorkspaceListCommand() *cobra.Command {
 	return command
 }
 
-func newWorkspaceRootsCommand() *cobra.Command {
+func newWorkspaceRootsCommand(cfg config.Config) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "roots [path]",
 		Short: "List runnable roots in a workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := newWorkspaceService()
+			service := newWorkspaceService(cfg)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 			var values []workspace.Context

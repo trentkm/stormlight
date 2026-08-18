@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,9 +15,24 @@ import (
 )
 
 const (
-	catalogVersion     = 1
+	// catalogVersion 2 keeps entries rather than paths: a path alone
+	// stopped identifying a workspace once one could be on another
+	// machine.
+	catalogVersion     = 2
 	catalogLockTimeout = time.Second
 )
+
+// Entry is one workspace the catalog remembers — a directory, and the
+// machine it is on. An empty Host is this one.
+type Entry struct {
+	Host string `json:"host,omitempty"`
+	Path string `json:"path"`
+}
+
+// EntryOf is the catalog's key for a resolved workspace.
+func EntryOf(value Context) Entry {
+	return Entry{Host: value.Host, Path: value.Root}
+}
 
 type Catalog struct {
 	path string
@@ -26,9 +40,32 @@ type Catalog struct {
 }
 
 type catalogData struct {
-	Version int               `json:"version"`
-	Paths   []string          `json:"paths"`
-	Names   map[string]string `json:"names,omitempty"`
+	Version int            `json:"version"`
+	Entries []catalogEntry `json:"entries"`
+
+	// Paths and Names are version 1: a list of local directories, and a
+	// separate map of display names keyed by them. Read to migrate,
+	// never written.
+	Paths []string          `json:"paths,omitempty"`
+	Names map[string]string `json:"names,omitempty"`
+}
+
+// catalogEntry folds the display name into the entry it names. In version
+// 1 names lived in their own map because a path could key one; an entry
+// cannot key a JSON object, and a name was never anything but a property
+// of the workspace anyway.
+type catalogEntry struct {
+	Host string `json:"host,omitempty"`
+	Path string `json:"path"`
+	Name string `json:"name,omitempty"`
+}
+
+func (e catalogEntry) key() Entry { return Entry{Host: e.Host, Path: e.Path} }
+
+func (d *catalogData) indexOf(entry Entry) int {
+	return slices.IndexFunc(d.Entries, func(candidate catalogEntry) bool {
+		return candidate.key() == entry
+	})
 }
 
 func NewCatalog() *Catalog {
@@ -39,7 +76,8 @@ func NewCatalogAt(path string) *Catalog {
 	return &Catalog{path: path}
 }
 
-func (c *Catalog) Paths() ([]string, error) {
+// Entries reports every remembered workspace, in the order added.
+func (c *Catalog) Entries() ([]Entry, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -47,11 +85,37 @@ func (c *Catalog) Paths() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return slices.Clone(data.Paths), nil
+	entries := make([]Entry, 0, len(data.Entries))
+	for _, stored := range data.Entries {
+		entries = append(entries, stored.key())
+	}
+	return entries, nil
 }
 
-func (c *Catalog) Add(path string) error {
-	canonical, err := canonicalDirectory(path)
+// canonical resolves an entry's path against the filesystem that owns it.
+// For another machine that is not this one — the same rule the resolvers
+// follow, and for the same reason: a path can exist on both machines and
+// mean different repositories.
+func (c *Catalog) canonical(entry Entry) (Entry, error) {
+	entry.Host = strings.TrimSpace(entry.Host)
+	if entry.Host == "" {
+		path, err := canonicalDirectory(entry.Path)
+		if err != nil {
+			return Entry{}, err
+		}
+		entry.Path = path
+		return entry, nil
+	}
+	path := strings.TrimSpace(entry.Path)
+	if !filepath.IsAbs(path) {
+		return Entry{}, fmt.Errorf("path %q on %s is not absolute", path, entry.Host)
+	}
+	entry.Path = filepath.Clean(path)
+	return entry, nil
+}
+
+func (c *Catalog) Add(entry Entry) error {
+	entry, err := c.canonical(entry)
 	if err != nil {
 		return err
 	}
@@ -68,15 +132,15 @@ func (c *Catalog) Add(path string) error {
 	if err != nil {
 		return err
 	}
-	if slices.Contains(data.Paths, canonical) {
+	if data.indexOf(entry) >= 0 {
 		return nil
 	}
-	data.Paths = append(data.Paths, canonical)
+	data.Entries = append(data.Entries, catalogEntry{Host: entry.Host, Path: entry.Path})
 	return c.write(data)
 }
 
-func (c *Catalog) Remove(path string) error {
-	canonical, err := canonicalDirectory(path)
+func (c *Catalog) Remove(entry Entry) error {
+	entry, err := c.canonical(entry)
 	if err != nil {
 		return err
 	}
@@ -93,18 +157,17 @@ func (c *Catalog) Remove(path string) error {
 	if err != nil {
 		return err
 	}
-	data.Paths = slices.DeleteFunc(data.Paths, func(candidate string) bool {
-		return candidate == canonical
+	data.Entries = slices.DeleteFunc(data.Entries, func(candidate catalogEntry) bool {
+		return candidate.key() == entry
 	})
-	delete(data.Names, canonical)
 	return c.write(data)
 }
 
 // SetName stores a display-name override for a workspace root. An empty
 // name removes the override. The path is added to the catalog if missing so
 // the name survives even for workspaces discovered through their agents.
-func (c *Catalog) SetName(path, name string) error {
-	canonical, err := canonicalDirectory(path)
+func (c *Catalog) SetName(entry Entry, name string) error {
+	entry, err := c.canonical(entry)
 	if err != nil {
 		return err
 	}
@@ -121,23 +184,18 @@ func (c *Catalog) SetName(path, name string) error {
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(data.Paths, canonical) {
-		data.Paths = append(data.Paths, canonical)
+	index := data.indexOf(entry)
+	if index < 0 {
+		data.Entries = append(data.Entries,
+			catalogEntry{Host: entry.Host, Path: entry.Path})
+		index = len(data.Entries) - 1
 	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		delete(data.Names, canonical)
-	} else {
-		if data.Names == nil {
-			data.Names = map[string]string{}
-		}
-		data.Names[canonical] = name
-	}
+	data.Entries[index].Name = strings.TrimSpace(name)
 	return c.write(data)
 }
 
-// Names returns the display-name overrides keyed by canonical root path.
-func (c *Catalog) Names() (map[string]string, error) {
+// Names returns the display-name overrides, keyed by workspace.
+func (c *Catalog) Names() (map[Entry]string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -145,7 +203,13 @@ func (c *Catalog) Names() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return maps.Clone(data.Names), nil
+	names := make(map[Entry]string)
+	for _, stored := range data.Entries {
+		if stored.Name != "" {
+			names[stored.key()] = stored.Name
+		}
+	}
+	return names, nil
 }
 
 func (c *Catalog) read() (catalogData, error) {
@@ -163,7 +227,11 @@ func (c *Catalog) read() (catalogData, error) {
 	if err := json.Unmarshal(content, &data); err != nil {
 		return catalogData{}, fmt.Errorf("decode workspace catalog: %w", err)
 	}
-	if data.Version != catalogVersion {
+	switch data.Version {
+	case catalogVersion:
+	case 1:
+		data = migrateFromV1(data)
+	default:
 		return catalogData{}, fmt.Errorf(
 			"unsupported workspace catalog version %d",
 			data.Version,
@@ -172,11 +240,31 @@ func (c *Catalog) read() (catalogData, error) {
 	return data, nil
 }
 
+// migrateFromV1 folds a path list and its separate name map into entries.
+// Everything version 1 held was on this machine, so every entry migrates
+// with no host — which is exactly what an empty host means.
+//
+// The file is rewritten as version 2 on the next write rather than on
+// read: a dashboard that only ever lists workspaces has no business
+// rewriting state, and the migration is cheap enough to redo until
+// something does.
+func migrateFromV1(data catalogData) catalogData {
+	entries := make([]catalogEntry, 0, len(data.Paths))
+	for _, path := range data.Paths {
+		entries = append(entries, catalogEntry{Path: path, Name: data.Names[path]})
+	}
+	return catalogData{Version: catalogVersion, Entries: entries}
+}
+
 func (c *Catalog) write(data catalogData) error {
 	if strings.TrimSpace(c.path) == "" {
 		return nil
 	}
 	data.Version = catalogVersion
+	// Version 1's fields are read for migration and never written back,
+	// or a v2 file would keep a stale copy of everything it replaced.
+	data.Paths = nil
+	data.Names = nil
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
 		return fmt.Errorf("create workspace catalog directory: %w", err)
 	}
