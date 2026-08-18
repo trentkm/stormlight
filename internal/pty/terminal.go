@@ -126,25 +126,32 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 		cols: cols, rows: rows, termCols: cols, termRows: rows,
 		viewDirty: true,
 	}
-	s.emu = vt.NewEmulator(cols, rows)
-	s.emu.Scrollback().SetMaxLines(DefaultScrollback)
-	// vt writes query responses to its input pipe. The real terminal owns
-	// those responses, so drain this end to keep a query from blocking paint.
-	go func() { _, _ = io.Copy(io.Discard, s.emu) }()
+	s.replaceReplica(transport.Seed())
+	model := Model{id: lastID.Add(1), state: s}
+	go s.pump(model)
+	return model
+}
+
+// replaceReplica seeds the emulator with exact state, discarding whatever
+// it held. Used for the attach snapshot and for a resync, which are the
+// same thing arriving at different moments — writing either into the
+// existing emulator would replay a scrollback it already has.
+func (s *state) replaceReplica(seed []byte) {
 	// A windrunner snapshot has already passed through x/vt once. Normalize
 	// its reversed OSC 8 fields before replaying it through this second x/vt.
-	seed := []byte(repairVTHyperlinks(string(transport.Seed())))
+	seed = []byte(repairVTHyperlinks(string(seed)))
 	s.observeModes(seed)
+	s.mu.Lock()
+	s.emu = vt.NewEmulator(s.termCols, s.termRows)
+	s.emu.Scrollback().SetMaxLines(DefaultScrollback)
+	emu := s.emu
+	s.scroll, s.scrollDelta = 0, 0
 	s.emu.Write(seed)
-	model := Model{id: lastID.Add(1), state: s}
-	if notifier, ok := transport.(ResizeNotifier); ok {
-		// The handler runs on the transport's read loop, ahead of the
-		// repaint riding the same stream: resize the replica, then the
-		// following bytes paint at the terminal's true size.
-		notifier.OnResize(model.setTerminalSize)
-	}
-	go s.pump()
-	return model
+	s.viewDirty = true
+	s.mu.Unlock()
+	// vt writes query responses to its input pipe. The real terminal owns
+	// those responses, so drain this end to keep a query from blocking paint.
+	go func() { _, _ = io.Copy(io.Discard, emu) }()
 }
 
 // setTerminalSize follows the hosted terminal when someone else moved it:
@@ -165,11 +172,27 @@ func (m Model) setTerminalSize(cols, rows int) {
 	}
 }
 
-func (s *state) pump() {
-	for chunk := range s.transport.Output() {
+func (s *state) pump(model Model) {
+	for message := range s.transport.Output() {
+		// The size travels just ahead of the repaint that belongs to it,
+		// so the replica adopts the terminal's true size and then paints
+		// at it.
+		if message.Resize != nil {
+			model.setTerminalSize(message.Resize.Cols, message.Resize.Rows)
+			continue
+		}
+		// State, not output: this viewer fell behind and the daemon sent
+		// what the terminal looks like instead of what it missed.
+		if message.Resync != nil {
+			s.replaceReplica(message.Resync)
+			if s.visible.Load() {
+				s.gate.Notify()
+			}
+			continue
+		}
 		// Most output is raw PTY data and needs no change. Resize repaints
 		// come from windrunner's x/vt and carry its reversed OSC 8 fields.
-		chunk = []byte(repairVTHyperlinks(string(chunk)))
+		chunk := []byte(repairVTHyperlinks(string(message.Bytes)))
 		s.observeModes(chunk)
 		s.mu.Lock()
 		s.emu.Write(chunk)

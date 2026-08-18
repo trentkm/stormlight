@@ -5,22 +5,23 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 type fakeTransport struct {
 	seed   []byte
-	output chan []byte
+	output chan Message
 	writes [][]byte
 }
 
 func newFakeTransport(seed string) *fakeTransport {
-	return &fakeTransport{seed: []byte(seed), output: make(chan []byte)}
+	return &fakeTransport{seed: []byte(seed), output: make(chan Message)}
 }
 
 func (t *fakeTransport) Seed() []byte                           { return t.seed }
-func (t *fakeTransport) Output() <-chan []byte                  { return t.output }
+func (t *fakeTransport) Output() <-chan Message                 { return t.output }
 func (t *fakeTransport) Write(data []byte) error                { t.writes = append(t.writes, data); return nil }
 func (t *fakeTransport) Resize(context.Context, int, int) error { return nil }
 func (t *fakeTransport) Close()                                 { close(t.output) }
@@ -82,13 +83,42 @@ func TestViewIsCachedUntilTheTerminalChanges(t *testing.T) {
 	// The gate knock is sent after the write lands, so receiving it
 	// proves the emulator has the new bytes.
 	terminal.SetVisible(true)
-	transport.output <- []byte(" world")
+	transport.output <- Message{Bytes: []byte(" world")}
 	<-terminal.state.gate.frames
 	if !terminal.state.viewDirty {
 		t.Fatal("streamed bytes did not invalidate the cache")
 	}
 	if got := terminal.View(); !strings.Contains(got, "hello world") {
 		t.Fatalf("view missing streamed bytes:\n%s", got)
+	}
+}
+
+// A resync means this viewer fell behind and the daemon sent the screen
+// as it now stands instead of the bytes it missed. Writing that into the
+// emulator it already has would replay a history the replica is holding —
+// the scrollback arrives twice and the screen reads as a stutter. It
+// replaces the replica instead.
+func TestResyncReplacesTheReplicaRatherThanAppending(t *testing.T) {
+	transport := newFakeTransport("first line")
+	terminal := New(transport, NewGate(), 40, 6)
+	defer terminal.Close()
+	terminal.SetVisible(true)
+
+	transport.output <- Message{Bytes: []byte("\r\nsecond line")}
+	<-terminal.state.gate.frames
+
+	transport.output <- Message{Resync: []byte("only what is true now")}
+	<-terminal.state.gate.frames
+
+	view := terminal.View()
+	if !strings.Contains(view, "only what is true now") {
+		t.Fatalf("resync did not reach the replica:\n%s", view)
+	}
+	for _, stale := range []string{"first line", "second line"} {
+		if strings.Contains(view, stale) {
+			t.Fatalf("resync left %q behind; state replaces, it does not append:\n%s",
+				stale, view)
+		}
 	}
 }
 
@@ -128,7 +158,7 @@ func TestTerminalRepairsHyperlinksInWindrunnerRepaints(t *testing.T) {
 	defer terminal.Close()
 	terminal.SetVisible(true)
 
-	transport.output <- []byte("\x1b]8;" + url + ";\arepaint\x1b]8;;\a")
+	transport.output <- Message{Bytes: []byte("\x1b]8;" + url + ";\arepaint\x1b]8;;\a")}
 	<-terminal.state.gate.frames
 	if view := terminal.View(); !strings.Contains(
 		view, "\x1b]8;;"+url+"\arepaint\x1b]8;;\a",
@@ -145,8 +175,8 @@ func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
 
 	// The output channel is unbuffered, so each send proves the pump
 	// finished the previous chunk — gate decision included.
-	transport.output <- []byte("a")
-	transport.output <- []byte("b")
+	transport.output <- Message{Bytes: []byte("a")}
+	transport.output <- Message{Bytes: []byte("b")}
 	select {
 	case <-gate.frames:
 		t.Fatal("an invisible terminal requested a redraw")
@@ -154,31 +184,21 @@ func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
 	}
 
 	terminal.SetVisible(true)
-	transport.output <- []byte("c")
+	transport.output <- Message{Bytes: []byte("c")}
 	<-gate.frames
 }
 
-type notifyingTransport struct {
-	*fakeTransport
-	handler func(cols, rows int)
-}
-
-func (t *notifyingTransport) OnResize(handler func(cols, rows int)) {
-	t.handler = handler
-}
-
-// Someone else moving the hosted terminal — another dashboard, an F
-// attach — reaches the widget as a resize notice: the emulator follows
-// the terminal's true size while the box keeps the pane's.
+// Someone else moving the hosted terminal — another dashboard, a browser,
+// an F attach — reaches the widget as a resize riding the stream: the
+// emulator follows the terminal's true size while the box keeps the
+// pane's.
 func TestWidgetFollowsATerminalMovedBySomeoneElse(t *testing.T) {
-	transport := &notifyingTransport{fakeTransport: newFakeTransport("hi")}
+	transport := newFakeTransport("hi")
 	terminal := New(transport, NewGate(), 100, 30)
 	defer terminal.Close()
-	if transport.handler == nil {
-		t.Fatal("widget did not register for resize notices")
-	}
 
-	transport.handler(34, 40)
+	transport.output <- Message{Resize: &Size{Cols: 34, Rows: 40}}
+	waitForTerminal(t, terminal, 34, 40)
 	if cols, rows := terminal.TerminalSize(); cols != 34 || rows != 40 {
 		t.Fatalf("terminal size = %dx%d, want 34x40", cols, rows)
 	}
@@ -193,6 +213,21 @@ func TestWidgetFollowsATerminalMovedBySomeoneElse(t *testing.T) {
 	}
 }
 
+// waitForTerminal waits for the widget's emulator to adopt a size that
+// now arrives over the stream rather than through a direct call.
+func waitForTerminal(t *testing.T, terminal Model, cols, rows int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, r := terminal.TerminalSize(); c == cols && r == rows {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	c, r := terminal.TerminalSize()
+	t.Fatalf("terminal size stayed %dx%d, want %dx%d", c, r, cols, rows)
+}
+
 func TestMouseReportingShadowsTheHostedProgramsModes(t *testing.T) {
 	transport := newFakeTransport("x")
 	terminal := New(transport, NewGate(), 20, 4)
@@ -200,13 +235,13 @@ func TestMouseReportingShadowsTheHostedProgramsModes(t *testing.T) {
 	if terminal.MouseReporting() {
 		t.Fatal("mouse reporting on before the program asked")
 	}
-	transport.output <- []byte("\x1b[?1000h\x1b[?1006h")
-	transport.output <- []byte("sync")
+	transport.output <- Message{Bytes: []byte("\x1b[?1000h\x1b[?1006h")}
+	transport.output <- Message{Bytes: []byte("sync")}
 	if !terminal.MouseReporting() {
 		t.Fatal("mouse-on did not register")
 	}
-	transport.output <- []byte("\x1b[?1000l")
-	transport.output <- []byte("sync")
+	transport.output <- Message{Bytes: []byte("\x1b[?1000l")}
+	transport.output <- Message{Bytes: []byte("sync")}
 	if terminal.MouseReporting() {
 		t.Fatal("mouse-off did not register")
 	}

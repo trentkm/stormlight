@@ -16,6 +16,7 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -83,7 +84,7 @@ func (f *fakeRuntime) AttachTerminal(
 // output onto, and a record of what came back the other way.
 type fakeStream struct {
 	seed   []byte
-	output chan []byte
+	output chan pty.Message
 
 	mu         sync.Mutex
 	written    []byte
@@ -95,8 +96,8 @@ type fakeStream struct {
 	closed  bool
 }
 
-func (f *fakeStream) Seed() []byte          { return f.seed }
-func (f *fakeStream) Output() <-chan []byte { return f.output }
+func (f *fakeStream) Seed() []byte               { return f.seed }
+func (f *fakeStream) Output() <-chan pty.Message { return f.output }
 func (f *fakeStream) Write(p []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -154,7 +155,7 @@ func startAPI(t *testing.T) (*httptest.Server, *fakeRuntime) {
 		}},
 		stream: &fakeStream{
 			seed:   []byte("exact state"),
-			output: make(chan []byte, 8),
+			output: make(chan pty.Message, 8),
 		},
 	}
 	service := app.NewService(runtime, provider.NewRegistry(), workspace.NewRegistry())
@@ -642,7 +643,7 @@ func TestTerminalRelayCarriesBytesBothWays(t *testing.T) {
 	}
 
 	// Live output arrives as raw bytes, not wrapped in anything.
-	runtime.stream.output <- []byte("hello from the pty")
+	runtime.stream.output <- pty.Message{Bytes: []byte("hello from the pty")}
 	kind, payload, err = conn.Read(ctx)
 	if err != nil {
 		t.Fatalf("read output: %v", err)

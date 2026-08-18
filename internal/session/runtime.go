@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -29,16 +30,14 @@ type TerminalStreamer interface {
 	AttachTerminal(ctx context.Context, id string, cols, rows int) (TerminalStream, error)
 }
 
-// TerminalStream is one live attachment to one agent's terminal.
-type TerminalStream interface {
-	// Seed is the exact serialized state at attach time; everything on
-	// Output happened after it.
-	Seed() []byte
-	Output() <-chan []byte
-	Write(p []byte) error
-	Resize(ctx context.Context, cols, rows int) error
-	Close()
-}
+// TerminalStream is one live attachment to one agent's terminal: an exact
+// seed, then an ordered stream of output, resizes and resyncs.
+//
+// It is the widget's transport by definition rather than by coincidence.
+// The two were separate interfaces of identical shape, which meant every
+// change had to be made twice and any drift between them was a compile
+// error somewhere unrelated.
+type TerminalStream = pty.Transport
 
 // FileReader is an optional runtime capability: read a file on the
 // machine an agent is running on.

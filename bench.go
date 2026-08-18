@@ -103,7 +103,7 @@ func newBenchCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("attach stress pane %d: %w", index, err)
 				}
-				widget := pty.New(benchStream{attachment}, gate, 80, 24)
+				widget := pty.New(newBenchStream(attachment), gate, 80, 24)
 				widget.SetVisible(true)
 				widgets = append(widgets, widget)
 			}
@@ -142,13 +142,28 @@ func dialUntil(socketPath string, timeout time.Duration) (*client.Client, error)
 }
 
 // benchStream adapts a windrunner attachment to the widget's transport.
+// The benchmark deliberately does not resync: what it measures is how the
+// widget copes with more output than it can paint, and handing it state
+// instead of that output would measure something else.
 type benchStream struct {
 	attachment *client.Attachment
+	output     chan pty.Message
 }
 
-func (b benchStream) Seed() []byte          { return b.attachment.Snapshot().ANSI }
-func (b benchStream) Output() <-chan []byte { return b.attachment.Output() }
-func (b benchStream) Write(p []byte) error  { return b.attachment.Write(p) }
+func newBenchStream(attachment *client.Attachment) benchStream {
+	stream := benchStream{attachment: attachment, output: make(chan pty.Message, 256)}
+	go func() {
+		defer close(stream.output)
+		for message := range attachment.Output() {
+			stream.output <- pty.Message{Bytes: message.Bytes}
+		}
+	}()
+	return stream
+}
+
+func (b benchStream) Seed() []byte               { return b.attachment.Snapshot().ANSI }
+func (b benchStream) Output() <-chan pty.Message { return b.output }
+func (b benchStream) Write(p []byte) error       { return b.attachment.Write(p) }
 func (b benchStream) Resize(_ context.Context, cols, rows int) error {
 	return b.attachment.Resize(cols, rows)
 }

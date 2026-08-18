@@ -80,17 +80,6 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A terminal this viewer shares can be resized by someone else — the
-	// dashboard, a full-screen attach — and a replica painting at a size
-	// nobody else is using is a diverged replica.
-	if notifier, ok := transport.(pty.ResizeNotifier); ok {
-		notifier.OnResize(func(cols, rows int) {
-			_ = writeControl(ctx, conn, controlMessage{
-				Type: controlResize, Cols: cols, Rows: rows,
-			})
-		})
-	}
-
 	go s.pumpInput(ctx, cancel, conn, transport)
 	go keepalive(ctx, cancel, conn)
 
@@ -102,20 +91,43 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case chunk, ok := <-transport.Output():
+		case message, ok := <-transport.Output():
+			if ok && message.Resize != nil {
+				// A terminal this viewer shares can be moved by anyone
+				// holding it — the dashboard, a full-screen attach — and
+				// a replica painting at a size nobody else is using is a
+				// diverged replica. The notice travels just ahead of the
+				// repaint that belongs to it.
+				if err := writeControl(ctx, conn, controlMessage{
+					Type: controlResize,
+					Cols: message.Resize.Cols,
+					Rows: message.Resize.Rows,
+				}); err != nil {
+					return
+				}
+				continue
+			}
+			if ok && message.Resync != nil {
+				// This viewer fell behind and the daemon sent state
+				// instead of the bytes it missed. Same shape as the
+				// opening seed, and for the same reason: the client
+				// replaces its replica rather than appending to it.
+				if err := writeSeed(ctx, conn, message.Resync); err != nil {
+					return
+				}
+				continue
+			}
 			if !ok {
 				// The stream ended — and this layer cannot say why. The
-				// agent may have exited, or the daemon may have dropped
-				// this attachment for falling behind, which it does
-				// silently and which a burst of output makes ordinary
-				// (trentkm/windrunner#15, fixed by the resync attach in
-				// trentkm/windrunner#17). Saying "session ended" here
-				// would have a live agent read as a dead one; the client
-				// reconnects and asks the roster, which knows.
+				// agent may have exited, or the attachment may have ended
+				// some other way. Saying "session ended" here would have
+				// a live agent read as a dead one; the client reconnects
+				// and asks the roster, which knows. Falling behind is no
+				// longer among the reasons: this attachment resyncs.
 				_ = conn.Close(websocket.StatusNormalClosure, "stream ended")
 				return
 			}
-			if err := conn.Write(ctx, websocket.MessageBinary, chunk); err != nil {
+			if err := conn.Write(ctx, websocket.MessageBinary, message.Bytes); err != nil {
 				return
 			}
 		}
