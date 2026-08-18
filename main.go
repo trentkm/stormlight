@@ -123,6 +123,7 @@ func newRootCommand() *cobra.Command {
 		newWindrunnerAttachCommand(),
 		newWindrunnerBridgeCommand(),
 		newResolveCommand(),
+		newReadCommand(),
 		newBenchCommand(),
 	)
 	return root
@@ -222,6 +223,31 @@ func newResolveCommand() *cobra.Command {
 	command.Flags().BoolVar(&roots, "roots", false,
 		"report every runnable checkout in the workspace")
 	return command
+}
+
+// newReadCommand copies a file to stdout, for a dashboard on another
+// machine. An agent's transcript is written by its provider beside its
+// repository, so the path in an agent's record names a file only that
+// host can open.
+//
+// The size cap is applied here rather than by the reader, because a cap
+// on the far side of a tunnel is one that has already paid for every byte
+// it discards.
+func newReadCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "_read <path>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			file, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			_, err = io.Copy(cmd.OutOrStdout(), io.LimitReader(file, windrun.MaxAgentFile))
+			return err
+		},
+	}
 }
 
 // newWindrunnerAttachCommand is the F key's other half: a full-terminal

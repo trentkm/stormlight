@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"io"
 	"os/exec"
 
 	"github.com/trentkm/stormlight/internal/agent"
@@ -37,6 +38,17 @@ type TerminalStream interface {
 	Write(p []byte) error
 	Resize(ctx context.Context, cols, rows int) error
 	Close()
+}
+
+// FileReader is an optional runtime capability: read a file on the
+// machine an agent is running on.
+//
+// An agent's transcript is written by its provider, beside its
+// repository, on its own host — so the path in an agent's record names a
+// file this process may have no way to open. The runtime knows which
+// daemon holds the agent, which makes it the only layer that can answer.
+type FileReader interface {
+	ReadAgentFile(ctx context.Context, id, path string) (io.ReadCloser, error)
 }
 
 // OverlayRequest describes a short-lived interactive program the

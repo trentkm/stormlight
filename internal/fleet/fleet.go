@@ -17,6 +17,7 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -345,6 +346,24 @@ func (f *Runtime) AttachTerminal(
 		return nil, fmt.Errorf("runtime does not stream terminals")
 	}
 	return streamer.AttachTerminal(ctx, id, cols, rows)
+}
+
+// ReadAgentFile forwards the file-reading capability to the daemon that
+// holds the agent, which is the one standing on the filesystem the path
+// belongs to.
+func (f *Runtime) ReadAgentFile(
+	ctx context.Context,
+	id, path string,
+) (io.ReadCloser, error) {
+	runtime, err := f.memberFor(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := runtime.(session.FileReader)
+	if !ok {
+		return nil, fmt.Errorf("runtime cannot read files")
+	}
+	return reader.ReadAgentFile(ctx, id, path)
 }
 
 // StartOverlay runs the picker or the editor on the machine whose

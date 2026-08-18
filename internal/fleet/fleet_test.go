@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -15,13 +16,14 @@ import (
 // stub is one daemon's worth of runtime: a roster it will report and a
 // record of what was asked of it.
 type stub struct {
-	mu       sync.Mutex
-	agents   []agent.Agent
-	listErr  error
-	sent     []string
-	deleted  []string
-	launched []session.DispatchRequest
-	lists    int
+	mu        sync.Mutex
+	agents    []agent.Agent
+	listErr   error
+	sent      []string
+	deleted   []string
+	launched  []session.DispatchRequest
+	lists     int
+	readPaths []string
 }
 
 func (s *stub) ListAgents(context.Context) ([]agent.Agent, error) {
@@ -59,6 +61,17 @@ func (s *stub) Delete(_ context.Context, id string) error {
 }
 
 func (s *stub) Capture(context.Context, string, int) (string, error) { return "", nil }
+
+func (s *stub) ReadAgentFile(
+	_ context.Context,
+	_ string,
+	path string,
+) (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.readPaths = append(s.readPaths, path)
+	return io.NopCloser(strings.NewReader("contents of " + path)), nil
+}
 func (s *stub) Attach(context.Context, string) (session.AttachResult, error) {
 	return session.AttachResult{}, nil
 }
@@ -303,5 +316,31 @@ func TestAFleetOfOneIsJustTheRuntime(t *testing.T) {
 	}
 	if len(local.sent) != 1 {
 		t.Fatalf("the message never arrived: %v", local.sent)
+	}
+}
+
+// TestFileReadsFollowTheAgentToItsHost: a transcript path names a file on
+// the agent's own machine, and reading it here would find nothing — or,
+// worse, find something that happens to share the path.
+func TestFileReadsFollowTheAgentToItsHost(t *testing.T) {
+	local := &stub{agents: []agent.Agent{{ID: "aaa"}}}
+	devbox := &stub{agents: []agent.Agent{{ID: "bbb"}}}
+	f := New(reachable("", local), reachable("devbox", devbox))
+
+	source, err := f.ReadAgentFile(context.Background(), "bbb", "/home/trent/t.jsonl")
+	if err != nil {
+		t.Fatalf("ReadAgentFile: %v", err)
+	}
+	defer source.Close()
+	content, err := io.ReadAll(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "contents of /home/trent/t.jsonl" {
+		t.Fatalf("content = %q", content)
+	}
+	if len(devbox.readPaths) != 1 || len(local.readPaths) != 0 {
+		t.Fatalf("read went to the wrong machine: local=%v devbox=%v",
+			local.readPaths, devbox.readPaths)
 	}
 }
