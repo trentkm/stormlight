@@ -70,10 +70,13 @@ func (f *fakeRuntime) AttachTerminal(
 	cols, rows int,
 ) (session.TerminalStream, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.streamed = append(f.streamed, id)
-	f.stream.cols, f.stream.rows = cols, rows
-	return f.stream, nil
+	stream := f.stream
+	f.mu.Unlock()
+	// The stream guards its own fields; reaching past that from here is
+	// how the test, not the server, grew a race.
+	_ = stream.Resize(context.Background(), cols, rows)
+	return stream, nil
 }
 
 // fakeStream is one attached terminal: a seed, a channel the test pushes
@@ -232,6 +235,200 @@ func TestCrossOriginUpgradeIsRefused(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("a cross-origin upgrade was accepted")
+	}
+}
+
+// TestCrossOriginRequestsAreRefused: guarding only the upgrades leaves
+// the control plane open. A cross-origin POST with a text/plain body is a
+// *simple* request — no preflight, so the browser sends it and the side
+// effect lands even though the reply is opaque to the attacker. Dispatch
+// takes a working directory and starts a process, which is exactly the
+// side effect not to hand out.
+func TestCrossOriginRequestsAreRefused(t *testing.T) {
+	server, runtime := startAPI(t)
+
+	request, err := http.NewRequest(http.MethodPost,
+		server.URL+"/api/agents/agent-one/message?token="+testToken,
+		strings.NewReader(`{"message":"from a page you visited"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Origin", "http://evil.example")
+	request.Header.Set("Content-Type", "text/plain")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin POST answered %d, want 403", response.StatusCode)
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if len(runtime.sent) != 0 {
+		t.Fatalf("a cross-origin request reached the runtime: %#v", runtime.sent)
+	}
+}
+
+// TestRebindingHostIsRefused: comparing Origin against the request's own
+// Host makes the check self-referential. Under DNS rebinding both carry
+// the attacker's name and match each other perfectly, so the Host has to
+// be one this server actually answers to.
+func TestRebindingHostIsRefused(t *testing.T) {
+	server, _ := startAPI(t)
+
+	request, err := http.NewRequest(http.MethodGet,
+		server.URL+"/api/agents?token="+testToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "evil.example"
+	request.Header.Set("Origin", "http://evil.example")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("a rebound host answered %d, want 403", response.StatusCode)
+	}
+}
+
+// TestBearerHeaderParsing: the scheme is case-insensitive and its space
+// is not optional, and an unrelated Authorization header — a proxy's
+// Basic, a browser replaying cached credentials for 127.0.0.1 — must not
+// void a perfectly good query token.
+func TestBearerHeaderParsing(t *testing.T) {
+	server, _ := startAPI(t)
+
+	for _, testCase := range []struct {
+		name   string
+		header string
+		query  bool
+		want   int
+	}{
+		{"lowercase scheme", "bearer " + testToken, false, http.StatusOK},
+		{"no space", "Bearer" + testToken, false, http.StatusUnauthorized},
+		{"bare scheme", "Bearer", false, http.StatusUnauthorized},
+		{"unrelated header beside a good query token",
+			"Basic dXNlcjpwYXNz", true, http.StatusOK},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			url := server.URL + "/api/agents"
+			if testCase.query {
+				url += "?token=" + testToken
+			}
+			request, err := http.NewRequest(http.MethodGet, url, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Authorization", testCase.header)
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != testCase.want {
+				t.Fatalf("answered %d, want %d", response.StatusCode, testCase.want)
+			}
+		})
+	}
+}
+
+// TestTerminalGeometryIsBounded: this is the one place a client's number
+// reaches the daemon's emulator, which allocates the grid it is told to.
+// The daemon owns every agent's process, so an unbounded size is a way to
+// take down the whole fleet from one query string.
+func TestTerminalGeometryIsBounded(t *testing.T) {
+	server, runtime := startAPI(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/agents/agent-one/terminal?token=" + testToken +
+		"&cols=100000&rows=100000"
+	conn, _, err := websocket.Dial(ctx, address, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	waitFor(t, "the attach to land", func() bool {
+		cols, rows := runtime.stream.size()
+		return cols > 0 && rows > 0
+	})
+	cols, rows := runtime.stream.size()
+	if cols > maxTerminalDimension || rows > maxTerminalDimension {
+		t.Fatalf("the daemon was asked for %dx%d", cols, rows)
+	}
+
+	// The resize control message is the same number by another route.
+	if err := conn.Write(ctx, websocket.MessageText,
+		[]byte(`{"type":"resize","cols":99999,"rows":99999}`)); err != nil {
+		t.Fatalf("write resize: %v", err)
+	}
+	waitFor(t, "the resize to land", func() bool {
+		cols, rows := runtime.stream.size()
+		return cols == maxTerminalDimension && rows == maxTerminalDimension
+	})
+}
+
+// TestPlainGetDoesNotDisturbTheTerminal: attaching resizes the agent's
+// terminal, and every viewer shares one. A request that cannot become a
+// terminal at all must not reflow the pane a dashboard user is reading.
+func TestPlainGetDoesNotDisturbTheTerminal(t *testing.T) {
+	server, runtime := startAPI(t)
+	runtime.stream.mu.Lock()
+	runtime.stream.cols, runtime.stream.rows = 213, 57
+	runtime.stream.mu.Unlock()
+
+	response := get(t, server, "/api/agents/agent-one/terminal")
+	defer response.Body.Close()
+
+	if cols, rows := runtime.stream.size(); cols != 213 || rows != 57 {
+		t.Fatalf("a plain GET resized the shared terminal to %dx%d", cols, rows)
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if len(runtime.streamed) != 0 {
+		t.Fatalf("a plain GET attached to %#v", runtime.streamed)
+	}
+}
+
+// TestLargePasteSurvives: xterm.js sends a paste as one message, and the
+// library's default read limit is 32 KiB. Exceeding it does not reject
+// the message — it tears down the whole attachment, so the user loses
+// both the paste and the terminal.
+func TestLargePasteSurvives(t *testing.T) {
+	server, runtime := startAPI(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/agents/agent-one/terminal?token=" + testToken
+	conn, _, err := websocket.Dial(ctx, address, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	drainSeed(t, ctx, conn)
+
+	paste := strings.Repeat("x", 200_000)
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte(paste)); err != nil {
+		t.Fatalf("write paste: %v", err)
+	}
+	waitFor(t, "the whole paste to reach the terminal", func() bool {
+		return len(runtime.stream.input()) == len(paste)
+	})
+}
+
+// drainSeed reads the seed notice and the state behind it.
+func drainSeed(t *testing.T, ctx context.Context, conn *websocket.Conn) {
+	t.Helper()
+	for i := 0; i < 2; i++ {
+		if _, _, err := conn.Read(ctx); err != nil {
+			t.Fatalf("read seed: %v", err)
+		}
 	}
 }
 

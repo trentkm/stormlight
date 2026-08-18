@@ -17,7 +17,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -114,15 +116,25 @@ func (s *Server) routes() {
 // terminal socket is the whole point of this server.
 func (s *Server) authenticated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A Host this server does not answer to means the name resolved
+		// here from somewhere else — the rebinding trick that turns a
+		// page the user is visiting into a client of their own machine.
+		if !loopbackHost(r.Host) {
+			writeError(w, http.StatusForbidden, "unrecognized host")
+			return
+		}
 		if !s.tokenMatches(r) {
 			// No detail: a wrong token learns nothing about the right one.
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if isUpgrade(r) && !sameOrigin(r) {
-			// A page the user is merely visiting must not be able to
-			// reach this server just because it is on loopback.
-			writeError(w, http.StatusForbidden, "cross-origin upgrade refused")
+		// Every request that acts, not only the upgrades. A cross-origin
+		// form post or a no-cors fetch is a *simple* request — it reaches
+		// the handler with no preflight, and the side effect lands even
+		// though the attacker cannot read the reply. Dispatching an agent
+		// is exactly such a side effect.
+		if !allowedOrigin(r) {
+			writeError(w, http.StatusForbidden, "cross-origin request refused")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -131,38 +143,75 @@ func (s *Server) authenticated(next http.Handler) http.Handler {
 
 func (s *Server) tokenMatches(r *http.Request) bool {
 	presented := r.URL.Query().Get("token")
-	if header := r.Header.Get("Authorization"); header != "" {
-		presented = strings.TrimSpace(strings.TrimPrefix(header, "Bearer"))
+	// A bearer header wins only when it actually carries one. Overwriting
+	// a good query token with an unrelated Authorization header — a proxy
+	// injecting Basic, a browser replaying cached credentials for
+	// 127.0.0.1 — would reject a request that was perfectly authorized.
+	if bearer, ok := bearerToken(r.Header.Get("Authorization")); ok {
+		presented = bearer
 	}
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(s.token)) == 1
+}
+
+// bearerToken pulls the credential out of an Authorization header. The
+// scheme is case-insensitive per RFC 7235, and the space after it is not
+// optional.
+func bearerToken(header string) (string, bool) {
+	scheme, credential, found := strings.Cut(header, " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	credential = strings.TrimSpace(credential)
+	return credential, credential != ""
 }
 
 func isUpgrade(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 
-// sameOrigin accepts a request with no Origin at all — that is a program,
-// not a page, and programs are the other half of this API's audience —
-// and otherwise requires the origin's host to be the one being served.
-func sameOrigin(r *http.Request) bool {
+// loopbackHost reports whether a Host header names this machine. The
+// server binds loopback, so anything else arrived by a name that resolved
+// to it from outside — and matching an Origin against such a Host would
+// be checking the attacker's claim against itself.
+func loopbackHost(host string) bool {
+	name, _, err := net.SplitHostPort(host)
+	if err != nil {
+		name = host
+	}
+	name = strings.Trim(name, "[]")
+	if strings.EqualFold(name, "localhost") {
+		return true
+	}
+	address := net.ParseIP(name)
+	return address != nil && address.IsLoopback()
+}
+
+// allowedOrigin accepts a request with no Origin at all — that is a
+// program, not a page, and programs are the other half of this API's
+// audience — and otherwise requires an origin whose host is loopback and
+// matches the one being served.
+func allowedOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
 	}
-	trimmed := origin
-	for _, scheme := range []string{"http://", "https://"} {
-		trimmed = strings.TrimPrefix(trimmed, scheme)
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		return false
 	}
-	return trimmed == r.Host
+	return loopbackHost(parsed.Host) && parsed.Host == r.Host
 }
 
 // writeJSON encodes a successful response.
 func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
 	if payload == nil {
+		// Nothing to describe; a content type would be a claim about a
+		// body that is not there.
+		w.WriteHeader(status)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		// The status line is already out; all that is left is a record.
 		diagnostic.Logger().Warn("api response truncated", "error", err)
@@ -189,10 +238,15 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, errorBody{Error: message})
 }
 
+// maxRequestBody bounds a control-plane request. The largest legitimate
+// one is a task description; anything approaching this is a mistake or an
+// attempt to make the server hold memory on request.
+const maxRequestBody = 1 << 20
+
 // decode reads a JSON request body, refusing unknown fields so a
 // misspelled key is an error rather than a silently ignored intention.
-func decode(r *http.Request, target any) error {
-	decoder := json.NewDecoder(r.Body)
+func decode(w http.ResponseWriter, r *http.Request, target any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("malformed request body: %w", err)

@@ -9,7 +9,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 )
 
@@ -32,9 +31,6 @@ type hub struct {
 
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
-	// latest is the last roster broadcast, kept so a client that connects
-	// between polls is answered immediately instead of waiting.
-	latest []byte
 }
 
 func newHub(service *app.Service) *hub {
@@ -68,7 +64,7 @@ func (h *hub) poll(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		payload, err := json.Marshal(rosterEvent{Type: "agents", Agents: agents})
+		payload, err := json.Marshal(rosterEvent{Type: "agents", Agents: viewOf(agents)})
 		if err != nil {
 			continue
 		}
@@ -81,8 +77,8 @@ func (h *hub) poll(ctx context.Context) {
 }
 
 type rosterEvent struct {
-	Type   string        `json:"type"`
-	Agents []agent.Agent `json:"agents"`
+	Type   string      `json:"type"`
+	Agents []agentView `json:"agents"`
 }
 
 func (h *hub) hasClients() bool {
@@ -94,7 +90,6 @@ func (h *hub) hasClients() bool {
 func (h *hub) broadcast(payload []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.latest = payload
 	for client := range h.clients {
 		select {
 		case client <- payload:
@@ -110,11 +105,12 @@ func (h *hub) subscribe() (<-chan []byte, func()) {
 	client := make(chan []byte, 1)
 	h.mu.Lock()
 	h.clients[client] = struct{}{}
-	latest := h.latest
 	h.mu.Unlock()
-	if latest != nil {
-		client <- latest
-	}
+	// Nothing is sent here. A broadcast landing between the registration
+	// above and the reader starting would fill the one slot, and a send
+	// from here would then block forever — with no reader, because the
+	// reader is what this function returns to. The stream sends its own
+	// opening roster instead, which is fresher than a cached one anyway.
 	return client, func() {
 		h.mu.Lock()
 		delete(h.clients, client)
@@ -134,6 +130,8 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	defer conn.CloseNow()
 
+	// Subscribe before sending the opening roster, so a change landing
+	// between the two is queued rather than missed.
 	updates, unsubscribe := s.events.subscribe()
 	defer unsubscribe()
 
@@ -146,6 +144,7 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	go keepalive(ctx, cancel, conn)
 
 	// An immediate roster, so a fresh client paints without waiting for
 	// something to change.
@@ -173,7 +172,7 @@ func (s *Server) sendRoster(ctx context.Context, conn *websocket.Conn) error {
 		// refuse the stream; the next poll will carry one.
 		return nil
 	}
-	payload, err := json.Marshal(rosterEvent{Type: "agents", Agents: agents})
+	payload, err := json.Marshal(rosterEvent{Type: "agents", Agents: viewOf(agents)})
 	if err != nil {
 		return err
 	}

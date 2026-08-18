@@ -6,6 +6,7 @@ import (
 
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -42,21 +43,28 @@ const (
 // terminal relays one agent's live terminal over one WebSocket.
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	cols, rows := terminalSize(r)
-	transport, err := s.service.AttachTerminal(r.Context(), r.PathValue("id"), cols, rows)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 
+	// Upgrade before attaching. Attaching resizes the agent's terminal —
+	// the daemon owns one terminal per agent and every viewer shares it —
+	// so doing it first would let a plain GET, which cannot become a
+	// terminal at all, reflow the pane a dashboard user is reading.
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Origin is checked in the auth middleware, against the host
-		// actually being served rather than a list maintained here.
+		// Origin is checked in the auth middleware, against the loopback
+		// hosts this server actually serves.
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		transport.Close()
 		return
 	}
+	transport, err := s.service.AttachTerminal(r.Context(), r.PathValue("id"), cols, rows)
+	if err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "attach failed")
+		return
+	}
+	// A paste is one message, and terminals receive large ones. The
+	// library's default read limit is 32 KiB, which would not reject the
+	// paste but tear down the whole attachment.
+	conn.SetReadLimit(maxTerminalMessage)
 	// A terminal is a long conversation; nothing about it should time out
 	// for being quiet, so the relay runs on a context of its own that
 	// ends when either side hangs up.
@@ -84,6 +92,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go s.pumpInput(ctx, cancel, conn, transport)
+	go keepalive(ctx, cancel, conn)
 
 	// Output goes out as it arrives. No coalescing here: the transport
 	// hands over whole chunks already, and holding one back to merge it
@@ -133,11 +142,41 @@ func (s *Server) pumpInput(
 			if message.Type != controlResize {
 				continue
 			}
-			if err := transport.Resize(ctx, message.Cols, message.Rows); err != nil {
+			// The same bound as the query string: this number reaches the
+			// daemon's emulator, which allocates what it is told to.
+			cols := min(max(message.Cols, 2), maxTerminalDimension)
+			rows := min(max(message.Rows, 2), maxTerminalDimension)
+			if err := transport.Resize(ctx, cols, rows); err != nil {
 				// A resize that loses a race with the session ending is
 				// not worth dropping the connection over.
 				diagnostic.Logger().Debug("terminal resize failed", "error", err)
 			}
+		}
+	}
+}
+
+// keepaliveInterval paces the ping that proves a viewer is still there.
+// A laptop that sleeps or a wifi drop leaves a connection that looks open
+// and never speaks again; without this the server holds the goroutine and
+// the daemon attachment behind it until the OS gives up on the socket,
+// which can be hours.
+const keepaliveInterval = 30 * time.Second
+
+func keepalive(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn) {
+	defer cancel()
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		pingCtx, timeout := context.WithTimeout(ctx, keepaliveInterval)
+		err := conn.Ping(pingCtx)
+		timeout()
+		if err != nil {
+			return
 		}
 	}
 }
@@ -157,19 +196,30 @@ func writeControl(ctx context.Context, conn *websocket.Conn, message controlMess
 	return conn.Write(ctx, websocket.MessageText, payload)
 }
 
+// A terminal's geometry is not a matter of opinion, and this is the one
+// place a client's number reaches the daemon's emulator. The emulator
+// allocates the whole grid, so an unbounded size is an out-of-memory
+// request served on demand: the daemon owns every agent's process, and
+// taking it down takes the fleet with it. maxTerminalDimension is far
+// past any real display and cheap at the limit.
+const maxTerminalDimension = 1000
+
+// maxTerminalMessage bounds one inbound message — a keystroke, or a
+// paste. Generous enough for pasting a file, small enough that a client
+// cannot make the server hold an arbitrary buffer.
+const maxTerminalMessage = 4 << 20
+
 // terminalSize reads the viewer's geometry from the query string. A
 // viewer that does not say gets a conventional terminal; it will resize
 // as soon as it has laid itself out.
 func terminalSize(r *http.Request) (cols, rows int) {
-	cols = positiveQuery(r, "cols", 80)
-	rows = positiveQuery(r, "rows", 24)
-	return cols, rows
+	return boundedQuery(r, "cols", 80), boundedQuery(r, "rows", 24)
 }
 
-func positiveQuery(r *http.Request, name string, fallback int) int {
+func boundedQuery(r *http.Request, name string, fallback int) int {
 	value, err := strconv.Atoi(r.URL.Query().Get(name))
 	if err != nil || value < 2 {
 		return fallback
 	}
-	return value
+	return min(value, maxTerminalDimension)
 }

@@ -24,7 +24,7 @@ type workspaceBody struct {
 
 func (s *Server) addWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body workspaceBody
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -51,7 +51,7 @@ type workspaceRef struct {
 
 func (s *Server) removeWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body workspaceRef
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -66,7 +66,7 @@ func (s *Server) removeWorkspace(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) renameWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body workspaceRef
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -76,9 +76,13 @@ behind a control request and never encoded as JSON, because everything about
 how typing feels lives on that path. Sizes and resync notices ride the same
 socket as text messages, which are rare and never in the typing path.
 
-A second client attaching changes nothing for the first: the daemon owns the
-terminal, so the dashboard and a browser can hold the same agent at once, each
-seeded with its own exact snapshot.
+The dashboard and a browser can hold the same agent at once, each seeded with
+its own exact snapshot, because the daemon owns the terminal rather than any
+client. What they cannot have is their own geometry: an agent has one terminal,
+so the newest viewer's size becomes everyone's, and the others are told over
+their own streams and repaint. Sharing the size is what keeps the replicas
+identical — the alternative is each client rendering a different reflow of the
+same program's output.
 
 The server binds loopback only and requires a per-run token on every request
 and upgrade — these routes dispatch agents and stream terminals in every

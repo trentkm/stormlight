@@ -47,5 +47,5 @@ func (s *Server) resumeHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, resumed)
+	writeJSON(w, http.StatusCreated, agentView{Agent: resumed, Host: resumed.Host})
 }

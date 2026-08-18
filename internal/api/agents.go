@@ -17,6 +17,28 @@ func call(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), callTimeout)
 }
 
+// agentView is an agent as this API reports it: the domain record plus
+// the host it answered from.
+//
+// agent.Agent deliberately does not serialize Host — the field is the
+// answering daemon's fact, and writing it into the agent's own document
+// would be one dashboard's claim about the world. Over the wire it is
+// exactly what a client needs, though: on a fleet, "which machine is this
+// on" is not decoration. The outer field shadows the embedded one, which
+// is why this reads as a plain agent with a host.
+type agentView struct {
+	agent.Agent
+	Host string `json:"host,omitempty"`
+}
+
+func viewOf(agents []agent.Agent) []agentView {
+	views := make([]agentView, 0, len(agents))
+	for _, managedAgent := range agents {
+		views = append(views, agentView{Agent: managedAgent, Host: managedAgent.Host})
+	}
+	return views
+}
+
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := call(r)
 	defer cancel()
@@ -25,7 +47,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(agents))
+	writeJSON(w, http.StatusOK, viewOf(agents))
 }
 
 type dispatchBody struct {
@@ -39,7 +61,17 @@ type dispatchBody struct {
 
 func (s *Server) dispatchAgent(w http.ResponseWriter, r *http.Request) {
 	var body dispatchBody
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The same parser every other entry point uses. Casting the string
+	// straight to a PermissionMode would accept "Auto" and then quietly
+	// launch the agent in the provider's default mode instead of the one
+	// asked for — a misspelled value silently ignored, which is exactly
+	// what DisallowUnknownFields exists to prevent for keys.
+	mode, err := agent.ParseMode(body.Mode)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -53,13 +85,13 @@ func (s *Server) dispatchAgent(w http.ResponseWriter, r *http.Request) {
 		Task:     body.Task,
 		Cwd:      body.Cwd,
 		Host:     body.Host,
-		Mode:     agent.PermissionMode(body.Mode),
+		Mode:     mode,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, dispatched)
+	writeJSON(w, http.StatusCreated, agentView{Agent: dispatched, Host: dispatched.Host})
 }
 
 type renameBody struct {
@@ -68,7 +100,7 @@ type renameBody struct {
 
 func (s *Server) renameAgent(w http.ResponseWriter, r *http.Request) {
 	var body renameBody
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -99,7 +131,7 @@ type messageBody struct {
 
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	var body messageBody
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -128,13 +160,18 @@ type markBody struct {
 
 func (s *Server) markAgent(w http.ResponseWriter, r *http.Request) {
 	var body markBody
-	if err := decode(r, &body); err != nil {
+	if err := decode(w, r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	mark, err := agent.ParseMark(body.Mark)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ctx, cancel := call(r)
 	defer cancel()
-	if err := s.service.SetMark(ctx, r.PathValue("id"), agent.Mark(body.Mark)); err != nil {
+	if err := s.service.SetMark(ctx, r.PathValue("id"), mark); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -68,9 +68,13 @@ func newServeCommand(cfg config.Config) *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Stormlight API on %s\n", address)
 			diagnostic.Logger().Info("api serving", "address", listener.Addr().String())
 
-			// Ctrl-C should close the listener and let in-flight
-			// attachments end, rather than killing the process out from
-			// under a terminal someone is typing into.
+			// Ctrl-C stops accepting and lets in-flight *requests*
+			// finish. It does not wait for terminal sockets: a WebSocket
+			// is a hijacked connection, which Shutdown explicitly does
+			// not track, and waiting on attachments that are meant to
+			// last for hours would be waiting forever. Those clients see
+			// the connection drop and reconnect; the agents themselves
+			// are in the daemon and never notice.
 			ctx, stop := signal.NotifyContext(cmd.Context(),
 				os.Interrupt, syscall.SIGTERM)
 			defer stop()
