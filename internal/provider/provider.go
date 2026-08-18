@@ -415,7 +415,7 @@ func codexLifecycleArgs(mode agent.PermissionMode) ([]string, error) {
 		Notify: []string{
 			"/bin/sh",
 			"-c",
-			`exec "$STORMLIGHT_BIN" _provider-event codex "$0"`,
+			`exec "${STORMLIGHT_BIN:-stormlight}" _provider-event codex "$0"`,
 		},
 	})
 	if err != nil {
