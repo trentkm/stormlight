@@ -1,0 +1,37 @@
+// Package remote reaches a Stormlight host that is not this one.
+//
+// The daemon runs on the machine the agents run on — that is the whole
+// design. An agent's PTY, its provider process, its hooks, its transcript
+// file, and the repository it is working in all live together; what
+// crosses the network is the windrunner wire protocol and nothing else.
+// A remote host is therefore not a different kind of runtime. It is the
+// same runtime over a different transport: `ssh <host> stormlight
+// _wrbridge`, which ensures a daemon on that host and then splices its
+// own stdio onto that daemon's socket.
+//
+// The trust boundary comes along unchanged. The wire protocol has no
+// authentication of its own and does not need any: reaching the socket
+// means being the user who owns it, enforced by directory permissions
+// locally and by the host's own login remotely. The bridge runs as that
+// user. Nothing binds a port.
+package remote
+
+// Protocol is the bridge contract this build speaks. It changes only when
+// the framing around the tunnel changes — a new handshake field that
+// matters, a different splice — never for an ordinary release, so hosts
+// on adjacent versions keep working.
+const Protocol = 1
+
+// Hello is the one line a bridge writes before it becomes a byte pipe.
+// It answers the questions dispatch would otherwise have to guess at from
+// the local machine, where every answer is wrong: where the remote
+// binary lives (hooks re-invoke it through $STORMLIGHT_BIN), which socket
+// directory its daemon is on (a hook's own event call has to reach the
+// same one), and whether the two ends can talk at all.
+type Hello struct {
+	Protocol  int    `json:"protocol"`
+	Version   string `json:"version"`
+	Bin       string `json:"bin"`
+	SocketDir string `json:"socket_dir"`
+	Hostname  string `json:"hostname"`
+}

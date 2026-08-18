@@ -21,15 +21,21 @@ const overlayMetadataKey = "stormlight_overlay"
 // removes it — because an overlay resurrected from daemon persistence
 // would be a ghost with nothing waiting on its exit.
 func (r *Runtime) StartOverlay(ctx context.Context, request session.OverlayRequest) (session.Overlay, error) {
-	info, err := r.client.Spawn(wire.Request{
+	spawn := wire.Request{
 		Command:  request.Path,
 		Args:     request.Args,
 		Dir:      request.Dir,
-		Env:      os.Environ(),
 		Cols:     max(2, request.Cols),
 		Rows:     max(2, request.Rows),
 		Metadata: map[string]string{overlayMetadataKey: request.Path},
-	})
+	}
+	// On a remote host the environment is that host's: an overlay browses
+	// the filesystem the agents are on, so it wants that machine's HOME
+	// and PATH, not this one's.
+	if r.transport == nil {
+		spawn.Env = os.Environ()
+	}
+	info, err := r.client.Spawn(spawn)
 	if err != nil {
 		return nil, fmt.Errorf("spawn overlay %s: %w", request.Path, err)
 	}
