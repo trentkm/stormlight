@@ -37,7 +37,18 @@ jobs:
         run: npm ci --prefix web && npm run build --prefix web
 
       - name: Check the committed web client is current
-        run: git diff --exit-code -- web/dist
+        # --porcelain rather than `git diff --exit-code`: a build that
+        # emits a new file leaves the tracked ones untouched, and a diff
+        # would call that clean.
+        run: |
+          test -z "$(git status --porcelain -- web/dist)" || {
+            echo "web/dist is stale; run 'npm run build --prefix web'"
+            git status --porcelain -- web/dist
+            exit 1
+          }
+
+      - name: Check the web client
+        run: npm run check --prefix web && npm test --prefix web
 
       - name: Test
         run: go test -race ./...

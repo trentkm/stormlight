@@ -8,7 +8,11 @@
   const workspaces = $derived(workspaceList());
 
   let provider = $state("");
-  let cwd = $state("");
+  // The workspace id, not its path: a path alone loses the host, and two
+  // machines can hold the same one. Dispatching into an SSH workspace
+  // with the host dropped resolves here — failing outright, or silently
+  // starting the agent on the wrong machine.
+  let workspaceID = $state("");
   let task = $state("");
   let name = $state("");
   let mode = $state("auto");
@@ -24,18 +28,21 @@
 
   $effect(() => {
     if (!provider && available.length) provider = available[0].ID;
-    if (!cwd && workspaces.length) cwd = workspaces[0].execution_root;
+    if (!workspaceID && workspaces.length) workspaceID = workspaces[0].id;
   });
+
+  const workspace = $derived(workspaces.find((w) => w.id === workspaceID));
 
   async function dispatch(event: SubmitEvent) {
     event.preventDefault();
-    if (!task.trim() || !cwd || busy) return;
+    if (!task.trim() || !workspace || busy) return;
     busy = true;
     await act(async () => {
       const agent = await api.dispatch({
         provider,
         task: task.trim(),
-        cwd,
+        cwd: workspace.execution_root,
+        host: workspace.host ?? "",
         name: name.trim(),
         mode,
       });
@@ -76,10 +83,12 @@
 
     <label>
       Workspace
-      <select bind:value={cwd}>
-        {#each workspaces as workspace (workspace.id)}
-          <option value={workspace.execution_root}>
-            {workspace.name} — {workspace.execution_root}
+      <select bind:value={workspaceID}>
+        {#each workspaces as candidate (candidate.id)}
+          <option value={candidate.id}>
+            {candidate.name} — {candidate.execution_root}{candidate.host
+              ? ` on ${candidate.host}`
+              : ""}
           </option>
         {/each}
       </select>
@@ -92,7 +101,7 @@
 
     <footer>
       <button type="button" onclick={onclose}>cancel</button>
-      <button type="submit" class="primary" disabled={!task.trim() || !cwd || busy}>
+      <button type="submit" class="primary" disabled={!task.trim() || !workspace || busy}>
         {busy ? "dispatching…" : "dispatch"}
       </button>
     </footer>

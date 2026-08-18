@@ -2,20 +2,34 @@ import type { Agent, Provider, Workspace } from "./types";
 
 // The token is shell access to every workspace the catalog knows. It
 // arrives in the URL because that is the only way `stormlight serve` can
-// hand it to a browser, and it is taken out of the address bar and kept
-// in memory only: localStorage would leave it on disk for anything that
-// can read it, and the server mints a fresh one each run anyway.
-let token = "";
+// hand it to a browser, and it comes straight out of the address bar so
+// it is not sitting in a title bar or a screenshot.
+//
+// It is kept in sessionStorage rather than a variable, because a reload
+// with only a variable is a lockout: the URL no longer carries it and the
+// page has nowhere to type one. sessionStorage is scoped to this tab and
+// dies with it, which is the lifetime the token already had — localStorage
+// would instead leave it on disk long after the server that minted it.
+const tokenKey = "stormlight.token";
+
+let token = sessionStorage.getItem(tokenKey) ?? "";
 
 export function claimToken(): boolean {
   const url = new URL(window.location.href);
   const found = url.searchParams.get("token");
   if (found) {
     token = found;
+    sessionStorage.setItem(tokenKey, token);
     url.searchParams.delete("token");
     window.history.replaceState({}, "", url.toString());
   }
   return token !== "";
+}
+
+/** forgetToken drops a token the server no longer accepts. */
+export function forgetToken(): void {
+  token = "";
+  sessionStorage.removeItem(tokenKey);
 }
 
 export function tokened(path: string, params: Record<string, string> = {}): string {

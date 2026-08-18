@@ -75,9 +75,13 @@ func (f *fakeRuntime) AttachTerminal(
 	f.streamed = append(f.streamed, id)
 	stream := f.stream
 	f.mu.Unlock()
-	// The stream guards its own fields; reaching past that from here is
-	// how the test, not the server, grew a race.
-	_ = stream.Resize(context.Background(), cols, rows)
+	// Mirrors windrun.AttachTerminal: a caller with no size to assert
+	// must not move a terminal every viewer shares. The stream guards its
+	// own fields, so this goes through Resize rather than reaching past
+	// it — which is how the test, not the server, grew a race.
+	if cols >= 2 && rows >= 2 {
+		_ = stream.Resize(context.Background(), cols, rows)
+	}
 	return stream, nil
 }
 
@@ -393,6 +397,10 @@ func TestBearerHeaderParsing(t *testing.T) {
 // reaches the daemon's emulator, which allocates the grid it is told to.
 // The daemon owns every agent's process, so an unbounded size is a way to
 // take down the whole fleet from one query string.
+//
+// A size the terminal cannot be is not corrected to a default either. The
+// terminal is shared, so a default is an opinion asserted on every other
+// viewer — and nothing puts back the size a dashboard pane had (#155).
 func TestTerminalGeometryIsBounded(t *testing.T) {
 	server, runtime := startAPI(t)
 
@@ -407,18 +415,15 @@ func TestTerminalGeometryIsBounded(t *testing.T) {
 	}
 	defer conn.CloseNow()
 
+	// Nothing is asserted at all: the fake starts at zero, and an attach
+	// that named an impossible size leaves it there.
 	waitFor(t, "the attach to land", func() bool {
-		cols, rows := runtime.stream.size()
-		return cols > 0 && rows > 0
+		runtime.mu.Lock()
+		defer runtime.mu.Unlock()
+		return len(runtime.streamed) > 0
 	})
-	cols, rows := runtime.stream.size()
-	if !usableSize(cols, rows) {
-		t.Fatalf("the daemon was asked for %dx%d", cols, rows)
-	}
-	// Refused, not corrected: a size nobody can use must leave the
-	// terminal where it was.
-	if cols != 80 || rows != 24 {
-		t.Fatalf("an unusable size became %dx%d instead of the default", cols, rows)
+	if cols, rows := runtime.stream.size(); cols != 0 || rows != 0 {
+		t.Fatalf("an impossible size moved the shared terminal to %dx%d", cols, rows)
 	}
 
 	// The resize control message is the same number by another route.
@@ -865,5 +870,42 @@ func TestAPIRoutesOutrankThePage(t *testing.T) {
 	}
 	if strings.Contains(string(body), "<title>") {
 		t.Fatalf("/api/agents served the page:\n%s", body)
+	}
+}
+
+// A missing file is a 404, not the document. Answering a stale asset
+// reference with index.html turns a plain "that file is gone" into a MIME
+// error in the console, which says nothing about what happened; a path
+// the client routes itself still has to reach the document.
+func TestMissingFilesAreNotAnsweredWithThePage(t *testing.T) {
+	server, _ := startAPI(t)
+
+	missing := get(t, server, "/assets/index-FROM-A-PREVIOUS-BUILD.js")
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("a missing asset answered %d, want 404", missing.StatusCode)
+	}
+
+	route := get(t, server, "/agents/agent-one")
+	if route.StatusCode != http.StatusOK {
+		t.Fatalf("a client route answered %d, want the document", route.StatusCode)
+	}
+}
+
+// The document must never be cached: a rebuilt binary carries a new
+// bundle, and a cached page would go on asking for the old one. The
+// content-hashed assets beside it are the opposite case.
+func TestTheDocumentIsNotCachedAndAssetsAre(t *testing.T) {
+	server, _ := startAPI(t)
+
+	page := get(t, server, "/")
+	if cache := page.Header.Get("Cache-Control"); cache != "no-store" {
+		t.Fatalf("the document is cached as %q", cache)
+	}
+	asset := get(t, server, "/assets/app.js")
+	if cache := asset.Header.Get("Cache-Control"); !strings.Contains(cache, "immutable") {
+		t.Fatalf("a content-hashed asset is cached as %q", cache)
+	}
+	if sniff := asset.Header.Get("X-Content-Type-Options"); sniff != "nosniff" {
+		t.Fatalf("assets are served sniffable: %q", sniff)
 	}
 }

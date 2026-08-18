@@ -3,12 +3,13 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
-  import { attach, type Attachment } from "../lib/terminal";
+  import { attach, type Attachment, type Connection } from "../lib/terminal";
   import { theme } from "../lib/theme";
 
   let { agentID }: { agentID: string } = $props();
 
   let host: HTMLDivElement;
+  let connection = $state<Connection>("live");
 
   $effect(() => {
     // Re-runs when the selected agent changes: one terminal per agent,
@@ -43,7 +44,13 @@
     // yields a two-column terminal, and this terminal is shared.
     const laidOut = () => host.offsetWidth > 0 && host.offsetHeight > 0;
     if (laidOut()) fitAddon.fit();
-    let attachment: Attachment | undefined = attach(term, fitAddon, id, laidOut);
+    let attachment: Attachment | undefined = attach(
+      term,
+      fitAddon,
+      id,
+      laidOut,
+      (state) => (connection = state),
+    );
     const observer = new ResizeObserver(() => attachment?.fit());
     observer.observe(host);
 
@@ -56,13 +63,33 @@
   });
 </script>
 
-<div class="terminal" bind:this={host}></div>
+<div class="terminal" bind:this={host}>
+  {#if connection === "reconnecting"}
+    <!-- Said out loud, because the alternative is a frozen pane that
+         looks like an agent gone quiet. -->
+    <p class="reconnecting">reconnecting…</p>
+  {/if}
+</div>
 
 <style>
   .terminal {
+    position: relative;
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px 10px;
     overflow: hidden;
+  }
+  .reconnecting {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    z-index: 1;
+    margin: 0;
+    padding: 2px 8px;
+    background: var(--bg-raised);
+    border: 1px solid var(--waiting);
+    border-radius: 4px;
+    color: var(--waiting);
+    font-size: 11px;
   }
 </style>

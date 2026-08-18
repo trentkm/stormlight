@@ -18,10 +18,17 @@ func (r *Runtime) AttachTerminal(ctx context.Context, id string, cols, rows int)
 	if err != nil {
 		return nil, err
 	}
-	// Size first so the snapshot arrives pre-wrapped for the view it is
-	// about to fill.
-	if err := r.client.Resize(sessionID, cols, rows); err != nil {
-		return nil, err
+	// Size first, so the snapshot arrives pre-wrapped for the view it is
+	// about to fill — but only when the caller has a size to assert. The
+	// terminal belongs to the session and every viewer shares it, so a
+	// caller that does not know its own geometry must not move it: a
+	// viewer with no layout would otherwise reflow the agent for everyone
+	// and leave it that way, since nothing re-asserts the size a
+	// dashboard pane had (#155).
+	if cols >= 2 && rows >= 2 {
+		if err := r.client.Resize(sessionID, cols, rows); err != nil {
+			return nil, err
+		}
 	}
 	// Resync rather than be dropped. Everything attaching here is a
 	// viewer — the dashboard's terminal box, a browser — and a viewer
