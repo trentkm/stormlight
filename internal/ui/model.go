@@ -27,7 +27,7 @@ type Backend interface {
 	ListAgents(context.Context) ([]agent.Agent, error)
 	ListWorkspaces(context.Context) ([]workspace.Context, error)
 	ListWorkspaceRoots(context.Context) ([]workspace.Context, error)
-	AddWorkspace(context.Context, string) (workspace.Context, error)
+	AddWorkspace(ctx context.Context, host, path string) (workspace.Context, error)
 	RemoveWorkspace(context.Context, workspace.Context) error
 	Dispatch(context.Context, app.DispatchRequest) (agent.Agent, error)
 	Capture(context.Context, string, int) (string, error)

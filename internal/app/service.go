@@ -50,7 +50,7 @@ type Service struct {
 	// Keyed by catalog path, so added or removed workspaces never consult
 	// a stale entry.
 	resolveMu sync.Mutex
-	resolved  map[string]resolvedWorkspace
+	resolved  map[workspace.Entry]resolvedWorkspace
 }
 
 type resolvedWorkspace struct {
@@ -173,18 +173,12 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	// The catalog is a list of paths on this machine, and adding a remote
-	// root to it would file another host's directory as one of ours —
-	// every later load would resolve it here and answer about nothing.
-	// Remote workspaces are visible while they hold agents; teaching the
-	// catalog about hosts is the next step (#127).
-	if workspaceContext.Host == "" {
-		if err := s.catalog.Add(workspaceContext.Root); err != nil {
-			diagnostic.Logger().Warn("workspace catalog update failed",
-				"path", workspaceContext.Root,
-				"error", err,
-			)
-		}
+	if err := s.catalog.Add(workspace.EntryOf(workspaceContext)); err != nil {
+		diagnostic.Logger().Warn("workspace catalog update failed",
+			"host", workspaceContext.Host,
+			"path", workspaceContext.Root,
+			"error", err,
+		)
 	}
 	return managedAgent, nil
 }
@@ -230,17 +224,21 @@ func (s *Service) Resume(
 }
 
 func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, error) {
-	paths, err := s.catalog.Paths()
+	entries, err := s.catalog.Entries()
 	if err != nil {
 		return nil, err
 	}
-	values := make([]workspace.Context, 0, len(paths))
-	seen := make(map[string]bool, len(paths))
-	for _, path := range paths {
-		value, resolveErr := s.resolveCached(ctx, path)
+	values := make([]workspace.Context, 0, len(entries))
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		value, resolveErr := s.resolveCached(ctx, entry)
 		if resolveErr != nil {
+			// A host that is asleep cannot describe its workspaces, and
+			// that is not a reason to fail the listing — the rest of the
+			// catalog is still answerable.
 			diagnostic.Logger().Warn("catalog workspace resolution failed",
-				"path", path,
+				"host", entry.Host,
+				"path", entry.Path,
 				"error", resolveErr,
 			)
 			continue
@@ -326,23 +324,23 @@ func sortWorkspaceRoots(values []workspace.Context) {
 
 func (s *Service) resolveCached(
 	ctx context.Context,
-	path string,
+	entry workspace.Entry,
 ) (workspace.Context, error) {
 	s.resolveMu.Lock()
-	cached, ok := s.resolved[path]
+	cached, ok := s.resolved[entry]
 	s.resolveMu.Unlock()
 	if ok && time.Since(cached.at) < workspaceResolveTTL {
 		return cached.value, nil
 	}
-	value, err := s.workspaces.Resolve(ctx, path)
+	value, err := s.workspaces.ResolveOn(ctx, entry.Host, entry.Path)
 	if err != nil {
 		return workspace.Context{}, err
 	}
 	s.resolveMu.Lock()
 	if s.resolved == nil {
-		s.resolved = map[string]resolvedWorkspace{}
+		s.resolved = map[workspace.Entry]resolvedWorkspace{}
 	}
-	s.resolved[path] = resolvedWorkspace{value: value, at: time.Now()}
+	s.resolved[entry] = resolvedWorkspace{value: value, at: time.Now()}
 	s.resolveMu.Unlock()
 	return value, nil
 }
@@ -358,25 +356,30 @@ func (s *Service) applyWorkspaceNames(values []workspace.Context) {
 		return
 	}
 	for index := range values {
-		if name, ok := names[values[index].Root]; ok {
+		if name, ok := names[workspace.EntryOf(values[index])]; ok {
 			values[index].Name = name
 		}
 	}
 }
 
-func (s *Service) AddWorkspace(ctx context.Context, path string) (workspace.Context, error) {
-	value, err := s.workspaces.Resolve(ctx, path)
+// AddWorkspace remembers a directory as a workspace. The host names the
+// machine the path is on; empty is this one.
+func (s *Service) AddWorkspace(
+	ctx context.Context,
+	host, path string,
+) (workspace.Context, error) {
+	value, err := s.workspaces.ResolveOn(ctx, host, path)
 	if err != nil {
 		return workspace.Context{}, err
 	}
-	if err := s.catalog.Add(value.Root); err != nil {
+	if err := s.catalog.Add(workspace.EntryOf(value)); err != nil {
 		return workspace.Context{}, err
 	}
 	return value, nil
 }
 
 func (s *Service) RemoveWorkspace(_ context.Context, value workspace.Context) error {
-	return s.catalog.Remove(value.Root)
+	return s.catalog.Remove(workspace.EntryOf(value))
 }
 
 func (s *Service) RenameWorkspace(
@@ -384,7 +387,7 @@ func (s *Service) RenameWorkspace(
 	value workspace.Context,
 	name string,
 ) error {
-	return s.catalog.SetName(value.Root, name)
+	return s.catalog.SetName(workspace.EntryOf(value), name)
 }
 
 func (s *Service) Rename(ctx context.Context, id, name string) error {

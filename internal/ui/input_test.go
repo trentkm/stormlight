@@ -2481,8 +2481,11 @@ func (stubBackend) ListWorkspaceRoots(context.Context) ([]workspace.Context, err
 	return nil, nil
 }
 
-func (stubBackend) AddWorkspace(_ context.Context, path string) (workspace.Context, error) {
-	return workspace.DirectoryContext(path), nil
+func (stubBackend) AddWorkspace(
+	_ context.Context,
+	host, path string,
+) (workspace.Context, error) {
+	return workspace.DirectoryContext(path).OnHost(host), nil
 }
 
 func (stubBackend) RemoveWorkspace(context.Context, workspace.Context) error {
@@ -2554,6 +2557,7 @@ type recordingBackend struct {
 	providers      []provider.Info
 	workspaceRoots []workspace.Context
 	request        app.DispatchRequest
+	addedHost      string
 	addedPath      string
 	sentID         string
 	sentMessage    string
@@ -2580,10 +2584,11 @@ func (b *recordingBackend) ListWorkspaceRoots(
 
 func (b *recordingBackend) AddWorkspace(
 	_ context.Context,
-	path string,
+	host, path string,
 ) (workspace.Context, error) {
+	b.addedHost = host
 	b.addedPath = path
-	return workspace.DirectoryContext(path), nil
+	return workspace.DirectoryContext(path).OnHost(host), nil
 }
 
 func (b *recordingBackend) Send(_ context.Context, id, message string) error {
