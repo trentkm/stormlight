@@ -202,7 +202,26 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 			continue
 		}
 		for _, listed := range item.agents {
+			// An agent has one identity. Two members reporting the same
+			// one are two names for the same daemon — a host that
+			// resolves back to this machine, or two aliases for one box —
+			// and the roster must show it once. The first member to
+			// claim it wins, and this machine is always first.
+			if _, taken := owner[listed.ID]; taken {
+				diagnostic.Logger().Debug("host is another name for one already listed",
+					"host", hostName(item.member.host),
+					"agent_id", listed.ID,
+				)
+				continue
+			}
 			listed.Host = item.member.host
+			// The workspace an agent is in is on the machine the agent
+			// is on. Its context was resolved when it was dispatched and
+			// records whatever was true then, so stamping it here is
+			// what keeps one workspace from becoming two rows: the
+			// catalog's copy is qualified with the host, and an agent's
+			// stored copy would otherwise not be.
+			listed.Workspace = listed.Workspace.OnHost(item.member.host)
 			owner[listed.ID] = item.member
 			agents = append(agents, listed)
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -173,5 +174,45 @@ func TestAnUnreadableTranscriptFallsBackToTheScreen(t *testing.T) {
 	}
 	if !strings.Contains(plain(rendered), "what the terminal last showed") {
 		t.Fatalf("want the terminal snapshot, got %q", rendered)
+	}
+}
+
+// TestAnUnreachableHostIsNotAskedEveryRefresh: a workspace on a machine
+// that is asleep costs a connection attempt to discover, and the
+// dashboard refreshes on a timer. Asking again every time is a workspace
+// pane that spends its life waiting on a machine nobody is using.
+func TestAnUnreachableHostIsNotAskedEveryRefresh(t *testing.T) {
+	directory := t.TempDir()
+	attempts := filepath.Join(directory, "attempts")
+	ssh := filepath.Join(directory, "ssh")
+	if err := os.WriteFile(ssh, []byte(
+		"#!/bin/sh\necho attempt >> "+attempts+
+			"\necho 'ssh: connect to host devbox port 22: Operation timed out' >&2\nexit 255\n",
+	), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := workspace.NewRegistry()
+	registry.AddHost(remote.Host{Name: "devbox", SSHProgram: ssh})
+	service := NewServiceWithCatalog(
+		&readingRuntime{},
+		provider.NewRegistry(),
+		registry,
+		workspace.NewCatalogAt(filepath.Join(directory, "workspaces.json")),
+		history.NewLogAt(filepath.Join(directory, "sessions.jsonl")),
+	)
+
+	entry := workspace.Entry{Host: "devbox", Path: "/srv/api"}
+	for range 4 {
+		if _, err := service.resolveCached(context.Background(), entry); err == nil {
+			t.Fatal("an unreachable host should not resolve")
+		}
+	}
+	content, err := os.ReadFile(attempts)
+	if err != nil {
+		t.Fatalf("the host was never dialled at all: %v", err)
+	}
+	if got := strings.Count(string(content), "attempt"); got != 1 {
+		t.Fatalf("dialled %d times across four refreshes, want 1", got)
 	}
 }

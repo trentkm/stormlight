@@ -101,16 +101,47 @@ type workspaceGroup struct {
 	agents  []agent.Agent
 }
 
+// addWorkspaceTab is which half of the Add Workspace modal is showing.
+// Local is the common answer and the one it opens on.
+type addWorkspaceTab int
+
+const (
+	tabLocal addWorkspaceTab = iota
+	tabRemote
+)
+
+// machineChoice is one row of the Remote tab: a machine from the user's
+// SSH configuration, or the row for naming one it does not list.
+type machineChoice struct {
+	kind    machineChoiceKind
+	name    string
+	detail  string
+	summary string
+}
+
+type machineChoiceKind int
+
+const (
+	machineHost machineChoiceKind = iota
+	machineTyped
+)
+
 type directoryChoiceKind int
 
 const (
 	directoryPath directoryChoiceKind = iota
 	directoryYazi
 	directoryCustom
+	// directorySetup is not a directory at all: it is the row that
+	// prepares the machine so the others can work.
+	directorySetup
 )
 
 type directoryChoice struct {
 	kind directoryChoiceKind
+	// detail overrides the row's right-hand column, for rows whose
+	// meaning changes with the machine they act on.
+	detail string
 	// host is the machine the path is on; empty is this one. Two
 	// machines can offer the same path, and they are different choices.
 	host          string
@@ -136,11 +167,13 @@ type Model struct {
 	catalogWorkspaces []workspace.Context
 	workspaceRoots    []workspace.Context
 	groups            []workspaceGroup
-	// hosts are the machines the Add Workspace modal can browse, and
-	// addWorkspaceHost is which of them it is on. Index 0 is always this
-	// machine, named by the empty string.
-	hosts            []string
-	addWorkspaceHost int
+	// The Add Workspace modal: which tab is showing, which machine the
+	// Remote tab has been opened on, and the machines it can offer.
+	addWorkspaceTab  addWorkspaceTab
+	addWorkspaceHost string
+	machines         []machineChoice
+	machineIndex     int
+	hostInput        lineInput
 	// dispatchHost is the machine the open dispatch form is aimed at. It
 	// travels with the directory rather than being asked for separately:
 	// a path only means anything alongside the machine it is on.
@@ -233,6 +266,27 @@ type Model struct {
 	overlayGeneration int
 }
 
+// machineChoices is the Remote tab's rows: what the SSH configuration
+// names, and then the row for a machine it does not. Naming one is what
+// makes it usable, so the typed row is always there — most people's
+// configuration names nothing at all.
+func machineChoices(hosts []HostChoice) []machineChoice {
+	choices := make([]machineChoice, 0, len(hosts)+1)
+	for _, host := range hosts {
+		choices = append(choices, machineChoice{
+			kind:    machineHost,
+			name:    host.Name,
+			detail:  "SSH",
+			summary: host.Summary,
+		})
+	}
+	return append(choices, machineChoice{
+		kind:   machineTyped,
+		name:   "Type a destination…",
+		detail: "SSH",
+	})
+}
+
 type dashboardMsg struct {
 	agents     []agent.Agent
 	workspaces []workspace.Context
@@ -262,6 +316,12 @@ type directoryPickedMsg struct {
 	// is, and the two are one answer.
 	host string
 	path string
+	err  error
+}
+
+// machinePreparedMsg reports the end of a host setup run.
+type machinePreparedMsg struct {
+	host string
 	err  error
 }
 
@@ -306,8 +366,15 @@ type Options struct {
 	Keys KeyBindings
 	// Hosts are the machines to offer when adding a workspace, in the
 	// order they should appear — read from the user's SSH configuration.
-	// This machine is always the first choice and is not in this list.
-	Hosts []string
+	// This machine is not among them; it has its own tab.
+	Hosts []HostChoice
+}
+
+// HostChoice is a machine the Add Workspace modal can offer: the name
+// Stormlight will call it, and what its configuration says it is.
+type HostChoice struct {
+	Name    string
+	Summary string
 }
 
 func NewModelWithOptions(backend Backend, options Options) Model {
@@ -360,9 +427,8 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		ptyEnabled:         true,
 		ptyManager:         ptyview.NewManager(backend),
 		keys:               fillKeyDefaults(options.Keys),
-		// This machine first, then whatever the user's SSH configuration
-		// names. The empty string is how everything else says "here".
-		hosts: append([]string{""}, options.Hosts...),
+		machines:           machineChoices(options.Hosts),
+		hostInput:          newLineInput("user@host"),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -597,6 +663,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.syncTaskComposerSize()
+		return m, nil
+
+	case machinePreparedMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("set up %s: %w", msg.host, msg.err)
+		}
 		return m, nil
 
 	case taskEditedMsg:

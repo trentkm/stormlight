@@ -210,8 +210,31 @@ qualifies workspace IDs.
 
 A host is known because something names it, not because it was
 configured: a workspace on it, a dispatch aimed at it, a name picked out
-of `~/.ssh/config` in the Add Workspace modal, which offers this machine
-first and then whatever that file names. Members exist at start-up for the machines the
+of `~/.ssh/config` in the Add Workspace modal's Remote tab, which lists
+what that file names and takes a destination it does not.
+
+Two rules keep one machine from looking like two. An agent has one
+identity, so two members reporting the same one are two names for the
+same daemon — a host that resolves back to this machine, say — and the
+first to claim it wins. And an agent's workspace is on the machine the
+agent is on, so the fleet stamps its context: the copy stored at dispatch
+would otherwise group apart from the same workspace reached through a
+host.
+
+Nothing Stormlight sends a host may assume a shell. `ssh host <command>`
+runs it in whatever login shell that account has, which is as likely to
+be fish as sh, so scripts go to `/bin/sh` on stdin — unquoted, unparsed
+by anything else. Every ssh call is bounded by a connect timeout, and a
+host that fails to answer is left alone for a while rather than dialled
+again on the next refresh; a machine that is asleep should cost its own
+absence, not the dashboard's responsiveness.
+
+`stormlight remote setup <host>` reports what a machine is missing and
+can install it. Stormlight itself is copied from this machine when the
+platforms match — the same build, so the two ends cannot disagree about
+the protocol between them — and pointed at the releases when they do not.
+Yazi is offered only through the host's own package manager, and
+described rather than guessed at when there is none. Members exist at start-up for the machines the
 catalog says hold a workspace — listing names no host, so without that a
 machine's agents would be invisible until something mentioned one — and
 any other joins the moment it is first named. `[hosts.<name>]` is where a

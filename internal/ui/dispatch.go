@@ -221,18 +221,33 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 	lines := []string{
 		titleStyle().Render("  Add workspace"),
 		"",
-		"  " + m.renderMachineStrip(contentWidth),
+		"  " + m.renderAddWorkspaceTabs(contentWidth),
 		"",
-		"  " + m.renderDispatchSectionTitle(
-			accentStyle(),
-			"Choose a directory",
-			fmt.Sprintf("%d/%d", m.directoryIndex+1, len(m.directories)),
-			contentWidth,
-		),
 	}
+	if m.showingMachines() {
+		lines = append(lines, "  "+m.renderDispatchSectionTitle(
+			accentStyle(),
+			"Machine",
+			fmt.Sprintf("%d/%d", m.machineIndex+1, len(m.machines)),
+			contentWidth,
+		))
+		lines = append(lines, m.renderMachineRows(
+			contentWidth, max(1, min(5, height-8)))...)
+		if choice, ok := m.selectedMachine(); ok && choice.kind == machineTyped {
+			lines = append(lines, "", "  "+m.hostInput.View())
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	lines = append(lines, "  "+m.renderDispatchSectionTitle(
+		accentStyle(),
+		"Choose a directory",
+		fmt.Sprintf("%d/%d", m.directoryIndex+1, len(m.directories)),
+		contentWidth,
+	))
 	lines = append(lines, m.renderDirectoryRows(
 		contentWidth,
-		max(1, min(3, height-8)),
+		max(1, min(3, height-10)),
 	)...)
 	if selected, ok := m.selectedDirectory(); ok &&
 		selected.kind == directoryCustom {
@@ -259,34 +274,62 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderMachineStrip is the machine the modal is adding a workspace on.
-//
-// It reads as one row rather than a list because it usually has one
-// answer — this machine — and because a directory only means anything
-// once you know which machine it is on, so it belongs above the
-// directory rows rather than beside them.
-func (m Model) renderMachineStrip(width int) string {
-	name := "This machine"
-	if host := m.addWorkspaceHostName(); host != "" {
-		name = host
+// renderAddWorkspaceTabs is the modal's first line of navigation: which
+// machine's directories this is about. Local is the common answer, so it
+// leads and the modal opens on it.
+func (m Model) renderAddWorkspaceTabs(width int) string {
+	local := "Local"
+	remote := "Remote"
+	if m.addWorkspaceTab == tabRemote && m.addWorkspaceHost != "" {
+		// A breadcrumb rather than a third tab: the machine is where you
+		// are inside Remote, not somewhere else to go.
+		remote += "  ›  " + m.addWorkspaceHost
 	}
-	hint := "no other machines in ~/.ssh/config"
-	if len(m.hosts) > 1 {
-		hint = fmt.Sprintf("%d of %d · h/l", m.addWorkspaceHost+1, len(m.hosts))
+	render := func(label string, active bool) string {
+		if active {
+			return accentStyle().Render("▏" + label)
+		}
+		return mutedStyle().Render(" " + label)
 	}
-	label := mutedStyle().Copy().Bold(true).Render("Machine")
-	value := accentStyle().Render(name)
-	detail := mutedStyle().Render(hint)
-
-	plain := "Machine  " + name + "  " + hint
-	styled := label + "  " + value + "  " + detail
-	if lipgloss.Width(plain) > width {
-		return label + "  " + value
+	tabs := render(local, m.addWorkspaceTab == tabLocal) + "   " +
+		render(remote, m.addWorkspaceTab == tabRemote)
+	if lipgloss.Width(tabs) > width {
+		return truncate(tabs, width)
 	}
-	return styled
+	return tabs
 }
 
-// The task composer's floor and ceiling. Under three rows a wrapped task
+// renderMachineRows lists the machines the Remote tab can open.
+func (m Model) renderMachineRows(width, maxRows int) []string {
+	if len(m.machines) == 0 {
+		return []string{"    " + mutedStyle().Render("No machines available")}
+	}
+	maxRows = clamp(maxRows, 1, 8)
+	start, end := visibleRange(len(m.machines), m.machineIndex, maxRows)
+	rows := make([]string, 0, end-start)
+	for index := start; index < end; index++ {
+		rows = append(rows, "  "+m.renderMachineRow(
+			m.machines[index], index == m.machineIndex, width))
+	}
+	return rows
+}
+
+func (m Model) renderMachineRow(choice machineChoice, selected bool, width int) string {
+	summary := choice.summary
+	kind := choice.detail
+	if choice.kind == machineTyped {
+		summary = "A machine ~/.ssh/config does not name"
+		kind = "new"
+	}
+	return m.renderDirectoryRow(directoryChoice{
+		kind:          directoryPath,
+		label:         choice.name,
+		workspaceKind: kind,
+		detail:        summary,
+	}, selected, width)
+}
+
+// The task composer's floor and ceiling.// The task composer's floor and ceiling. Under three rows a wrapped task
 // stops being editable — most of what you typed is scrolled out of sight —
 // and past six the box crowds the rest of the form.
 const (
@@ -724,7 +767,10 @@ func (m Model) renderDirectoryRow(
 ) string {
 	kind := strings.ToUpper(choice.workspaceKind)
 	detail := shortPath(choice.path)
-	if choice.host != "" {
+	if choice.detail != "" {
+		detail = choice.detail
+	}
+	if choice.host != "" && choice.detail == "" {
 		// scp's own shorthand, and unambiguous: a bare path here would
 		// read as this machine's.
 		detail = choice.host + ":" + detail
@@ -732,15 +778,21 @@ func (m Model) renderDirectoryRow(
 	switch choice.kind {
 	case directoryYazi:
 		kind = "YAZI"
-		detail = "Interactive picker"
+		if choice.detail == "" {
+			detail = "Interactive picker"
+		}
+	case directorySetup:
+		kind = "SETUP"
 	case directoryCustom:
 		kind = "PATH"
-		detail = "Enter a directory"
-		// A typed path inherits the machine the form is aimed at, so the
-		// row says which one rather than leaving it to be discovered
-		// after the agent starts somewhere else.
-		if m.dispatchHost != "" {
-			detail = m.dispatchHost + ": " + detail
+		if choice.detail == "" {
+			detail = "Enter a directory"
+			// A typed path inherits the machine the form is aimed at, so
+			// the row says which one rather than leaving it to be
+			// discovered after the agent starts somewhere else.
+			if m.dispatchHost != "" {
+				detail = m.dispatchHost + ": " + detail
+			}
 		}
 	}
 	if kind == "" {
@@ -1102,59 +1154,131 @@ func (m *Model) prepareAddWorkspaceChoices(start string) {
 		start = m.initialCwd
 	}
 	m.pickerStart = start
-	m.addWorkspaceHost = 0
+	m.addWorkspaceTab = tabLocal
+	m.addWorkspaceHost = ""
+	m.machineIndex = 0
+	m.formFocus = dispatchDirectory
+	m.hostInput.SetValue("")
+	m.hostInput.Blur()
 	m.setAddWorkspaceChoices()
 	m.cwdInput.SetValue("")
 }
 
-// setAddWorkspaceChoices rebuilds the rows for the machine now selected.
-// Browsing needs a picker on that machine, and this one's Yazi says
-// nothing about whether another has it — so the row is offered and the
-// far side answers.
+// setAddWorkspaceChoices rebuilds the directory rows for the machine the
+// modal is on. Browsing needs a picker over there, and this machine's
+// Yazi says nothing about whether another has one — so the row is
+// offered and the far side answers.
 func (m *Model) setAddWorkspaceChoices() {
+	host := m.addWorkspaceHost
+	where := "Interactive picker"
+	typed := "Enter a directory"
+	if host != "" {
+		where = "Browse " + host
+		typed = "A path on " + host
+	}
 	choices := make([]directoryChoice, 0, 2)
-	if m.yaziPath != "" || m.addWorkspaceHostName() != "" {
+	if m.yaziPath != "" || host != "" {
 		choices = append(choices, directoryChoice{
-			kind:  directoryYazi,
-			host:  m.addWorkspaceHostName(),
-			label: "Browse with Yazi",
+			kind:   directoryYazi,
+			host:   host,
+			label:  "Browse with Yazi",
+			detail: where,
 		})
 	}
 	choices = append(choices, directoryChoice{
-		kind:  directoryCustom,
-		host:  m.addWorkspaceHostName(),
-		label: "Enter a path",
+		kind:   directoryCustom,
+		host:   host,
+		label:  "Enter a path",
+		detail: typed,
 	})
+	if host != "" {
+		// A machine needs Stormlight before it can be reached at all, and
+		// Yazi before it can be browsed. Offering to put them there beats
+		// failing at the first thing that needs them.
+		choices = append(choices, directoryChoice{
+			kind:   directorySetup,
+			host:   host,
+			label:  "Set up this machine",
+			detail: "Check and install what " + host + " needs",
+		})
+	}
 	m.directories = choices
 	m.directoryIndex = 0
 }
 
 // addWorkspaceHostName is the machine the modal is on; empty is this one.
-func (m Model) addWorkspaceHostName() string {
-	if m.addWorkspaceHost <= 0 || m.addWorkspaceHost >= len(m.hosts) {
-		return ""
-	}
-	return m.hosts[m.addWorkspaceHost]
+func (m Model) addWorkspaceHostName() string { return m.addWorkspaceHost }
+
+// showingMachines reports whether the Remote tab is still asking which
+// machine, rather than which directory on one.
+func (m Model) showingMachines() bool {
+	return m.addWorkspaceTab == tabRemote && m.addWorkspaceHost == ""
 }
 
-// selectAddWorkspaceHost moves along the machine strip. It wraps, because
-// the list is short and a dead end at either side is a keypress that
-// silently does nothing.
-func (m *Model) selectAddWorkspaceHost(delta int) {
-	if len(m.hosts) <= 1 {
+// selectMachine moves down the machine list. It stops at the ends rather
+// than wrapping: this is a list, and lists have ends.
+func (m *Model) selectMachine(delta int) {
+	if len(m.machines) == 0 {
 		return
 	}
-	m.addWorkspaceHost = (m.addWorkspaceHost + delta + len(m.hosts)) % len(m.hosts)
-	m.setAddWorkspaceChoices()
-	// The path box was about the machine we just left.
-	m.cwdInput.SetValue("")
-	if m.addWorkspaceHostName() == "" {
-		m.pickerStart = m.initialCwd
-	} else {
-		// Nothing here knows that machine's directories; its own
-		// Stormlight starts the picker wherever it lands.
-		m.pickerStart = ""
+	m.machineIndex = clamp(m.machineIndex+delta, 0, len(m.machines)-1)
+}
+
+func (m Model) selectedMachine() (machineChoice, bool) {
+	if m.machineIndex < 0 || m.machineIndex >= len(m.machines) {
+		return machineChoice{}, false
 	}
+	return m.machines[m.machineIndex], true
+}
+
+// openMachine moves from choosing a machine to choosing a directory on
+// it. The typed row needs a name first, so it focuses the input instead.
+func (m *Model) openMachine() {
+	choice, ok := m.selectedMachine()
+	if !ok {
+		return
+	}
+	if choice.kind == machineTyped {
+		m.formFocus = dispatchCustomPath
+		m.hostInput.Focus()
+		return
+	}
+	m.enterMachine(choice.name)
+}
+
+func (m *Model) enterMachine(host string) {
+	m.addWorkspaceHost = host
+	m.formFocus = dispatchDirectory
+	m.hostInput.Blur()
+	m.cwdInput.SetValue("")
+	// Nothing here knows that machine's directories; its own Stormlight
+	// starts the picker wherever it lands.
+	m.pickerStart = ""
+	m.setAddWorkspaceChoices()
+}
+
+// leaveMachine goes back to the machine list, which is what Esc means
+// inside the Remote tab.
+func (m *Model) leaveMachine() {
+	m.addWorkspaceHost = ""
+	m.formFocus = dispatchDirectory
+	m.hostInput.Blur()
+	m.hostInput.SetValue("")
+	m.setAddWorkspaceChoices()
+}
+
+// switchAddWorkspaceTab moves between Local and Remote, forgetting
+// whichever machine the Remote tab had been opened on.
+func (m *Model) switchAddWorkspaceTab(tab addWorkspaceTab) {
+	m.addWorkspaceTab = tab
+	m.addWorkspaceHost = ""
+	m.machineIndex = 0
+	m.formFocus = dispatchDirectory
+	m.hostInput.Blur()
+	m.hostInput.SetValue("")
+	m.cwdInput.SetValue("")
+	m.pickerStart = m.initialCwd
+	m.setAddWorkspaceChoices()
 }
 
 func (m *Model) selectDirectory(delta int) {

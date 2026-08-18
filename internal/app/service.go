@@ -72,12 +72,22 @@ const remoteTranscriptTTL = 2 * time.Second
 
 type resolvedWorkspace struct {
 	value workspace.Context
-	at    time.Time
+	// failure is why it did not resolve, remembered as deliberately as a
+	// success: a host that is asleep costs a connection attempt to
+	// discover, and re-discovering it on every refresh is a dashboard
+	// that spends its whole life waiting on a machine nobody is using.
+	failure error
+	at      time.Time
 }
 
 // workspaceResolveTTL bounds how stale a cached resolution can get; a
 // checkout converted to a worktree (or similar) is noticed within this.
 const workspaceResolveTTL = 10 * time.Second
+
+// unreachableResolveTTL is how long a host that could not answer is left
+// alone. Long enough that a sleeping laptop is not dialled on every
+// refresh, short enough that waking it up shows within the minute.
+const unreachableResolveTTL = 30 * time.Second
 
 func NewService(
 	runtime session.Runtime,
@@ -346,20 +356,37 @@ func (s *Service) resolveCached(
 	s.resolveMu.Lock()
 	cached, ok := s.resolved[entry]
 	s.resolveMu.Unlock()
-	if ok && time.Since(cached.at) < workspaceResolveTTL {
-		return cached.value, nil
+	if ok && time.Since(cached.at) < s.resolveTTL(entry) {
+		return cached.value, cached.failure
 	}
 	value, err := s.workspaces.ResolveOn(ctx, entry.Host, entry.Path)
-	if err != nil {
-		return workspace.Context{}, err
-	}
 	s.resolveMu.Lock()
 	if s.resolved == nil {
 		s.resolved = map[workspace.Entry]resolvedWorkspace{}
 	}
-	s.resolved[entry] = resolvedWorkspace{value: value, at: time.Now()}
+	s.resolved[entry] = resolvedWorkspace{value: value, failure: err, at: time.Now()}
 	s.resolveMu.Unlock()
+	if err != nil {
+		return workspace.Context{}, err
+	}
 	return value, nil
+}
+
+// resolveTTL is how long an answer stands. A directory on this machine
+// changes shape rarely and costs nothing to re-read; a machine that could
+// not be reached costs a connection attempt to ask again, so it is left
+// alone for longer — the same reasoning the fleet applies to its members.
+func (s *Service) resolveTTL(entry workspace.Entry) time.Duration {
+	if entry.Host == "" {
+		return workspaceResolveTTL
+	}
+	s.resolveMu.Lock()
+	cached, ok := s.resolved[entry]
+	s.resolveMu.Unlock()
+	if ok && cached.failure != nil {
+		return unreachableResolveTTL
+	}
+	return workspaceResolveTTL
 }
 
 // applyWorkspaceNames overlays user-chosen display names from the catalog.

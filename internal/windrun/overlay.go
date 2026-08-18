@@ -2,6 +2,7 @@ package windrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,12 @@ import (
 // no agent document, so the roster already ignores them; the marker makes
 // them legible in `windrunner ls` and debugging.
 const overlayMetadataKey = "stormlight_overlay"
+
+// OverlayErrorKey is where an overlay program leaves the reason it could
+// not answer. The program's own stderr goes to a popup that closes with
+// it, so without this the dashboard can only report the exit status —
+// "exited with status 1" for a machine that simply has no yazi.
+const OverlayErrorKey = "stormlight_overlay_error"
 
 // OverlayResultKey is where an overlay program leaves its answer: its own
 // session's metadata, which the daemon stores without reading and the
@@ -99,6 +106,9 @@ func (o *overlay) Result(_ context.Context) (string, error) {
 	info, err := o.client.Info(o.id)
 	if err != nil {
 		return "", err
+	}
+	if reason := info.Metadata[OverlayErrorKey]; reason != "" {
+		return "", errors.New(reason)
 	}
 	return info.Metadata[OverlayResultKey], nil
 }

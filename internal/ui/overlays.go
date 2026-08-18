@@ -288,6 +288,29 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	return m, m.openOverlay(yaziPickerSpec(host, start, m.yaziPath))
 }
 
+// openSetup runs the host preparation in a popup. It runs *here* rather
+// than there — the whole point is a machine that may not have Stormlight
+// yet — and it gets a real terminal so a package manager asking for a
+// password has somewhere to ask.
+func (m Model) openSetup(host string) (tea.Model, tea.Cmd) {
+	if host == "" {
+		return m, nil
+	}
+	return m, m.openOverlay(overlaySpec{
+		title: "Set up " + host,
+		// Empty host: this machine, which is the one holding the ssh
+		// configuration and the binary to copy.
+		host: "",
+		path: "",
+		args: []string{"remote", "setup", host, "--install", "--yazi", "--wait"},
+		dir:  m.initialCwd,
+		result: func(_ string, runErr error) tea.Msg {
+			return machinePreparedMsg{host: host, err: runErr}
+		},
+		cleanup: func() {},
+	})
+}
+
 // yaziPickerSpec builds the picker overlay.
 //
 // The program is Stormlight itself on the machine being browsed, because

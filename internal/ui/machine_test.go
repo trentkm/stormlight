@@ -10,61 +10,98 @@ import (
 func addWorkspaceFixture(t *testing.T, hosts ...string) Model {
 	t.Helper()
 	model := flowModelFixture(t, &recordingBackend{})
-	model.hosts = append([]string{""}, hosts...)
+	choices := make([]HostChoice, 0, len(hosts))
+	for _, host := range hosts {
+		choices = append(choices, HostChoice{Name: host, Summary: "trent@" + host})
+	}
+	model.machines = machineChoices(choices)
 	model.yaziPath = "/usr/local/bin/yazi"
 	model.mode = modeAddWorkspace
-	model.formFocus = dispatchDirectory
 	model.prepareAddWorkspaceChoices(t.TempDir())
 	return model
 }
 
-// TestTheModalStartsOnThisMachine: adding a workspace here is the common
-// case and must stay the thing that happens if you press nothing.
-func TestTheModalStartsOnThisMachine(t *testing.T) {
+// TestTheModalOpensOnLocal: adding a workspace here is the common case
+// and must stay the thing that happens if you press nothing.
+func TestTheModalOpensOnLocal(t *testing.T) {
 	model := addWorkspaceFixture(t, "sandbox", "devbox")
-	if model.addWorkspaceHostName() != "" {
-		t.Fatalf("started on %q", model.addWorkspaceHostName())
+	if model.addWorkspaceTab != tabLocal || model.addWorkspaceHostName() != "" {
+		t.Fatalf("opened on tab %v, host %q", model.addWorkspaceTab, model.addWorkspaceHostName())
 	}
-	if !strings.Contains(model.renderMachineStrip(60), "This machine") {
-		t.Fatalf("strip = %q", model.renderMachineStrip(60))
+	if model.showingMachines() {
+		t.Fatal("the Local tab asks for a directory, not a machine")
 	}
 }
 
-func TestTheMachineStripWalksTheSSHConfigHosts(t *testing.T) {
+// TestTheRemoteTabListsTheSSHConfigHosts, and the row for a machine it
+// does not name — most people's configuration names nothing at all.
+func TestTheRemoteTabListsTheSSHConfigHosts(t *testing.T) {
 	model := addWorkspaceFixture(t, "sandbox", "devbox")
+	model.switchAddWorkspaceTab(tabRemote)
 
-	model.selectAddWorkspaceHost(1)
-	if model.addWorkspaceHostName() != "sandbox" {
-		t.Fatalf("host = %q", model.addWorkspaceHostName())
+	if !model.showingMachines() {
+		t.Fatal("the Remote tab asks which machine first")
 	}
-	model.selectAddWorkspaceHost(1)
-	if model.addWorkspaceHostName() != "devbox" {
-		t.Fatalf("host = %q", model.addWorkspaceHostName())
+	if len(model.machines) != 3 {
+		t.Fatalf("machines = %#v", model.machines)
 	}
-	// It wraps: the list is short, and a dead end is a keypress that
-	// silently does nothing.
-	model.selectAddWorkspaceHost(1)
-	if model.addWorkspaceHostName() != "" {
-		t.Fatalf("host = %q, want back to this machine", model.addWorkspaceHostName())
+	if model.machines[0].name != "sandbox" || model.machines[2].kind != machineTyped {
+		t.Fatalf("machines = %#v", model.machines)
 	}
-	model.selectAddWorkspaceHost(-1)
-	if model.addWorkspaceHostName() != "devbox" {
-		t.Fatalf("host = %q, want the last one", model.addWorkspaceHostName())
+	rendered := strings.Join(model.renderMachineRows(70, 5), "\n")
+	// The summary is what tells one `builder` from another.
+	if !strings.Contains(rendered, "trent@sandbox") {
+		t.Fatalf("rows = %q", rendered)
 	}
 }
 
-// TestWithNoOtherMachinesTheStripSaysSo: an empty ~/.ssh/config is
-// ordinary, and a row that cannot move should say why rather than ignore
-// the key.
-func TestWithNoOtherMachinesTheStripSaysSo(t *testing.T) {
+// TestOpeningAMachineDrillsIn: choosing one moves to its directories,
+// with the machine as a breadcrumb rather than a third tab.
+func TestOpeningAMachineDrillsIn(t *testing.T) {
+	model := addWorkspaceFixture(t, "sandbox", "devbox")
+	model.switchAddWorkspaceTab(tabRemote)
+	model.selectMachine(1)
+	model.openMachine()
+
+	if model.addWorkspaceHostName() != "devbox" {
+		t.Fatalf("host = %q", model.addWorkspaceHostName())
+	}
+	if model.showingMachines() {
+		t.Fatal("it should be asking for a directory now")
+	}
+	if !strings.Contains(model.renderAddWorkspaceTabs(70), "devbox") {
+		t.Fatalf("tabs = %q", model.renderAddWorkspaceTabs(70))
+	}
+	// The rows say which machine they act on.
+	choice, ok := model.selectedDirectory()
+	if !ok || choice.host != "devbox" || !strings.Contains(choice.detail, "devbox") {
+		t.Fatalf("directory choice = %#v", choice)
+	}
+
+	// Esc steps back to the list rather than abandoning the modal.
+	model.leaveMachine()
+	if !model.showingMachines() || model.addWorkspaceHostName() != "" {
+		t.Fatal("leaving a machine should return to the machine list")
+	}
+}
+
+// TestNamingAMachineTheConfigDoesNot: a host is known by being named, so
+// the modal takes a destination nobody wrote down.
+func TestNamingAMachineTheConfigDoesNot(t *testing.T) {
 	model := addWorkspaceFixture(t)
-	strip := model.renderMachineStrip(60)
-	if !strings.Contains(strip, "ssh/config") {
-		t.Fatalf("strip = %q", strip)
+	model.switchAddWorkspaceTab(tabRemote)
+	if len(model.machines) != 1 || model.machines[0].kind != machineTyped {
+		t.Fatalf("an empty ssh config still offers the typed row: %#v", model.machines)
 	}
-	model.selectAddWorkspaceHost(1)
-	if model.addWorkspaceHostName() != "" {
-		t.Fatal("there is nowhere else to go")
+
+	model.openMachine()
+	if model.formFocus != dispatchCustomPath {
+		t.Fatal("the typed row should ask for the destination")
+	}
+	model.hostInput.SetValue("trent@newbox")
+	model.enterMachine(strings.TrimSpace(model.hostInput.Value()))
+	if model.addWorkspaceHostName() != "trent@newbox" {
+		t.Fatalf("host = %q", model.addWorkspaceHostName())
 	}
 }
 
@@ -72,7 +109,8 @@ func TestWithNoOtherMachinesTheStripSaysSo(t *testing.T) {
 // where the directories are.
 func TestBrowsingFollowsTheChosenMachine(t *testing.T) {
 	model := addWorkspaceFixture(t, "devbox")
-	model.selectAddWorkspaceHost(1)
+	model.switchAddWorkspaceTab(tabRemote)
+	model.openMachine()
 
 	choice, ok := model.selectedDirectory()
 	if !ok || choice.kind != directoryYazi || choice.host != "devbox" {
@@ -96,12 +134,12 @@ func TestAMissingLocalYaziDoesNotHideARemoteOne(t *testing.T) {
 	model := addWorkspaceFixture(t, "devbox")
 	model.yaziPath = ""
 	model.setAddWorkspaceChoices()
-	if _, ok := model.selectedDirectory(); ok &&
-		model.directories[0].kind == directoryYazi {
+	if model.directories[0].kind == directoryYazi {
 		t.Fatal("no yazi here means no browse row here")
 	}
 
-	model.selectAddWorkspaceHost(1)
+	model.switchAddWorkspaceTab(tabRemote)
+	model.openMachine()
 	if model.directories[0].kind != directoryYazi {
 		t.Fatalf("browsing another machine should still be offered: %#v", model.directories)
 	}
@@ -115,7 +153,8 @@ func TestAMissingLocalYaziDoesNotHideARemoteOne(t *testing.T) {
 // wrong reason.
 func TestATypedRemotePathIsNotCheckedHere(t *testing.T) {
 	model := addWorkspaceFixture(t, "devbox")
-	model.selectAddWorkspaceHost(1)
+	model.switchAddWorkspaceTab(tabRemote)
+	model.openMachine()
 
 	updated, cmd := model.submitAddWorkspace("/srv/api")
 	if cmd == nil {
