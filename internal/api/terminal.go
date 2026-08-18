@@ -92,6 +92,32 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case message, ok := <-transport.Output():
+			if ok && message.Resync != nil {
+				// State first: a resync carries its own size, and the
+				// resize branch below would otherwise swallow it.
+				//
+				// This viewer fell behind and the daemon sent state
+				// instead of the bytes it missed. Same shape as the
+				// opening seed, and for the same reason: the client
+				// replaces its replica rather than appending to it. The
+				// size goes first so the client sizes the replica it is
+				// about to fill — while a viewer is in debt the daemon
+				// sends nothing else, so this is the only place it can
+				// learn the terminal moved.
+				if message.Resize != nil {
+					if err := writeControl(ctx, conn, controlMessage{
+						Type: controlResize,
+						Cols: message.Resize.Cols,
+						Rows: message.Resize.Rows,
+					}); err != nil {
+						return
+					}
+				}
+				if err := writeSeed(ctx, conn, message.Resync); err != nil {
+					return
+				}
+				continue
+			}
 			if ok && message.Resize != nil {
 				// A terminal this viewer shares can be moved by anyone
 				// holding it — the dashboard, a full-screen attach — and
@@ -103,16 +129,6 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					Cols: message.Resize.Cols,
 					Rows: message.Resize.Rows,
 				}); err != nil {
-					return
-				}
-				continue
-			}
-			if ok && message.Resync != nil {
-				// This viewer fell behind and the daemon sent state
-				// instead of the bytes it missed. Same shape as the
-				// opening seed, and for the same reason: the client
-				// replaces its replica rather than appending to it.
-				if err := writeSeed(ctx, conn, message.Resync); err != nil {
 					return
 				}
 				continue

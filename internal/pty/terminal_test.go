@@ -3,6 +3,7 @@ package pty
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -301,4 +302,76 @@ var namedKeys = map[string]tea.KeyPressMsg{
 	"ctrl+home":       {Code: tea.KeyHome, Mod: tea.ModCtrl},
 	"alt+backspace":   {Code: tea.KeyBackspace, Mod: tea.ModAlt},
 	"shift+pgup":      {Code: tea.KeyPgUp, Mod: tea.ModShift},
+}
+
+// A resync builds a whole new emulator, and the old one's drain goroutine
+// holds it — scrollback included — until its pipe is closed. Leaving them
+// behind costs tens of megabytes each, in exactly the situation resyncs
+// happen: a viewer that cannot keep up, resynced as often as the daemon
+// paces them.
+func TestResyncDoesNotLeakTheReplicaItReplaced(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 80, 24)
+	terminal.SetVisible(true)
+
+	before := runtime.NumGoroutine()
+	for i := 0; i < 20; i++ {
+		transport.output <- Message{Resync: []byte("replacement")}
+		<-terminal.state.gate.frames
+	}
+	terminal.Close()
+
+	// The drains end asynchronously once their pipes close.
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after := runtime.NumGoroutine(); after > before {
+		t.Fatalf("%d goroutines survived 20 resyncs and a close (%d before, %d after)",
+			after-before, before, after)
+	}
+}
+
+// The size travels with the state and nowhere else: while a viewer is in
+// resync debt the daemon drops every other message, resize notices
+// included. A replica that ignores it paints a wide screen into a narrow
+// emulator, wrapped and wrong, until someone resizes again.
+func TestResyncCarriesTheSizeItWasRenderedAt(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	terminal.SetVisible(true)
+
+	transport.output <- Message{
+		Resync: []byte("wide state"),
+		Resize: &Size{Cols: 132, Rows: 43},
+	}
+	<-terminal.state.gate.frames
+	waitForTerminal(t, terminal, 132, 43)
+}
+
+// A resync already in flight when the widget closes must not revive it:
+// installing that state would start a drain nothing is left to stop.
+func TestResyncAfterCloseIsIgnored(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 40, 6)
+	terminal.SetVisible(true)
+	terminal.Close()
+
+	// Driven directly rather than through the pump: a message already in
+	// flight when the widget closes is a race the test would have to win,
+	// and what needs proving is the guard, not the timing.
+	before := runtime.NumGoroutine()
+	terminal.state.replaceReplica([]byte("after close"), nil)
+
+	if view := terminal.View(); strings.Contains(view, "after close") {
+		t.Fatalf("a closed terminal took a resync:\n%s", view)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after := runtime.NumGoroutine(); after > before {
+		t.Fatalf("a resync after close left %d goroutines behind", after-before)
+	}
 }

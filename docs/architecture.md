@@ -225,13 +225,23 @@ optional runtime capability:
 
 - `session.TerminalStreamer` (`internal/session`) is the contract: attach
   to an agent's terminal at a size and get a `TerminalStream` — an exact
-  snapshot seed, a channel of everything after it, and input and resize
-  flowing back.
+  snapshot seed, then one ordered stream of everything after it, with
+  input and resize flowing back. `TerminalStream` is `pty.Transport`
+  itself rather than a second interface of the same shape.
+- That stream carries three things, in the order the daemon sent them:
+  output to append, a size when the shared terminal moves, and a resync —
+  exact state that replaces the replica, sent when this viewer fell too
+  far behind to be given the bytes it missed. One stream rather than a
+  channel plus callbacks, because a resync delivered out of band arrives
+  before the output it supersedes, and the replica is wrong from there on.
+  A resync carries the size it was rendered at, since a viewer in that
+  state receives nothing else.
 - `windrun.Runtime.AttachTerminal` implements it over one dedicated daemon
   connection per attachment, resizing first so the snapshot arrives
-  pre-wrapped for the view it is about to fill.
-- `app.Service.AttachTerminal` surfaces the capability to the UI as a
-  `pty.Transport`, failing cleanly when a runtime cannot stream.
+  pre-wrapped for the view it is about to fill, and asking the daemon to
+  resync rather than drop this viewer if it falls behind.
+- `app.Service.AttachTerminal` surfaces the capability to its callers,
+  failing cleanly when a runtime cannot stream.
 - `ptyview.Manager` keeps one live terminal per agent for the agent's
   whole life, reconciling the set against the roster on every refresh:
   agents without a terminal get one, departed agents lose theirs, and all

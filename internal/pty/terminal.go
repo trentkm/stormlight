@@ -126,32 +126,77 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 		cols: cols, rows: rows, termCols: cols, termRows: rows,
 		viewDirty: true,
 	}
-	s.replaceReplica(transport.Seed())
+	s.replaceReplica(transport.Seed(), nil)
 	model := Model{id: lastID.Add(1), state: s}
 	go s.pump(model)
 	return model
 }
 
-// replaceReplica seeds the emulator with exact state, discarding whatever
-// it held. Used for the attach snapshot and for a resync, which are the
-// same thing arriving at different moments — writing either into the
-// existing emulator would replay a scrollback it already has.
-func (s *state) replaceReplica(seed []byte) {
+// replaceReplica seeds a fresh emulator with exact state and swaps it in,
+// discarding whatever the old one held. Used for the attach snapshot and
+// for a resync, which are the same thing arriving at different moments —
+// writing either into the existing emulator would replay a scrollback it
+// already has.
+//
+// size is the terminal the state was rendered at, when the sender knows
+// it; nil keeps the current one.
+func (s *state) replaceReplica(seed []byte, size *Size) {
 	// A windrunner snapshot has already passed through x/vt once. Normalize
 	// its reversed OSC 8 fields before replaying it through this second x/vt.
 	seed = []byte(repairVTHyperlinks(string(seed)))
 	s.observeModes(seed)
+
 	s.mu.Lock()
-	s.emu = vt.NewEmulator(s.termCols, s.termRows)
-	s.emu.Scrollback().SetMaxLines(DefaultScrollback)
-	emu := s.emu
+	cols, rows := s.termCols, s.termRows
+	s.mu.Unlock()
+	if size != nil {
+		cols, rows = max(2, size.Cols), max(2, size.Rows)
+	}
+
+	// Built before the lock is taken. Parsing a full snapshot is tens of
+	// milliseconds and hundreds of thousands of allocations — a frame's
+	// worth — and doing it under the lock would stall every View, cursor
+	// read and scroll in the dashboard for that long, at up to ten times
+	// a second for a viewer that keeps falling behind.
+	replacement := vt.NewEmulator(cols, rows)
+	replacement.Scrollback().SetMaxLines(DefaultScrollback)
+	replacement.Write(seed)
+
+	s.mu.Lock()
+	if s.closed {
+		// Closed while this was being built; installing it would revive a
+		// dead widget and start a drain nothing will ever stop.
+		s.mu.Unlock()
+		closeEmulator(replacement)
+		return
+	}
+	previous := s.emu
+	s.emu = replacement
+	s.termCols, s.termRows = cols, rows
+	// Scrollback position belongs to the replica that just went away.
 	s.scroll, s.scrollDelta = 0, 0
-	s.emu.Write(seed)
 	s.viewDirty = true
 	s.mu.Unlock()
+
+	// The old emulator's drain goroutine only ends when its pipe does,
+	// and it holds the whole emulator — a full scrollback — until it
+	// does. Leaving them behind costs tens of megabytes per resync, in
+	// exactly the situation resyncs happen: a viewer that cannot keep up.
+	closeEmulator(previous)
 	// vt writes query responses to its input pipe. The real terminal owns
 	// those responses, so drain this end to keep a query from blocking paint.
-	go func() { _, _ = io.Copy(io.Discard, emu) }()
+	go func() { _, _ = io.Copy(io.Discard, replacement) }()
+}
+
+// closeEmulator releases an emulator's input pipe, which is what lets its
+// drain goroutine end.
+func closeEmulator(emu *vt.Emulator) {
+	if emu == nil {
+		return
+	}
+	if pipe, ok := emu.InputPipe().(io.Closer); ok {
+		_ = pipe.Close()
+	}
 }
 
 // setTerminalSize follows the hosted terminal when someone else moved it:
@@ -174,20 +219,25 @@ func (m Model) setTerminalSize(cols, rows int) {
 
 func (s *state) pump(model Model) {
 	for message := range s.transport.Output() {
-		// The size travels just ahead of the repaint that belongs to it,
-		// so the replica adopts the terminal's true size and then paints
-		// at it.
-		if message.Resize != nil {
-			model.setTerminalSize(message.Resize.Cols, message.Resize.Rows)
-			continue
-		}
-		// State, not output: this viewer fell behind and the daemon sent
-		// what the terminal looks like instead of what it missed.
+		// State first, because a resync carries its own size and would
+		// otherwise be swallowed by the resize branch below.
+		//
+		// It means this viewer fell behind and the daemon sent what the
+		// terminal looks like instead of what it missed. The size rides
+		// along: while a viewer is in debt the daemon sends nothing else,
+		// so a resize during that window arrives here or not at all.
 		if message.Resync != nil {
-			s.replaceReplica(message.Resync)
+			s.replaceReplica(message.Resync, message.Resize)
 			if s.visible.Load() {
 				s.gate.Notify()
 			}
+			continue
+		}
+		// A size on its own travels just ahead of the repaint that
+		// belongs to it, so the replica adopts the terminal's true size
+		// and then paints at it.
+		if message.Resize != nil {
+			model.setTerminalSize(message.Resize.Cols, message.Resize.Rows)
 			continue
 		}
 		// Most output is raw PTY data and needs no change. Resize repaints
@@ -477,12 +527,15 @@ func (m Model) Close() {
 		return
 	}
 	s.closed, s.scrollDelta = true, 0
+	// Read it here, not after unlocking: a resync replaces this field at
+	// runtime, so an unlocked read races the swap and can close a pipe
+	// that has already been replaced — leaving the live emulator's drain
+	// goroutine running forever.
+	emu := s.emu
 	s.mu.Unlock()
 	s.visible.Store(false)
 	s.transport.Close()
-	if pipe, ok := s.emu.InputPipe().(io.Closer); ok {
-		_ = pipe.Close()
-	}
+	closeEmulator(emu)
 }
 
 func fit(lines []string, cols, rows int) string {

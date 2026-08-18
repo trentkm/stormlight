@@ -155,6 +155,14 @@ func newBenchStream(attachment *client.Attachment) benchStream {
 	go func() {
 		defer close(stream.output)
 		for message := range attachment.Output() {
+			// Output only: the benchmark measures how the widget copes
+			// with more bytes than it can paint. Forwarding a resize or a
+			// resync as an empty message would make the widget repaint
+			// nothing, which is neither the real behavior nor the thing
+			// being measured.
+			if message.Bytes == nil {
+				continue
+			}
 			stream.output <- pty.Message{Bytes: message.Bytes}
 		}
 	}()

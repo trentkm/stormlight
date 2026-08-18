@@ -2,6 +2,7 @@ package windrun
 
 import (
 	"context"
+	"sync"
 
 	"github.com/trentkm/windrunner/client"
 
@@ -34,17 +35,34 @@ func (r *Runtime) AttachTerminal(ctx context.Context, id string, cols, rows int)
 	if err != nil {
 		return nil, err
 	}
+	return newTerminalStream(attachment), nil
+}
+
+// newTerminalStream is the only way to build one. The relay behind it is
+// not optional — a stream without it hands back a nil channel that every
+// consumer waits on forever — so construction and starting it are one
+// step rather than two a caller can get half right.
+func newTerminalStream(attachment *client.Attachment) *terminalStream {
 	stream := &terminalStream{
 		attachment: attachment,
 		output:     make(chan pty.Message, 256),
+		done:       make(chan struct{}),
 	}
-	go stream.relay()
-	return stream, nil
+	var source <-chan client.Message
+	if attachment != nil {
+		source = attachment.Output()
+	}
+	go stream.relay(source)
+	return stream
 }
 
 type terminalStream struct {
 	attachment *client.Attachment
 	output     chan pty.Message
+	// done releases the relay when the consumer has stopped reading, so
+	// a closed viewer does not leave it parked on a full channel.
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func (t *terminalStream) Seed() []byte {
@@ -55,19 +73,50 @@ func (t *terminalStream) Seed() []byte {
 // its order. The two message types line up one for one, which is the
 // point: a translation that split them into a channel and a callback
 // would be free to reorder them, and the ordering is the contract.
-func (t *terminalStream) relay() {
+func (t *terminalStream) relay(source <-chan client.Message) {
 	defer close(t.output)
-	for message := range t.attachment.Output() {
+	for {
+		var message client.Message
+		var ok bool
+		select {
+		case <-t.done:
+			return
+		case message, ok = <-source:
+			if !ok {
+				return
+			}
+		}
+		var translated pty.Message
 		switch {
 		case message.Resync != nil:
-			t.output <- pty.Message{Resync: message.Resync.ANSI}
+			// The size travels with the state and nowhere else: while a
+			// viewer is in debt the daemon drops every message, resize
+			// notices included, so the snapshot is the only thing that
+			// can tell it the terminal moved. Dropping these two fields
+			// leaves a replica repainting a wide screen into a narrow
+			// emulator, wrapped and wrong, until someone resizes again.
+			translated = pty.Message{
+				Resync: message.Resync.ANSI,
+				Resize: &pty.Size{
+					Cols: message.Resync.Cols,
+					Rows: message.Resync.Rows,
+				},
+			}
 		case message.Resize != nil:
-			t.output <- pty.Message{Resize: &pty.Size{
+			translated = pty.Message{Resize: &pty.Size{
 				Cols: message.Resize.Cols,
 				Rows: message.Resize.Rows,
 			}}
 		default:
-			t.output <- pty.Message{Bytes: message.Bytes}
+			translated = pty.Message{Bytes: message.Bytes}
+		}
+		select {
+		case t.output <- translated:
+		case <-t.done:
+			// The consumer is gone. Stopping here rather than parking on
+			// a channel nobody drains is what keeps the client's read
+			// loop free to finish and close.
+			return
 		}
 	}
 }
@@ -85,5 +134,11 @@ func (t *terminalStream) Resize(ctx context.Context, cols, rows int) error {
 }
 
 func (t *terminalStream) Close() {
-	t.attachment.Close()
+	// Release the relay first: closing only the attachment leaves it
+	// parked on a channel nobody drains, holding the client's read loop
+	// behind it.
+	t.closeOnce.Do(func() { close(t.done) })
+	if t.attachment != nil {
+		t.attachment.Close()
+	}
 }

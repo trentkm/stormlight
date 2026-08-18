@@ -71,14 +71,14 @@ func (r *Runtime) StartOverlay(ctx context.Context, request session.OverlayReque
 		return nil, fmt.Errorf("attach overlay %s: %w", request.Path, err)
 	}
 	return &overlay{
-		terminalStream: terminalStream{attachment: attachment},
+		terminalStream: newTerminalStream(attachment),
 		client:         r.client,
 		id:             info.ID,
 	}, nil
 }
 
 type overlay struct {
-	terminalStream
+	*terminalStream
 	client *client.Client
 	id     string
 }
