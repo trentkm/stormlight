@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -51,23 +52,44 @@ type member struct {
 	failedAt time.Time
 }
 
+// Discover supplies a member for a host that was not passed to New.
+//
+// A host is known because something names it — a workspace on it, a
+// dispatch aimed at it, an entry in the user's SSH configuration — not
+// because it was configured. Configuration says how to reach a host
+// differently from the default; it is not the list of them. A nil
+// Discover means only the members given to New exist.
+type Discover func(host string) Member
+
 // Runtime fans one session.Runtime out over several daemons.
 type Runtime struct {
-	members []*member
+	discover Discover
 
+	// mu guards both the member list and the ownership cache. Members
+	// arrive while the dashboard is running, the moment a host is first
+	// named.
+	mu      sync.RWMutex
+	members []*member
 	// owner maps an agent to the member that last answered for it. It is
 	// a cache of the last listing, not a record: an agent that has moved
 	// or vanished is corrected by the next one.
-	mu    sync.RWMutex
 	owner map[string]*member
 }
 
-func New(members ...Member) *Runtime {
-	fleet := &Runtime{owner: make(map[string]*member)}
+func New(discover Discover, members ...Member) *Runtime {
+	fleet := &Runtime{discover: discover, owner: make(map[string]*member)}
 	for _, m := range members {
 		fleet.members = append(fleet.members, &member{host: m.Host, connect: m.Connect})
 	}
 	return fleet
+}
+
+// roster is the current member list, copied so a caller can range over it
+// while another goroutine adds a host.
+func (f *Runtime) roster() []*member {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return slices.Clone(f.members)
 }
 
 // Status is one member's reachability, for a dashboard that wants to say
@@ -78,8 +100,9 @@ type Status struct {
 }
 
 func (f *Runtime) Status() []Status {
-	statuses := make([]Status, 0, len(f.members))
-	for _, m := range f.members {
+	members := f.roster()
+	statuses := make([]Status, 0, len(members))
+	for _, m := range members {
 		m.mu.Lock()
 		statuses = append(statuses, Status{Host: m.host, Error: m.failure})
 		m.mu.Unlock()
@@ -142,9 +165,10 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 		agents []agent.Agent
 		err    error
 	}
-	results := make([]result, len(f.members))
+	members := f.roster()
+	results := make([]result, len(members))
 	var wait sync.WaitGroup
-	for index, m := range f.members {
+	for index, m := range members {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
@@ -191,7 +215,7 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	// A host being down is its own absence, not the dashboard's failure —
 	// unless every host is, in which case there is nothing to show and
 	// saying so beats an empty roster that looks like an idle morning.
-	if len(failures) == len(f.members) && len(failures) > 0 {
+	if len(failures) == len(members) && len(failures) > 0 {
 		return nil, failures[0]
 	}
 	return agents, nil
@@ -201,8 +225,8 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 // an agent dispatched a moment ago has not been listed yet, so the roster
 // is refreshed once before giving up.
 func (f *Runtime) memberFor(ctx context.Context, id string) (session.Runtime, error) {
-	if len(f.members) == 1 {
-		return f.members[0].resolve()
+	if members := f.roster(); len(members) == 1 {
+		return members[0].resolve()
 	}
 	if runtime, ok := f.lookup(id); ok {
 		return runtime, nil
@@ -247,13 +271,27 @@ func (f *Runtime) lookup(id string) (session.Runtime, bool) {
 
 // hostFor is memberFor by host name rather than by agent: dispatch names
 // the machine it means through the workspace it resolved.
+//
+// A host nobody has mentioned before joins the fleet here. Nothing else
+// needs to have heard of it — naming it is what makes it real, and
+// whether it answers is between it and ssh.
 func (f *Runtime) hostFor(host string) (session.Runtime, error) {
+	f.mu.Lock()
 	for _, m := range f.members {
 		if m.host == host {
+			f.mu.Unlock()
 			return m.resolve()
 		}
 	}
-	return nil, fmt.Errorf("no host named %q", hostName(host))
+	if f.discover == nil {
+		f.mu.Unlock()
+		return nil, fmt.Errorf("no host named %q", hostName(host))
+	}
+	discovered := f.discover(host)
+	joined := &member{host: host, connect: discovered.Connect}
+	f.members = append(f.members, joined)
+	f.mu.Unlock()
+	return joined.resolve()
 }
 
 func hostName(host string) string {

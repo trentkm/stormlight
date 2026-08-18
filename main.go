@@ -20,6 +20,7 @@ import (
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/fleet"
+	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/selfpath"
@@ -472,14 +473,20 @@ func newLogsCommand(logFile *string) *cobra.Command {
 // authoritative state rather than sampled panes — so they outlive every
 // dashboard and every terminal the dashboard ran in.
 func newService(cfg config.Config) (*app.Service, error) {
-	runtime, err := newRuntime(cfg)
+	// One catalog, shared: it is also the standing record of which
+	// machines this dashboard works, which the runtime needs before
+	// anything has named one.
+	catalog := workspace.NewCatalog()
+	runtime, err := newRuntime(cfg, catalog)
 	if err != nil {
 		return nil, err
 	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
 	// Resolution follows a path to the machine that has it, so the
 	// registry needs the same host list the runtime has.
-	return app.NewService(runtime, registry, workspacesWithHosts(cfg)), nil
+	return app.NewServiceWithCatalog(
+		runtime, registry, workspacesWithHosts(cfg), catalog, history.NewLog(),
+	), nil
 }
 
 // newRuntime builds the fleet: this machine's daemon, and one per
@@ -490,19 +497,48 @@ func newService(cfg config.Config) (*app.Service, error) {
 // Members connect lazily and on their own schedule. A host that is asleep
 // or unreachable costs the dashboard its absence and nothing else — never
 // a failed refresh, and never a frame spent waiting on SSH.
-func newRuntime(cfg config.Config) (session.Runtime, error) {
+func newRuntime(cfg config.Config, catalog *workspace.Catalog) (session.Runtime, error) {
 	members := []fleet.Member{{
 		Host:    "",
 		Connect: func() (session.Runtime, error) { return windrun.NewRuntime() },
 	}}
-	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
-		host := remoteHostFrom(name, cfg.Hosts[name])
-		members = append(members, fleet.Member{
-			Host:    name,
-			Connect: func() (session.Runtime, error) { return windrun.NewRemoteRuntime(host) },
-		})
+	for _, name := range fleetHosts(cfg, catalog) {
+		members = append(members, remoteMember(cfg, name))
 	}
-	return fleet.New(members...), nil
+	// Any other host joins the moment something names it — a workspace on
+	// it, a dispatch aimed at it, a name picked out of ~/.ssh/config.
+	// Configuration is how a host differs from its name, not the list of
+	// which hosts there are.
+	discover := func(host string) fleet.Member { return remoteMember(cfg, host) }
+	return fleet.New(discover, members...), nil
+}
+
+// fleetHosts are the machines to reach at start-up: the ones
+// configuration customises, and the ones the catalog says hold a
+// workspace. The catalog is the answer to "whose agents belong in my
+// roster" — listing names no host, so without it a machine's agents would
+// be invisible until something happened to mention it.
+func fleetHosts(cfg config.Config, catalog *workspace.Catalog) []string {
+	hosts := slices.Sorted(maps.Keys(cfg.Hosts))
+	entries, err := catalog.Entries()
+	if err != nil {
+		diagnostic.Logger().Warn("workspace catalog unavailable", "error", err)
+		return hosts
+	}
+	for _, entry := range entries {
+		if entry.Host != "" && !slices.Contains(hosts, entry.Host) {
+			hosts = append(hosts, entry.Host)
+		}
+	}
+	return hosts
+}
+
+func remoteMember(cfg config.Config, name string) fleet.Member {
+	host := remoteHostFrom(name, cfg.Hosts[name])
+	return fleet.Member{
+		Host:    name,
+		Connect: func() (session.Runtime, error) { return windrun.NewRemoteRuntime(host) },
+	}
 }
 
 func remoteHostFrom(name string, host config.Host) remote.Host {

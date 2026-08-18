@@ -95,7 +95,7 @@ func unreachable(host string, err error) Member {
 func TestRosterMergesAndStampsTheHost(t *testing.T) {
 	local := &stub{agents: []agent.Agent{{ID: "aaa"}}}
 	devbox := &stub{agents: []agent.Agent{{ID: "bbb"}, {ID: "ccc"}}}
-	f := New(reachable("", local), reachable("devbox", devbox))
+	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
 	agents, err := f.ListAgents(context.Background())
 	if err != nil {
@@ -118,7 +118,7 @@ func TestRosterMergesAndStampsTheHost(t *testing.T) {
 // failure, and none of them may hide the agents that are still there.
 func TestAnUnreachableHostIsItsOwnAbsence(t *testing.T) {
 	local := &stub{agents: []agent.Agent{{ID: "aaa"}}}
-	f := New(reachable("", local), unreachable("devbox", errors.New("ssh: no route to host")))
+	f := New(nil, reachable("", local), unreachable("devbox", errors.New("ssh: no route to host")))
 
 	agents, err := f.ListAgents(context.Background())
 	if err != nil {
@@ -144,8 +144,7 @@ func TestAnUnreachableHostIsItsOwnAbsence(t *testing.T) {
 // TestEveryHostDownIsAnError: an empty roster reads as a quiet morning.
 // When nothing could be reached, say so.
 func TestEveryHostDownIsAnError(t *testing.T) {
-	f := New(
-		unreachable("", errors.New("no daemon")),
+	f := New(nil, unreachable("", errors.New("no daemon")),
 		unreachable("devbox", errors.New("ssh: no route to host")),
 	)
 	if _, err := f.ListAgents(context.Background()); err == nil {
@@ -159,7 +158,7 @@ func TestEveryHostDownIsAnError(t *testing.T) {
 func TestOperationsFollowTheAgentToItsHost(t *testing.T) {
 	local := &stub{agents: []agent.Agent{{ID: "aaa"}}}
 	devbox := &stub{agents: []agent.Agent{{ID: "bbb"}}}
-	f := New(reachable("", local), reachable("devbox", devbox))
+	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
 	if err := f.Send(context.Background(), "bbb", "hello"); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -181,7 +180,7 @@ func TestOperationsFollowTheAgentToItsHost(t *testing.T) {
 func TestAnAgentNobodyHasListedIsStillFound(t *testing.T) {
 	local := &stub{}
 	devbox := &stub{agents: []agent.Agent{{ID: "bbb"}}}
-	f := New(reachable("", local), reachable("devbox", devbox))
+	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
 	// No ListAgents has been called, so ownership is unknown.
 	if err := f.Send(context.Background(), "bbb", "hello"); err != nil {
@@ -200,7 +199,7 @@ func TestAnAgentNobodyHasListedIsStillFound(t *testing.T) {
 func TestAPrefixNamesAnAgentAcrossHosts(t *testing.T) {
 	local := &stub{agents: []agent.Agent{{ID: "aaa11111"}}}
 	devbox := &stub{agents: []agent.Agent{{ID: "bbb22222"}}}
-	f := New(reachable("", local), reachable("devbox", devbox))
+	f := New(nil, reachable("", local), reachable("devbox", devbox))
 	if _, err := f.ListAgents(context.Background()); err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}
@@ -218,7 +217,7 @@ func TestAPrefixNamesAnAgentAcrossHosts(t *testing.T) {
 func TestDispatchFollowsTheWorkspace(t *testing.T) {
 	local := &stub{}
 	devbox := &stub{}
-	f := New(reachable("", local), reachable("devbox", devbox))
+	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
 	dispatched, err := f.Dispatch(context.Background(), session.DispatchRequest{
 		Cwd:       "/srv/api",
@@ -247,8 +246,7 @@ func TestDispatchFollowsTheWorkspace(t *testing.T) {
 // stall the user feels on every frame.
 func TestAFailedHostIsNotDialledEveryRefresh(t *testing.T) {
 	attempts := 0
-	f := New(
-		reachable("", &stub{}),
+	f := New(nil, reachable("", &stub{}),
 		Member{Host: "devbox", Connect: func() (session.Runtime, error) {
 			attempts++
 			return nil, errors.New("ssh: connection timed out")
@@ -271,8 +269,7 @@ func TestALostConnectionIsRebuilt(t *testing.T) {
 	broken := &stub{listErr: errors.New("broken pipe")}
 	healthy := &stub{agents: []agent.Agent{{ID: "bbb"}}}
 	connects := 0
-	f := New(
-		reachable("", &stub{}),
+	f := New(nil, reachable("", &stub{}),
 		Member{Host: "devbox", Connect: func() (session.Runtime, error) {
 			connects++
 			if connects == 1 {
@@ -306,7 +303,7 @@ func TestALostConnectionIsRebuilt(t *testing.T) {
 // straight through without a listing.
 func TestAFleetOfOneIsJustTheRuntime(t *testing.T) {
 	local := &stub{}
-	f := New(reachable("", local))
+	f := New(nil, reachable("", local))
 
 	if err := f.Send(context.Background(), "aaa", "hello"); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -325,7 +322,7 @@ func TestAFleetOfOneIsJustTheRuntime(t *testing.T) {
 func TestFileReadsFollowTheAgentToItsHost(t *testing.T) {
 	local := &stub{agents: []agent.Agent{{ID: "aaa"}}}
 	devbox := &stub{agents: []agent.Agent{{ID: "bbb"}}}
-	f := New(reachable("", local), reachable("devbox", devbox))
+	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
 	source, err := f.ReadAgentFile(context.Background(), "bbb", "/home/trent/t.jsonl")
 	if err != nil {
@@ -353,7 +350,7 @@ func TestFileReadsFollowTheAgentToItsHost(t *testing.T) {
 func TestTheLocalDaemonIsRetriedImmediately(t *testing.T) {
 	healthy := &stub{agents: []agent.Agent{{ID: "aaa"}}}
 	connects := 0
-	f := New(Member{Host: "", Connect: func() (session.Runtime, error) {
+	f := New(nil, Member{Host: "", Connect: func() (session.Runtime, error) {
 		connects++
 		if connects == 1 {
 			return nil, errors.New("dial unix: connection refused")
@@ -377,7 +374,7 @@ func TestTheLocalDaemonIsRetriedImmediately(t *testing.T) {
 // costs an SSH handshake.
 func TestARemoteHostStillWaits(t *testing.T) {
 	attempts := 0
-	f := New(reachable("", &stub{}), Member{
+	f := New(nil, reachable("", &stub{}), Member{
 		Host: "devbox",
 		Connect: func() (session.Runtime, error) {
 			attempts++
@@ -391,5 +388,67 @@ func TestARemoteHostStillWaits(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("dialled %d times; the window should hold it to 1", attempts)
+	}
+}
+
+// TestAHostJoinsWhenSomethingNamesIt: a machine picked out of
+// ~/.ssh/config, or named by a workspace added while the dashboard was
+// running, has to work without a restart and without being configured.
+// Configuration says how a host differs from its name — it is not the
+// list of which hosts there are.
+func TestAHostJoinsWhenSomethingNamesIt(t *testing.T) {
+	discovered := &stub{}
+	asked := []string{}
+	f := New(
+		func(host string) Member {
+			asked = append(asked, host)
+			return reachable(host, discovered)
+		},
+		reachable("", &stub{}),
+	)
+
+	_, err := f.Dispatch(context.Background(), session.DispatchRequest{
+		Workspace: workspace.Context{Host: "devbox"},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch to an undeclared host: %v", err)
+	}
+	if len(discovered.launched) != 1 {
+		t.Fatalf("the discovered host should have run it: %+v", discovered.launched)
+	}
+	if len(asked) != 1 || asked[0] != "devbox" {
+		t.Fatalf("discovery asked for %v", asked)
+	}
+
+	// It joined: the next dispatch reuses it rather than discovering again,
+	// and its agents appear in the roster.
+	if _, err := f.Dispatch(context.Background(), session.DispatchRequest{
+		Workspace: workspace.Context{Host: "devbox"},
+	}); err != nil {
+		t.Fatalf("second Dispatch: %v", err)
+	}
+	if len(asked) != 1 {
+		t.Fatalf("the host should have joined, not been rediscovered: %v", asked)
+	}
+
+	discovered.agents = []agent.Agent{{ID: "bbb"}}
+	agents, err := f.ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Host != "devbox" {
+		t.Fatalf("a joined host belongs in the roster: %+v", agents)
+	}
+}
+
+// TestWithoutDiscoveryAnUnknownHostIsStillAnError: the CLI paths that
+// build a fleet of one should not quietly invent machines.
+func TestWithoutDiscoveryAnUnknownHostIsStillAnError(t *testing.T) {
+	f := New(nil, reachable("", &stub{}))
+	_, err := f.Dispatch(context.Background(), session.DispatchRequest{
+		Workspace: workspace.Context{Host: "devbox"},
+	})
+	if err == nil {
+		t.Fatal("an unknown host must not resolve when nothing can supply it")
 	}
 }
