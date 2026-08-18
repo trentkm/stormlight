@@ -3,24 +3,26 @@ package pty
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 type fakeTransport struct {
 	seed   []byte
-	output chan []byte
+	output chan Message
 	writes [][]byte
 }
 
 func newFakeTransport(seed string) *fakeTransport {
-	return &fakeTransport{seed: []byte(seed), output: make(chan []byte)}
+	return &fakeTransport{seed: []byte(seed), output: make(chan Message)}
 }
 
 func (t *fakeTransport) Seed() []byte                           { return t.seed }
-func (t *fakeTransport) Output() <-chan []byte                  { return t.output }
+func (t *fakeTransport) Output() <-chan Message                 { return t.output }
 func (t *fakeTransport) Write(data []byte) error                { t.writes = append(t.writes, data); return nil }
 func (t *fakeTransport) Resize(context.Context, int, int) error { return nil }
 func (t *fakeTransport) Close()                                 { close(t.output) }
@@ -82,13 +84,49 @@ func TestViewIsCachedUntilTheTerminalChanges(t *testing.T) {
 	// The gate knock is sent after the write lands, so receiving it
 	// proves the emulator has the new bytes.
 	terminal.SetVisible(true)
-	transport.output <- []byte(" world")
+	transport.output <- Message{Bytes: []byte(" world")}
 	<-terminal.state.gate.frames
 	if !terminal.state.viewDirty {
 		t.Fatal("streamed bytes did not invalidate the cache")
 	}
 	if got := terminal.View(); !strings.Contains(got, "hello world") {
 		t.Fatalf("view missing streamed bytes:\n%s", got)
+	}
+}
+
+// A resync means this viewer fell behind and the daemon sent the screen
+// as it now stands instead of the bytes it missed. Writing that into the
+// emulator it already has would replay a history the replica is holding —
+// the scrollback arrives twice and the screen reads as a stutter. It
+// replaces the replica instead.
+func TestResyncReplacesTheReplicaRatherThanAppending(t *testing.T) {
+	transport := newFakeTransport("first line")
+	terminal := New(transport, NewGate(), 40, 6)
+	defer terminal.Close()
+	terminal.SetVisible(true)
+
+	transport.output <- Message{Bytes: []byte("\r\nsecond line")}
+	<-terminal.state.gate.frames
+
+	// With a size, the way every real one arrives — the daemon sends
+	// nothing else to a viewer in debt, so state and size travel
+	// together. A consumer that checks the size first swallows the state
+	// and never notices.
+	transport.output <- Message{
+		Resync: []byte("only what is true now"),
+		Resize: &Size{Cols: 40, Rows: 6},
+	}
+	<-terminal.state.gate.frames
+
+	view := terminal.View()
+	if !strings.Contains(view, "only what is true now") {
+		t.Fatalf("resync did not reach the replica:\n%s", view)
+	}
+	for _, stale := range []string{"first line", "second line"} {
+		if strings.Contains(view, stale) {
+			t.Fatalf("resync left %q behind; state replaces, it does not append:\n%s",
+				stale, view)
+		}
 	}
 }
 
@@ -128,7 +166,7 @@ func TestTerminalRepairsHyperlinksInWindrunnerRepaints(t *testing.T) {
 	defer terminal.Close()
 	terminal.SetVisible(true)
 
-	transport.output <- []byte("\x1b]8;" + url + ";\arepaint\x1b]8;;\a")
+	transport.output <- Message{Bytes: []byte("\x1b]8;" + url + ";\arepaint\x1b]8;;\a")}
 	<-terminal.state.gate.frames
 	if view := terminal.View(); !strings.Contains(
 		view, "\x1b]8;;"+url+"\arepaint\x1b]8;;\a",
@@ -145,8 +183,8 @@ func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
 
 	// The output channel is unbuffered, so each send proves the pump
 	// finished the previous chunk — gate decision included.
-	transport.output <- []byte("a")
-	transport.output <- []byte("b")
+	transport.output <- Message{Bytes: []byte("a")}
+	transport.output <- Message{Bytes: []byte("b")}
 	select {
 	case <-gate.frames:
 		t.Fatal("an invisible terminal requested a redraw")
@@ -154,31 +192,21 @@ func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
 	}
 
 	terminal.SetVisible(true)
-	transport.output <- []byte("c")
+	transport.output <- Message{Bytes: []byte("c")}
 	<-gate.frames
 }
 
-type notifyingTransport struct {
-	*fakeTransport
-	handler func(cols, rows int)
-}
-
-func (t *notifyingTransport) OnResize(handler func(cols, rows int)) {
-	t.handler = handler
-}
-
-// Someone else moving the hosted terminal — another dashboard, an F
-// attach — reaches the widget as a resize notice: the emulator follows
-// the terminal's true size while the box keeps the pane's.
+// Someone else moving the hosted terminal — another dashboard, a browser,
+// an F attach — reaches the widget as a resize riding the stream: the
+// emulator follows the terminal's true size while the box keeps the
+// pane's.
 func TestWidgetFollowsATerminalMovedBySomeoneElse(t *testing.T) {
-	transport := &notifyingTransport{fakeTransport: newFakeTransport("hi")}
+	transport := newFakeTransport("hi")
 	terminal := New(transport, NewGate(), 100, 30)
 	defer terminal.Close()
-	if transport.handler == nil {
-		t.Fatal("widget did not register for resize notices")
-	}
 
-	transport.handler(34, 40)
+	transport.output <- Message{Resize: &Size{Cols: 34, Rows: 40}}
+	waitForTerminal(t, terminal, 34, 40)
 	if cols, rows := terminal.TerminalSize(); cols != 34 || rows != 40 {
 		t.Fatalf("terminal size = %dx%d, want 34x40", cols, rows)
 	}
@@ -193,6 +221,21 @@ func TestWidgetFollowsATerminalMovedBySomeoneElse(t *testing.T) {
 	}
 }
 
+// waitForTerminal waits for the widget's emulator to adopt a size that
+// now arrives over the stream rather than through a direct call.
+func waitForTerminal(t *testing.T, terminal Model, cols, rows int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, r := terminal.TerminalSize(); c == cols && r == rows {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	c, r := terminal.TerminalSize()
+	t.Fatalf("terminal size stayed %dx%d, want %dx%d", c, r, cols, rows)
+}
+
 func TestMouseReportingShadowsTheHostedProgramsModes(t *testing.T) {
 	transport := newFakeTransport("x")
 	terminal := New(transport, NewGate(), 20, 4)
@@ -200,13 +243,13 @@ func TestMouseReportingShadowsTheHostedProgramsModes(t *testing.T) {
 	if terminal.MouseReporting() {
 		t.Fatal("mouse reporting on before the program asked")
 	}
-	transport.output <- []byte("\x1b[?1000h\x1b[?1006h")
-	transport.output <- []byte("sync")
+	transport.output <- Message{Bytes: []byte("\x1b[?1000h\x1b[?1006h")}
+	transport.output <- Message{Bytes: []byte("sync")}
 	if !terminal.MouseReporting() {
 		t.Fatal("mouse-on did not register")
 	}
-	transport.output <- []byte("\x1b[?1000l")
-	transport.output <- []byte("sync")
+	transport.output <- Message{Bytes: []byte("\x1b[?1000l")}
+	transport.output <- Message{Bytes: []byte("sync")}
 	if terminal.MouseReporting() {
 		t.Fatal("mouse-off did not register")
 	}
@@ -266,4 +309,153 @@ var namedKeys = map[string]tea.KeyPressMsg{
 	"ctrl+home":       {Code: tea.KeyHome, Mod: tea.ModCtrl},
 	"alt+backspace":   {Code: tea.KeyBackspace, Mod: tea.ModAlt},
 	"shift+pgup":      {Code: tea.KeyPgUp, Mod: tea.ModShift},
+}
+
+// A resync builds a whole new emulator, and the old one's drain goroutine
+// holds it — scrollback included — until its pipe is closed. Leaving them
+// behind costs tens of megabytes each, in exactly the situation resyncs
+// happen: a viewer that cannot keep up, resynced as often as the daemon
+// paces them.
+func TestResyncDoesNotLeakTheReplicaItReplaced(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 80, 24)
+	terminal.SetVisible(true)
+
+	before := goroutinesAtRest()
+	for i := 0; i < 20; i++ {
+		transport.output <- Message{Resync: []byte("replacement")}
+		<-terminal.state.gate.frames
+	}
+	terminal.Close()
+
+	// The drains end asynchronously once their pipes close.
+	if after := goroutinesAtRest(); after > before {
+		t.Fatalf("%d goroutines survived 20 resyncs and a close (%d before, %d after)",
+			after-before, before, after)
+	}
+}
+
+// The size travels with the state and nowhere else: while a viewer is in
+// resync debt the daemon drops every other message, resize notices
+// included. A replica that ignores it paints a wide screen into a narrow
+// emulator, wrapped and wrong, until someone resizes again.
+func TestResyncCarriesTheSizeItWasRenderedAt(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	terminal.SetVisible(true)
+
+	transport.output <- Message{
+		Resync: []byte("wide state"),
+		Resize: &Size{Cols: 132, Rows: 43},
+	}
+	<-terminal.state.gate.frames
+	waitForTerminal(t, terminal, 132, 43)
+}
+
+// A resync already in flight when the widget closes must not revive it:
+// installing that state would start a drain nothing is left to stop.
+// Parsing a resync happens off the lock, which takes long enough for a
+// resize to land in the middle of it. The newer size has to win: the
+// daemon terminal is already at it, so installing the size the snapshot
+// was rendered at leaves every later byte wrapped for one width and
+// painted into an emulator of another — and nothing corrects it, because
+// the box size never changed.
+func TestResizeDuringAResyncIsNotLost(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+
+	// Big enough that the parse is measurably long, which is the window
+	// this is about.
+	var seed strings.Builder
+	for i := 0; i < 4000; i++ {
+		seed.WriteString("a line of terminal output that has to be parsed\r\n")
+	}
+
+	parsed := make(chan struct{})
+	go func() {
+		defer close(parsed)
+		terminal.state.replaceReplica([]byte(seed.String()), &Size{Cols: 80, Rows: 24})
+	}()
+	// Land the resize inside the parse.
+	time.Sleep(5 * time.Millisecond)
+	terminal.SetSize(200, 50)
+	<-parsed
+
+	if cols, rows := terminal.TerminalSize(); cols != 200 || rows != 50 {
+		t.Fatalf("emulator is %dx%d after a resize during a resync, want 200x50",
+			cols, rows)
+	}
+}
+
+// A snapshot may carry queries — a cursor-position report, device
+// attributes — and the emulator answers them on an unbuffered pipe. With
+// nothing draining that pipe, the write replaying the snapshot blocks
+// forever and takes the terminal's whole pump with it.
+func TestSeedFullOfQueriesDoesNotWedge(t *testing.T) {
+	var seed strings.Builder
+	for i := 0; i < 64; i++ {
+		seed.WriteString("\x1b[6n")
+	}
+	seeded := make(chan struct{})
+	go func() {
+		defer close(seeded)
+		transport := newFakeTransport(seed.String())
+		terminal := New(transport, NewGate(), 40, 6)
+		terminal.Close()
+	}()
+	select {
+	case <-seeded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a seed full of queries wedged the terminal")
+	}
+}
+
+func TestResyncAfterCloseIsIgnored(t *testing.T) {
+	// Sampled before the widget exists, so winding-down goroutines cannot
+	// pad the baseline and hide a leak — which is exactly what sampling
+	// it after Close did.
+	before := goroutinesAtRest()
+
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 40, 6)
+	terminal.SetVisible(true)
+	terminal.Close()
+
+	// Driven directly rather than through the pump: a message already in
+	// flight when the widget closes is a race the test would have to win,
+	// and what needs proving is the guard, not the timing.
+	terminal.state.replaceReplica([]byte("after close"), nil)
+
+	if view := terminal.View(); strings.Contains(view, "after close") {
+		t.Fatalf("a closed terminal took a resync:\n%s", view)
+	}
+	if after := goroutinesAtRest(); after > before {
+		t.Fatalf("a resync after close left %d goroutines behind (%d before, %d after)",
+			after-before, before, after)
+	}
+}
+
+// goroutinesAtRest waits for the count to stop falling, so a measurement
+// is not taken while something is still winding down.
+func goroutinesAtRest() int {
+	previous := runtime.NumGoroutine()
+	settled := 0
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		current := runtime.NumGoroutine()
+		if current == previous {
+			// Equal, not merely non-decreasing: a count still climbing
+			// would otherwise read as settled and inflate the baseline,
+			// hiding the very leak this is measuring.
+			if settled++; settled >= 3 {
+				return current
+			}
+		} else {
+			settled = 0
+		}
+		previous = current
+	}
+	return runtime.NumGoroutine()
 }

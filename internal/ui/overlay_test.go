@@ -8,13 +8,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/trentkm/stormlight/internal/pty"
 )
 
 // fakeOverlaySession scripts one overlay program: a seeded terminal, a
 // recordable input side, and an exit the test fires by hand.
 type fakeOverlaySession struct {
 	seed   string
-	output chan []byte
+	output chan pty.Message
 	exited chan int
 	answer string
 
@@ -40,14 +42,14 @@ var errClosedBeforeRead = errors.New("session was closed before its answer was r
 func newFakeOverlaySession(seed string) *fakeOverlaySession {
 	return &fakeOverlaySession{
 		seed:   seed,
-		output: make(chan []byte),
+		output: make(chan pty.Message),
 		exited: make(chan int, 1),
 	}
 }
 
-func (f *fakeOverlaySession) Seed() []byte          { return []byte(f.seed) }
-func (f *fakeOverlaySession) Output() <-chan []byte { return f.output }
-func (f *fakeOverlaySession) Exited() <-chan int    { return f.exited }
+func (f *fakeOverlaySession) Seed() []byte               { return []byte(f.seed) }
+func (f *fakeOverlaySession) Output() <-chan pty.Message { return f.output }
+func (f *fakeOverlaySession) Exited() <-chan int         { return f.exited }
 func (f *fakeOverlaySession) Write(p []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

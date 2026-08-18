@@ -245,13 +245,23 @@
     <ul>
       <li><code>session.TerminalStreamer</code> (<code>internal/session</code>) is the
       contract: attach to an agent's terminal at a size and get a
-      <code>TerminalStream</code> — an exact snapshot seed, a channel of everything after
-      it, and input and resize flowing back.</li>
+      <code>TerminalStream</code> — an exact snapshot seed, then one ordered stream of
+      everything after it, with input and resize flowing back.
+      <code>TerminalStream</code> is <code>pty.Transport</code> itself rather than a
+      second interface of the same shape.</li>
+      <li>That stream carries three things, in the order the daemon sent them: output to
+      append, a size when the shared terminal moves, and a resync — exact state that
+      replaces the replica, sent when this viewer fell too far behind to be given the
+      bytes it missed. One stream rather than a channel plus callbacks, because a resync
+      delivered out of band arrives before the output it supersedes, and the replica is
+      wrong from there on. A resync carries the size it was rendered at, since a viewer in
+      that state receives nothing else.</li>
       <li><code>windrun.Runtime.AttachTerminal</code> implements it over one dedicated
       daemon connection per attachment, resizing first so the snapshot arrives pre-wrapped
-      for the view it is about to fill.</li>
-      <li><code>app.Service.AttachTerminal</code> surfaces the capability to the UI as a
-      <code>pty.Transport</code>, failing cleanly when a runtime cannot stream.</li>
+      for the view it is about to fill, and asking the daemon to resync rather than drop
+      this viewer if it falls behind.</li>
+      <li><code>app.Service.AttachTerminal</code> surfaces the capability to its callers,
+      failing cleanly when a runtime cannot stream.</li>
       <li><code>ptyview.Manager</code> keeps one live terminal per agent for the agent's
       whole life, reconciling the set against the roster on every refresh: agents without a
       terminal get one, departed agents lose theirs, and all of them follow the pane's
