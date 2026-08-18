@@ -268,6 +268,11 @@ func (m Model) renderHistoryRow(
 	// provider still has a transcript to continue from.
 	tags := []string{string(record.Provider), timeAgo(record.UpdatedAt)}
 	if name := record.Workspace.Name; name != "" {
+		// The machine is part of where it would land, and the browser
+		// now lists several machines' conversations in one column.
+		if record.Workspace.Host != "" {
+			name = record.Workspace.Host + ":" + name
+		}
 		tags = append(tags, name)
 	}
 	if !record.HasTranscript() {

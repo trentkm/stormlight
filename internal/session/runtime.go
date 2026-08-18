@@ -50,6 +50,21 @@ type FileReader interface {
 	ReadAgentFile(ctx context.Context, id, path string) (io.ReadCloser, error)
 }
 
+// HistoryReader is an optional runtime capability: hand over the
+// conversation log of each machine this runtime spans.
+//
+// The log is written where the agent ran — its provider's hooks report to
+// the Stormlight on that host, which appends to that host's file — so a
+// conversation that happened on another machine is recorded there and
+// nowhere else. Reading it is the only way the history browser can offer
+// to reopen it.
+//
+// Keyed by host so a dashboard spanning several can tell them apart;
+// this machine's own log is the service's business, not the runtime's.
+type HistoryReader interface {
+	ReadHistory(ctx context.Context) (map[string][]byte, error)
+}
+
 // OverlayRequest describes a short-lived interactive program the
 // dashboard wants floated over itself rather than handed the whole
 // screen: the Yazi picker, the Neovim task editor.

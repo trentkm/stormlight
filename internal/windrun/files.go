@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/trentkm/stormlight/internal/remote"
 )
 
 // MaxAgentFile bounds what a single read will pull across a tunnel. A
@@ -61,3 +63,30 @@ type cappedFile struct {
 }
 
 func (c cappedFile) Close() error { return c.closer.Close() }
+
+// ReadHistory hands over this machine's conversation log, when this
+// machine is not the one the dashboard is on.
+//
+// A local runtime returns nothing: the service already holds that log and
+// counting it twice would put every local conversation in the browser
+// twice.
+func (r *Runtime) ReadHistory(ctx context.Context) (map[string][]byte, error) {
+	if r.transport == nil {
+		return nil, nil
+	}
+	host := r.transport.Host().Name
+	command := r.transport.CommandContext(ctx, nil, "_history")
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if message := strings.TrimSpace(stderr.String()); message != "" {
+			return nil, fmt.Errorf("%s", remote.Explain(host, message))
+		}
+		return nil, fmt.Errorf("%s: %w", host, err)
+	}
+	return map[string][]byte{host: stdout.Bytes()}, nil
+}

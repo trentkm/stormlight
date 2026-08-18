@@ -406,6 +406,37 @@ func (s *Service) applyWorkspaceNames(values []workspace.Context) {
 	}
 }
 
+// remoteHistory is every other machine's conversation log.
+//
+// A conversation is recorded where it happened — the provider's hooks
+// report to the Stormlight on that host — so without this the history
+// browser can only offer to reopen the ones that happened here, and a
+// remote agent's conversation dies with the agent.
+//
+// Each machine's records are stamped with it on the way in. The stamp is
+// what sends a resumed conversation back to the machine it belongs to,
+// and what keeps two machines' sessions from being read as one list of
+// paths that half exist.
+func (s *Service) remoteHistory(ctx context.Context) []history.Record {
+	reader, ok := s.runtime.(session.HistoryReader)
+	if !ok {
+		return nil
+	}
+	logs, err := reader.ReadHistory(ctx)
+	if err != nil {
+		diagnostic.Logger().Warn("remote history unavailable", "error", err)
+		return nil
+	}
+	var records []history.Record
+	for host, log := range logs {
+		for _, record := range history.Decode(log) {
+			record.Workspace = record.Workspace.OnHost(host)
+			records = append(records, record)
+		}
+	}
+	return records
+}
+
 // AddWorkspace remembers a directory as a workspace. The host names the
 // machine the path is on; empty is this one.
 func (s *Service) AddWorkspace(
@@ -623,6 +654,7 @@ func (s *Service) SessionHistory(ctx context.Context) ([]history.Record, error) 
 	if err != nil {
 		return nil, err
 	}
+	records = append(records, s.remoteHistory(ctx)...)
 	agents, err := s.runtime.ListAgents(ctx)
 	if err != nil {
 		return nil, err
@@ -639,6 +671,11 @@ func (s *Service) SessionHistory(ctx context.Context) ([]history.Record, error) 
 			past = append(past, record)
 		}
 	}
+	// Each machine's log is newest-first on its own; together they are
+	// several sorted lists laid end to end, and the browser reads as one.
+	slices.SortStableFunc(past, func(a, b history.Record) int {
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
 	return past, nil
 }
 
