@@ -592,9 +592,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		agentID := m.selectedAgentID()
 		previous, _ := m.selectedAgent()
 		if msg.err != nil {
-			m.raise(msg.err)
+			m.raisePolled(msg.err)
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
 		} else {
+			// The poll that failed is the poll that reports its own
+			// recovery; a card still insisting the daemon is down after
+			// it came back is worse than no card.
+			m.resolvePolled()
 			m.agents = msg.agents
 			m.catalogWorkspaces = msg.workspaces
 			m.workspaceRoots = msg.roots
@@ -693,18 +697,22 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return attachReturnedMsg{name: msg.name, err: err}
 			})
 		}
-		m.dismissAlert()
 		return m, nil
 
 	case attachReturnedMsg:
-		m.raise(msg.err)
+		if msg.err != nil {
+			m.raise(msg.err)
+		}
 		// The attached client owned the window sizes while it looked;
 		// reassert the herd's 1:1 grid now that the dashboard is back.
 		return m, tea.Batch(m.refreshCmd(), resizeAllPTYCmd(m.ptyManager))
 
 	case actionMsg:
-		m.raise(msg.err)
+		// Only a failure speaks here. Succeeding at something else is not
+		// an answer to the card standing unread from the last failure —
+		// copying a selection used to wipe it.
 		if msg.err != nil {
+			m.raise(msg.err)
 			diagnostic.Logger().Error("dashboard action failed", "error", msg.err)
 		}
 		return m, m.refreshCmd()
@@ -797,13 +805,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		// A failure card is not swept away by the next keystroke — it is
-		// read, dismissed, or replaced. What a keystroke does end is the
-		// mode the card was raised in: a form's complaint has nothing
-		// left to say once the form is gone.
-		standing, mode := m.alert.err, m.mode
+		// read, dismissed, or replaced. The one keystroke that does end it
+		// is the one that closes the form it was raised in: a complaint
+		// about a name or a path has nothing left to say once the field
+		// is gone. A card the dashboard itself raised belongs to no form,
+		// so it survives a trip through the help and back.
+		standing, raisedIn, mode := m.alert.err, m.alert.raisedIn, m.mode
 		updated, cmd := m.updateKey(msg)
 		if model, ok := updated.(Model); ok &&
-			model.mode != mode && model.alert.err == standing {
+			standing != nil && model.alert.err == standing &&
+			mode == raisedIn && mode != modeNormal && model.mode != mode {
 			model.dismissAlert()
 			return model, cmd
 		}
@@ -1168,7 +1179,9 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "H":
 		return m.beginHistory()
 	case "e":
-		if m.alert.active() {
+		// Not only while a card stands: the failures hardest to read are
+		// the ones whose card is already gone.
+		if m.readableFailure() {
 			return m.openAlertDetail()
 		}
 	case "?":

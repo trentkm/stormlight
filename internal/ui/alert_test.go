@@ -244,3 +244,207 @@ func TestAlertCardFitsASmallTerminal(t *testing.T) {
 		t.Fatalf("a card clipped by a small screen must offer the rest:\n%s", view)
 	}
 }
+
+// Opening something is not leaving anything: a card raised on the dashboard
+// is still there when the reader comes back from the help.
+func TestAlertSurvivesATripThroughTheHelp(t *testing.T) {
+	model := alertModel(t)
+	model.raise(errors.New("interrupt failed"))
+
+	updated, _ := model.Update(runeKey("?"))
+	model = updated.(Model)
+	if model.mode != modeHelp {
+		t.Fatalf("? did not open the help: mode = %v", model.mode)
+	}
+	if !model.alert.active() {
+		t.Fatalf("opening the help dismissed the card")
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("the help did not close: mode = %v", model.mode)
+	}
+	if !model.alert.active() {
+		t.Fatalf("closing the help dismissed a card the help never raised")
+	}
+}
+
+// The refresh is the one failure that reports its own recovery: it runs on
+// a timer, so a card insisting the daemon is down after it came back is a
+// lie the reader never asked for.
+func TestRecoveredPollClearsItsOwnCard(t *testing.T) {
+	model := alertModel(t)
+
+	updated, _ := model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	model = updated.(Model)
+	if !model.alert.active() {
+		t.Fatalf("a failed refresh raised no card")
+	}
+
+	updated, _ = model.Update(dashboardMsg{})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the daemon came back and the card stayed: %v", next.alert.err)
+	}
+}
+
+// Succeeding at something else is not an answer to an unread failure.
+func TestSuccessElsewhereLeavesTheCardStanding(t *testing.T) {
+	model := alertModel(t)
+	model.raise(errors.New("interrupt failed"))
+
+	updated, _ := model.Update(actionMsg{})
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("an unrelated success wiped the card")
+	}
+
+	// Nor does a refresh that was never the thing complaining.
+	updated, _ = updated.(Model).Update(dashboardMsg{})
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("a successful refresh answered a failure it did not raise")
+	}
+}
+
+// Where no key is the dashboard's — inside the portal, under a form — the
+// card names none, and says so by ending in an ellipsis rather than
+// mid-word.
+func TestClippedCardAdmitsThereIsMoreAndClaimsNoKeys(t *testing.T) {
+	model := alertModel(t)
+	model.mode = modeDispatch
+	model.raise(errors.New(strings.Repeat("stderr says something long. ", 30)))
+
+	card := ansi.Strip(model.renderAlertCard(model.bodyDimensions()))
+	if !strings.Contains(card, "…") {
+		t.Fatalf("a clipped card gave no sign it was clipped:\n%s", card)
+	}
+	for _, claim := range []string{"Esc dismiss", "e detail", "e read it all"} {
+		if strings.Contains(card, claim) {
+			t.Fatalf("the card claimed %q, which belongs to the form:\n%s", claim, card)
+		}
+	}
+}
+
+// `e` reaches the last failure even after its card is gone. Inside the
+// portal no key is ours, so the card ages out unread — recall is the only
+// thing that makes those messages readable at all.
+func TestDetailRecallsTheLastFailureAfterItsCardIsGone(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	model.raise(errors.New(sshFailure))
+
+	moment := time.Now()
+	model.ageAlert(moment)
+	model.ageAlert(moment.Add(alertLinger + time.Second))
+	if model.alert.active() {
+		t.Fatalf("the card should have aged out inside the portal")
+	}
+
+	model.activePane = paneAgents
+	updated, _ := model.Update(runeKey("e"))
+	model = updated.(Model)
+	if model.mode != modeAlert {
+		t.Fatalf("e did not recall the last failure: mode = %v", model.mode)
+	}
+	view := ansi.Strip(model.renderAlertModal(model.bodyDimensions()))
+	if !strings.Contains(unwrapped(view), unwrapped(sshFailure)) {
+		t.Fatalf("the recalled message is not the failure:\n%s", view)
+	}
+}
+
+// The card is anchored to the foot of the body and a modal centers in what
+// is left, so the card never lands on the form it is complaining about.
+func TestModalKeepsItsRowsWhenACardStands(t *testing.T) {
+	// Sizes matter here: a roomy terminal separates the two by luck, and
+	// it is the ordinary ones — where the form fills most of the body —
+	// that the card used to land on.
+	for _, size := range [][2]int{{80, 24}, {90, 30}, {100, 34}, {120, 40}} {
+		model := alertModel(t)
+		model.width, model.height = size[0], size[1]
+		model.mode = modeDispatch
+		model.raise(errors.New(sshFailure))
+
+		width, height := model.bodyDimensions()
+		modalTop, modalBottom := frameSpan(model.renderModeBody(width, height), 1)
+		cardTop, cardBottom := frameSpan(model.renderBody(), 0)
+		if modalTop < 0 || cardTop < 0 {
+			t.Fatalf("%dx%d: expected a form and a card (form %d..%d, card %d..%d)",
+				size[0], size[1], modalTop, modalBottom, cardTop, cardBottom)
+		}
+		if cardTop <= modalBottom {
+			t.Fatalf("%dx%d: the card lands on the form: form rows %d..%d, card rows %d..%d",
+				size[0], size[1], modalTop, modalBottom, cardTop, cardBottom)
+		}
+	}
+}
+
+// frameSpan finds the rows of a rounded frame drawn at more than `indent`
+// columns in (a centered modal) or at exactly one (the card, against the
+// left edge).
+func frameSpan(block string, minIndent int) (int, int) {
+	top, bottom := -1, -1
+	for index, line := range strings.Split(ansi.Strip(block), "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		indent := len(line) - len(trimmed)
+		if minIndent == 0 && indent != 1 || minIndent > 0 && indent <= minIndent {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "╭") && top < 0:
+			top = index
+		case strings.HasPrefix(trimmed, "╰"):
+			bottom = index
+		}
+	}
+	return top, bottom
+}
+
+// A modal sized short of its own text makes the reader scroll for nothing.
+func TestDetailFitsItsMessageWhenTheBodyHasRoom(t *testing.T) {
+	model := alertModel(t)
+	model.width = 61
+	model.height = 40
+	model.raise(errors.New(strings.Repeat("a line of failure output. ", 12)))
+
+	updated, _ := model.Update(runeKey("e"))
+	model = updated.(Model)
+
+	textWidth, window := model.alertDetailWindow()
+	if lines := wrapMessage(model.alertDetail.text, textWidth); len(lines) > window {
+		t.Fatalf("modal holds %d of %d lines with %d rows of body free",
+			window, len(lines), model.height)
+	}
+}
+
+// A card is two borders, a line, and its keys. Rendering one into fewer
+// rows than that is how it loses its bottom edge.
+func TestCardKeepsItsFrameOnAShortTerminal(t *testing.T) {
+	model := alertModel(t)
+	model.raise(errors.New("boom"))
+
+	card := ansi.Strip(model.renderAlertCard(60, 4))
+	if !strings.Contains(card, "╰") {
+		t.Fatalf("the card lost its bottom edge:\n%s", card)
+	}
+	if lines := strings.Count(card, "\n") + 1; lines > 4 {
+		t.Fatalf("the card rendered %d rows into 4", lines)
+	}
+	if shorter := model.renderAlertCard(60, 3); shorter != "" {
+		t.Fatalf("a card drew into three rows:\n%s", shorter)
+	}
+}
+
+func TestFooterNamesTheDetailViewsOwnKeys(t *testing.T) {
+	model := alertModel(t)
+	model.raise(errors.New("boom"))
+	updated, _ := model.Update(runeKey("e"))
+	model = updated.(Model)
+
+	footer := ansi.Strip(model.renderFooter())
+	if !strings.Contains(footer, "y copy") || !strings.Contains(footer, "Esc close") {
+		t.Fatalf("footer does not name the detail view's keys: %q", footer)
+	}
+	if strings.Contains(footer, "n new") || strings.Contains(footer, "q quit") {
+		t.Fatalf("footer advertises keys the detail view does not answer: %q", footer)
+	}
+}

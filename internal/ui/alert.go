@@ -22,6 +22,19 @@ import (
 // dismissed, superseded, or answered — the hint row keeps its own line.
 type alert struct {
 	err error
+	// raisedIn is the surface the complaint belongs to. A form's
+	// objection to a name or a path is spent the moment the form closes;
+	// a failure raised on the dashboard belongs to nothing that closes,
+	// so it outlives every overlay opened over it.
+	raisedIn mode
+	// polled marks a card the background refresh raised rather than
+	// anything the human did. It is the one failure that reports itself
+	// on a timer, so the next refresh that succeeds answers it and the
+	// card clears itself when the daemon comes back.
+	polled bool
+	// at is when the failure arrived, which the detail view says out
+	// loud: a message recalled later has to place itself in time.
+	at time.Time
 	// expires bounds the card's life in the two places the dashboard
 	// cannot take an Esc on its behalf: inside the portal, where the
 	// keyboard belongs to the agent, and under a floating program. Zero
@@ -29,11 +42,14 @@ type alert struct {
 	expires time.Time
 }
 
-// alertDetail is the whole message, opened over the card with `e`. It is a
-// snapshot rather than a view onto the live alert: reading is what dismisses
-// the card, so by the time this is on screen the alert itself is gone.
+// alertDetail is the whole of the last failure, opened with `e`. It is a
+// snapshot rather than a view onto the live alert, and it outlives the
+// card: inside the portal no key can open anything, and under a form `e`
+// belongs to the form, so the only way those messages are ever readable in
+// full is for `e` to still find the last one after its card is gone.
 type alertDetail struct {
 	text   string
+	at     time.Time
 	offset int
 }
 
@@ -60,17 +76,42 @@ func (a alert) message() string {
 // card, not a new one, so its clock is not restarted and it can still age
 // out where nothing can dismiss it.
 func (m *Model) raise(err error) {
-	if err == nil {
-		m.alert = alert{}
-		return
-	}
-	if m.alert.active() && m.alert.message() == strings.TrimSpace(err.Error()) {
-		return
-	}
-	m.alert = alert{err: err}
+	m.raiseFailure(err, false)
 }
 
+// raisePolled is the refresh's way in: the same card, marked as the one
+// thing that will report its own recovery.
+func (m *Model) raisePolled(err error) {
+	m.raiseFailure(err, true)
+}
+
+func (m *Model) raiseFailure(err error, polled bool) {
+	if err == nil {
+		return
+	}
+	message := strings.TrimSpace(err.Error())
+	if m.alert.active() && m.alert.message() == message {
+		return
+	}
+	m.alert = alert{err: err, raisedIn: m.mode, polled: polled, at: now()}
+	// Every failure leaves its full text behind, so `e` can still reach
+	// the last one after the card has gone.
+	m.alertDetail = alertDetail{text: message, at: m.alert.at}
+}
+
+// now is the clock the alert reads; tests replace it to keep ages fixed.
+var now = time.Now
+
 func (m *Model) dismissAlert() { m.alert = alert{} }
+
+// resolvePolled is the refresh reporting that it worked. A card raised by
+// a failing poll is the one kind that answers itself: the daemon came back,
+// so the complaint is no longer true and should not sit there insisting.
+func (m *Model) resolvePolled() {
+	if m.alert.polled {
+		m.dismissAlert()
+	}
+}
 
 // keyboardHeldElsewhere reports that the dashboard's own keys are not
 // available: the portal has the keyboard, or a floating program does. Esc
@@ -103,16 +144,25 @@ func (m *Model) ageAlert(now time.Time) {
 // It needs the dashboard's own keyboard and a mode that is not spending
 // letters on an input.
 func (m Model) alertDetailReachable() bool {
-	return m.alert.active() && m.mode == modeNormal && !m.keyboardHeldElsewhere()
+	return m.mode == modeNormal && !m.keyboardHeldElsewhere()
 }
 
-// openAlertDetail hands the whole message to the reader and clears the card:
-// reading it is what an alert was waiting for.
+// readableFailure reports that there is a last failure for `e` to open —
+// the standing card's, or the one whose card has already gone.
+func (m Model) readableFailure() bool {
+	return strings.TrimSpace(m.alertDetail.text) != ""
+}
+
+// openAlertDetail hands the last failure to the reader in full and clears
+// the card: reading it is what an alert was waiting for. It opens whether
+// or not a card is still standing, because the messages hardest to read —
+// the ones raised inside the portal, where no key is ours — are exactly
+// the ones whose card is gone by the time the reader can act.
 func (m Model) openAlertDetail() (tea.Model, tea.Cmd) {
-	if !m.alert.active() {
+	if strings.TrimSpace(m.alertDetail.text) == "" {
 		return m, nil
 	}
-	m.alertDetail = alertDetail{text: m.alert.message()}
+	m.alertDetail.offset = 0
 	m.dismissAlert()
 	m.mode = modeAlert
 	return m, nil
@@ -174,7 +224,9 @@ func wrapMessage(message string, width int) []string {
 // a real terminal sized 1:1 to its pane, and a card that changed the body's
 // height would reflow every agent's screen each time something failed.
 func (m Model) renderAlertCard(width, height int) string {
-	if !m.alert.active() || width < 16 || height < 3 {
+	// Three rows is a card with nothing in it: two borders and the keys.
+	// Rendering one anyway is how a card loses its bottom edge.
+	if !m.alert.active() || width < 16 || height < 4 {
 		return ""
 	}
 	cardWidth := clamp(width-4, 16, alertCardWidth)
@@ -185,6 +237,10 @@ func (m Model) renderAlertCard(width, height int) string {
 	clipped := len(lines) > budget
 	if clipped {
 		lines = lines[:budget]
+		// The ellipsis is the card admitting there is more, which it owes
+		// the reader whether or not it can offer a key for the rest.
+		last := len(lines) - 1
+		lines[last] = ansi.Truncate(lines[last], max(1, textWidth-1), "") + "…"
 	}
 
 	body := make([]string, 0, len(lines)+1)
@@ -209,19 +265,29 @@ func (m Model) renderAlertCard(width, height int) string {
 // are. Under the portal or a floating program that is nothing — the card is
 // on a clock there, because Esc belongs to the program.
 func (m Model) alertCardKeys(clipped bool) string {
-	if m.keyboardHeldElsewhere() {
+	if !m.alertDetailReachable() {
+		// Under the portal, a floating program, or a form, every key the
+		// card might name belongs to something else: Esc cancels the form
+		// rather than the card, and `e` edits a path. It claims nothing,
+		// and the message stays readable afterwards through `e` on the
+		// dashboard.
 		return ""
 	}
-	keys := []string{}
-	if m.alertDetailReachable() {
-		label := "e detail"
-		if clipped {
-			label = "e read it all"
-		}
-		keys = append(keys, label)
+	label := "e detail"
+	if clipped {
+		label = "e read it all"
 	}
-	keys = append(keys, "Esc dismiss")
-	return mutedStyle().Render(strings.Join(keys, "  ·  ")) + " "
+	return mutedStyle().Render(label+"  ·  Esc dismiss") + " "
+}
+
+// alertRows is how many rows the card will take, which is how much of the
+// body a modal has to leave alone.
+func (m Model) alertRows(width, height int) int {
+	card := m.renderAlertCard(width, height)
+	if card == "" {
+		return 0
+	}
+	return strings.Count(card, "\n") + 1
 }
 
 func alignRight(content string, width int) string {
@@ -234,7 +300,12 @@ func alignRight(content string, width int) string {
 // alertDetailDimensions sizes the detail modal to the message: tall enough
 // to hold it outright when the body has the room, scrolling when it does not.
 func (m Model) alertDetailDimensions(width, height int) (int, int) {
-	lines := wrapMessage(m.alertDetail.text, min(width, alertCardWidth)-6)
+	// Two passes, because the modal's width decides how many lines the
+	// message takes and the line count decides its height. Measuring at
+	// the preferred width instead would size the modal short of its own
+	// text on every terminal narrow enough to be margined.
+	modalWidth, _ := modalDimensions(width, height, alertCardWidth, 1)
+	lines := wrapMessage(m.alertDetail.text, max(4, modalWidth-6))
 	return modalDimensions(width, height, alertCardWidth, len(lines)+6)
 }
 
@@ -254,7 +325,11 @@ func (m Model) renderAlertModal(width, height int) string {
 	offset := clamp(m.alertDetail.offset, 0, max(0, len(lines)-window))
 	visible := lines[offset:min(len(lines), offset+window)]
 
-	out := []string{"  " + errorStyle().Bold(true).Render("Error"), ""}
+	title := "  " + errorStyle().Bold(true).Render("Error")
+	if age := alertAgeLabel(m.alertDetail.at); age != "" {
+		title += mutedStyle().Render(age)
+	}
+	out := []string{title, ""}
 	for _, line := range visible {
 		out = append(out, "  "+line)
 	}
@@ -267,4 +342,17 @@ func (m Model) renderAlertModal(width, height int) string {
 	}
 	out = append(out, "", "  "+mutedStyle().Render(keys))
 	return renderModal(strings.Join(out, "\n"), modalWidth, modalHeight)
+}
+
+// alertAgeLabel places a recalled message in time. A failure still on
+// screen needs no stamp; one read minutes later does, because `e` reaches
+// the last failure whether or not its card is still up.
+func alertAgeLabel(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	if age := timeAgo(at); age != "" && age != "now" {
+		return " · " + age + " ago"
+	}
+	return ""
 }

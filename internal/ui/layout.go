@@ -89,65 +89,33 @@ func (m Model) renderBody() string {
 
 func (m Model) renderModeBody(width, contentHeight int) string {
 	dashboard := m.renderDashboardBody(width, contentHeight)
+	// A modal centers in what the failure card leaves, not under it. The
+	// card is anchored to the foot of the body and the two would otherwise
+	// want the same rows — and the card would win, covering the form's
+	// last lines while the only key it named cancelled that form.
+	region := max(1, contentHeight-m.alertRows(width, contentHeight))
+	var modal string
 	switch m.mode {
 	case modeDispatch:
-		return overlayCentered(
-			dashboard,
-			m.renderDispatchModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderDispatchModal(width, region)
 	case modeAddWorkspace:
-		return overlayCentered(
-			dashboard,
-			m.renderAddWorkspaceModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderAddWorkspaceModal(width, region)
 	case modeRename:
-		return overlayCentered(
-			dashboard,
-			m.renderRenameModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderRenameModal(width, region)
 	case modeMark:
-		return overlayCentered(
-			dashboard,
-			m.renderMarkModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderMarkModal(width, region)
 	case modeInfo:
-		return overlayCentered(
-			dashboard,
-			m.renderInfoModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderInfoModal(width, region)
 	case modeHelp:
-		return overlayCentered(
-			dashboard,
-			m.renderHelpModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderHelpModal(width, region)
 	case modeHistory:
-		return overlayCentered(
-			dashboard,
-			m.renderHistoryModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderHistoryModal(width, region)
 	case modeAlert:
-		return overlayCentered(
-			dashboard,
-			m.renderAlertModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderAlertModal(width, region)
+	default:
+		return dashboard
 	}
-	return dashboard
+	return overlayCenteredIn(dashboard, modal, width, contentHeight, region)
 }
 
 func (m Model) renderDashboardBody(width, contentHeight int) string {
@@ -465,10 +433,20 @@ func renderModal(content string, width, height int) string {
 }
 
 func overlayCentered(background, foreground string, width, height int) string {
+	return overlayCenteredIn(background, foreground, width, height, height)
+}
+
+// overlayCenteredIn centers a block horizontally across the background and
+// vertically within its top region rows — the whole height, unless
+// something else has claimed the rows below it.
+func overlayCenteredIn(
+	background, foreground string,
+	width, height, region int,
+) string {
 	return overlayComposite(background, foreground, width, height,
 		func(foregroundWidth, foregroundHeight int) (int, int) {
 			return max(0, (width-foregroundWidth)/2),
-				max(0, (height-foregroundHeight)/2)
+				max(0, (min(region, height)-foregroundHeight)/2)
 		})
 }
 

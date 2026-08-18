@@ -247,6 +247,8 @@ func (m Model) commandHints() []string {
 		return []string{"Enter apply", "Esc cancel"}
 	case modeMark:
 		return []string{"w in progress", "a needs attention", "c clear", "Esc cancel"}
+	case modeAlert:
+		return []string{"j/k scroll", "y copy", "Esc close"}
 	}
 	rowMode := "z expand rows"
 	if m.rowsExpanded {
