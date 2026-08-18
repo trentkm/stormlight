@@ -125,6 +125,7 @@ func newRootCommand() *cobra.Command {
 		newResolveCommand(),
 		newReadCommand(),
 		newBenchCommand(),
+		newServeCommand(cfg),
 	)
 	return root
 }
