@@ -43,6 +43,9 @@ type TerminalStream interface {
 // dashboard wants floated over itself rather than handed the whole
 // screen: the Yazi picker, the Neovim task editor.
 type OverlayRequest struct {
+	// Host is the machine to run it on; empty is this one. An overlay
+	// browses a filesystem, so it belongs on the machine that has it.
+	Host string
 	Path string
 	Args []string
 	Dir  string

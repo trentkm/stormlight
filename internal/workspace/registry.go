@@ -30,10 +30,14 @@ type Registry struct {
 	// filesystem, and every ID is qualified with the host.
 	host      string
 	resolvers []Resolver
-	mu        sync.RWMutex
-	cache     map[string]Context
-	routes    map[string]int
-	roots     map[string]cachedExecutionRoots
+	// hosts holds one registry per remote machine, for a local registry
+	// serving a dashboard that works several. A hosted registry never
+	// has its own.
+	hosts  map[string]*Registry
+	mu     sync.RWMutex
+	cache  map[string]Context
+	routes map[string]int
+	roots  map[string]cachedExecutionRoots
 }
 
 type cachedExecutionRoots struct {
@@ -165,6 +169,16 @@ func (r *Registry) normalize(value Context) (Context, error) {
 // workspace. Enumeration is best-effort: unsupported, invalid, failed, and
 // timed-out discovery all cache and return the resolved path.
 func (r *Registry) ExecutionRoots(ctx context.Context, value Context) ([]Context, error) {
+	// A workspace says which machine it is on, so enumeration follows it
+	// there rather than asking this filesystem about someone else's
+	// worktrees.
+	if value.Host != "" && r.host == "" {
+		hosted, err := r.forHost(value.Host)
+		if err != nil {
+			return nil, err
+		}
+		return hosted.ExecutionRoots(ctx, value)
+	}
 	r.mu.RLock()
 	cached, ok := r.roots[value.ID]
 	resolverIndex, routed := r.routes[value.ID]

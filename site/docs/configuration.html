@@ -132,7 +132,22 @@ provider = <span class="s">"claude"</span>
 <span class="c"># binary = "aider"</span>
 <span class="c"># args   = ["--message", "{task}"]</span>
 <span class="c"># [providers.aider.mode_args]</span>
-<span class="c"># auto = ["--yes-always"]</span></code></pre>
+<span class="c"># auto = ["--yes-always"]</span>
+
+<span class="c"># Other machines this dashboard works. Each runs its own daemon and</span>
+<span class="c"># its own agents, reached over SSH; the key is the name Stormlight</span>
+<span class="c"># calls it, and what qualifies the workspace IDs of everything there.</span>
+<span class="k">[hosts.devbox]</span>
+<span class="c"># destination  = "trent@10.0.0.4"   # defaults to the key</span>
+<span class="c"># bin          = "/opt/bin/stormlight"  # when it is not on PATH</span>
+<span class="c"># options      = ["-p", "2222"]     # extra ssh flags</span>
+<span class="c"># no_multiplex = false              # sharing is on by default</span></code></pre>
+    <p>A configured host joins the dashboard as another daemon: its agents appear in the
+    same roster, its workspaces in the same pane, and <code>dispatch --host</code> starts
+    agents there. Hosts connect lazily and are retried on their own schedule, so one that is
+    asleep costs the dashboard its absence and nothing else. <code>destination</code>
+    defaults to the key, which may be a plain <code>ssh_config</code> alias or a tailnet
+    name — anything <code>ssh</code> already understands.</p>
     <p>Custom providers appear in the New Agent picker and dispatch like any other.
     Lifecycle integration is the public contract: managed processes receive
     <code>STORMLIGHT_ID</code> and can report state with <code>stormlight event</code> from

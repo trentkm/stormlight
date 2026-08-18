@@ -154,9 +154,19 @@ binds a port. This is also why the transport is SSH rather than a
 tailnet-native listener — Tailscale is a network the transport runs over,
 and `stormlight remote add` works on one without a line of code about it.
 
-Today `--host` swaps which daemon the whole dashboard talks to. Making the
-host a dimension of workspace identity, so local and remote agents share
-one roster, is the next step ([#127](https://github.com/trentkm/stormlight/issues/127)).
+One dashboard holds several daemons at once. `internal/fleet` is a
+`session.Runtime` over the local daemon and one per configured host: it
+merges rosters, stamps each agent with the daemon that answered for it,
+and routes every later call back to that one. Two rules shape it. A host
+that cannot be reached costs its own absence and nothing else — never a
+failed refresh, never a frame spent waiting on SSH, and a failed member is
+left alone for a retry window rather than dialled on every tick. And an
+agent's host is discovered by asking rather than remembered, so ownership
+is rebuilt from every listing and never persisted anywhere.
+
+Dispatch follows the workspace it resolved: the context already names the
+machine, because resolution happened there. Hosts are configured under
+`[hosts.<name>]`, and the name is what qualifies workspace IDs.
 
 #### The terminal seam
 

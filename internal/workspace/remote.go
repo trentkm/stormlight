@@ -27,6 +27,50 @@ func NewRegistryForHost(host remote.Host) *Registry {
 	return registry
 }
 
+// AddHost teaches a local registry to answer about another machine as
+// well, so one registry can serve a dashboard that works several. The
+// host's own registry is kept whole rather than folded in: its resolvers,
+// its caches, and its rules about paths are all different from this
+// machine's.
+func (r *Registry) AddHost(host remote.Host) {
+	if host.Name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.hosts == nil {
+		r.hosts = make(map[string]*Registry)
+	}
+	if _, known := r.hosts[host.Name]; known {
+		return
+	}
+	r.hosts[host.Name] = NewRegistryForHost(host)
+}
+
+// ResolveOn resolves a path on a named machine. An empty host is this
+// one, which is the only case that can take a relative path — "here"
+// means nothing said from somewhere else.
+func (r *Registry) ResolveOn(ctx context.Context, host, path string) (Context, error) {
+	if host == "" {
+		return r.Resolve(ctx, path)
+	}
+	hosted, err := r.forHost(host)
+	if err != nil {
+		return Context{}, err
+	}
+	return hosted.Resolve(ctx, path)
+}
+
+func (r *Registry) forHost(host string) (*Registry, error) {
+	r.mu.RLock()
+	hosted, ok := r.hosts[host]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("no host named %q is configured", host)
+	}
+	return hosted, nil
+}
+
 type remoteResolver struct {
 	transport *remote.Transport
 	host      string

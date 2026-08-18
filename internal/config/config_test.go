@@ -193,3 +193,53 @@ func TestWriteTemplateRefusesToOverwrite(t *testing.T) {
 		t.Fatalf("force overwrite failed: %v", err)
 	}
 }
+
+func TestHostsAreRead(t *testing.T) {
+	path := writeConfig(t, `
+[hosts.devbox]
+destination = "trent@10.0.0.4"
+bin = "/opt/stormlight/bin/stormlight"
+options = ["-p", "2222"]
+
+[hosts."trent@laptop"]
+
+[hosts.plain]
+`)
+	cfg, warnings, err := loadFrom(path)
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if got := cfg.Hosts["devbox"]; got.Destination != "trent@10.0.0.4" ||
+		got.Bin != "/opt/stormlight/bin/stormlight" ||
+		len(got.Options) != 2 {
+		t.Fatalf("host not read: %+v", got)
+	}
+	// A key that is already a destination is taken as one, so nobody has
+	// to write trent@laptop twice.
+	if got := cfg.Hosts["trent@laptop"]; got.Destination != "trent@laptop" {
+		t.Fatalf("a user@host key should double as the destination: %+v", got)
+	}
+	// A plain name is left alone: ssh_config may well define it.
+	if got := cfg.Hosts["plain"]; got.Destination != "" {
+		t.Fatalf("a plain name is resolved by ssh, not by us: %+v", got)
+	}
+}
+
+// TestAnUnusableHostNameIsRefused: the name qualifies workspace IDs and is
+// spliced into an ssh command line, so it has to stay a plain word.
+func TestAnUnusableHostNameIsRefused(t *testing.T) {
+	path := writeConfig(t, "[hosts.\"dev box\"]\n")
+	cfg, warnings, err := loadFrom(path)
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("a host name with a space should warn")
+	}
+	if _, kept := cfg.Hosts["dev box"]; kept {
+		t.Fatalf("an unusable host must not be configured: %+v", cfg.Hosts)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
+	"github.com/trentkm/stormlight/internal/fleet"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/selfpath"
@@ -94,8 +96,6 @@ func newRootCommand() *cobra.Command {
 			return runDashboard(cmd, cfg, openPath)
 		},
 	}
-	root.PersistentFlags().StringVar(&remoteHost, "host", "",
-		"work on a remote machine over SSH: its daemon, its agents, its repositories (experimental)")
 	root.PersistentFlags().StringVar(&logFile, "log-file",
 		envFirstOr(cfg.Log.File, "STORMLIGHT_LOG_FILE"),
 		"diagnostic log file",
@@ -445,25 +445,51 @@ func newLogsCommand(logFile *string) *cobra.Command {
 // authoritative state rather than sampled panes — so they outlive every
 // dashboard and every terminal the dashboard ran in.
 func newService(cfg config.Config) (*app.Service, error) {
-	runtime, err := newRuntime()
+	runtime, err := newRuntime(cfg)
 	if err != nil {
 		return nil, err
 	}
 	registry := provider.NewRegistryWithSpecs(providerSpecs(cfg))
-	return app.NewService(runtime, registry, workspace.NewRegistry()), nil
+	workspaces := workspace.NewRegistry()
+	// Resolution follows a path to the machine that has it, so the
+	// registry needs the same host list the runtime has.
+	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
+		workspaces.AddHost(remoteHostFrom(name, cfg.Hosts[name]))
+	}
+	return app.NewService(runtime, registry, workspaces), nil
 }
 
-// remoteHost names a machine to work on instead of this one. Experimental
-// and deliberately whole-dashboard for now: the service holds one runtime,
-// so --host swaps which daemon it is, rather than showing local and remote
-// agents together. Per-workspace hosts are the next step (#127).
-var remoteHost string
-
-func newRuntime() (session.Runtime, error) {
-	if remoteHost == "" {
-		return windrun.NewRuntime()
+// newRuntime builds the fleet: this machine's daemon, and one per
+// configured host. It is always a fleet, even with no hosts configured,
+// so there is one shape of runtime to reason about and one set of paths
+// to test; a fleet of one routes straight through to its only member.
+//
+// Members connect lazily and on their own schedule. A host that is asleep
+// or unreachable costs the dashboard its absence and nothing else — never
+// a failed refresh, and never a frame spent waiting on SSH.
+func newRuntime(cfg config.Config) (session.Runtime, error) {
+	members := []fleet.Member{{
+		Host:    "",
+		Connect: func() (session.Runtime, error) { return windrun.NewRuntime() },
+	}}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
+		host := remoteHostFrom(name, cfg.Hosts[name])
+		members = append(members, fleet.Member{
+			Host:    name,
+			Connect: func() (session.Runtime, error) { return windrun.NewRemoteRuntime(host) },
+		})
 	}
-	return windrun.NewRemoteRuntime(remote.Host{Name: remoteHost})
+	return fleet.New(members...), nil
+}
+
+func remoteHostFrom(name string, host config.Host) remote.Host {
+	return remote.Host{
+		Name:        name,
+		Destination: host.Destination,
+		Bin:         host.Bin,
+		Options:     host.Options,
+		NoMultiplex: host.NoMultiplex,
+	}
 }
 
 func newWorkspaceService() *app.Service {
@@ -479,6 +505,7 @@ func newDispatchCommand(cfg config.Config) *cobra.Command {
 	var cwd string
 	var name string
 	var modeName string
+	var host string
 
 	command := &cobra.Command{
 		Use:   "dispatch [task]",
@@ -493,7 +520,9 @@ func newDispatchCommand(cfg config.Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if overrideDir, dirErr := dispatchDirectory(cwd); dirErr == nil {
+			// The per-directory overrides read this machine's filesystem,
+			// so they only apply to a dispatch that lands on it.
+			if overrideDir, dirErr := dispatchDirectory(cwd); dirErr == nil && host == "" {
 				if !cmd.Flags().Changed("mode") {
 					if override, ok := cfg.ModeForDir(overrideDir); ok {
 						mode = override
@@ -517,6 +546,7 @@ func newDispatchCommand(cfg config.Config) *cobra.Command {
 				Task:     task,
 				Cwd:      cwd,
 				Mode:     mode,
+				Host:     host,
 			})
 			if err != nil {
 				return err
@@ -529,6 +559,8 @@ func newDispatchCommand(cfg config.Config) *cobra.Command {
 		configValueOr(cfg.Defaults.Provider, string(agent.ProviderCodex)),
 		"provider: codex, claude, or a configured provider")
 	command.Flags().StringVarP(&cwd, "cwd", "C", "", "working directory")
+	command.Flags().StringVar(&host, "host", "",
+		"run on a configured host instead of this machine; --cwd is a path there")
 	command.Flags().StringVarP(&name, "name", "n", "", "agent name")
 	command.Flags().StringVarP(&modeName, "mode", "m",
 		configValueOr(cfg.Defaults.Mode, string(agent.DefaultMode)),

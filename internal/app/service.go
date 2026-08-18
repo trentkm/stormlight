@@ -24,6 +24,9 @@ type DispatchRequest struct {
 	Task     string
 	Cwd      string
 	Mode     agent.PermissionMode
+	// Host is the machine to run on; empty is this one. Cwd is a path on
+	// that machine, so the two travel together.
+	Host string
 }
 
 type AttachResult = session.AttachResult
@@ -107,7 +110,10 @@ func (s *Service) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 		if agents[index].Workspace.IsComplete() {
 			continue
 		}
-		value, resolveErr := s.workspaces.Resolve(ctx, agents[index].Cwd)
+		// An agent's cwd is a path on its own machine, and the fleet has
+		// already said which that is.
+		value, resolveErr := s.workspaces.ResolveOn(
+			ctx, agents[index].Host, agents[index].Cwd)
 		if resolveErr != nil {
 			diagnostic.Logger().Warn("legacy agent workspace resolution failed",
 				"agent_id", agents[index].ID,
@@ -148,7 +154,10 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	workspaceContext, err := s.workspaces.Resolve(ctx, req.Cwd)
+	// Resolution happens on the machine the path is on, and the context
+	// it returns is what tells the runtime which daemon this dispatch
+	// belongs to.
+	workspaceContext, err := s.workspaces.ResolveOn(ctx, req.Host, req.Cwd)
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("resolve workspace: %w", err)
 	}
@@ -164,11 +173,18 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (agent.Agen
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	if err := s.catalog.Add(workspaceContext.Root); err != nil {
-		diagnostic.Logger().Warn("workspace catalog update failed",
-			"path", workspaceContext.Root,
-			"error", err,
-		)
+	// The catalog is a list of paths on this machine, and adding a remote
+	// root to it would file another host's directory as one of ours —
+	// every later load would resolve it here and answer about nothing.
+	// Remote workspaces are visible while they hold agents; teaching the
+	// catalog about hosts is the next step (#127).
+	if workspaceContext.Host == "" {
+		if err := s.catalog.Add(workspaceContext.Root); err != nil {
+			diagnostic.Logger().Warn("workspace catalog update failed",
+				"path", workspaceContext.Root,
+				"error", err,
+			)
+		}
 	}
 	return managedAgent, nil
 }
@@ -194,7 +210,11 @@ func (s *Service) Resume(
 	if task == "" {
 		task = "Resume session " + record.SessionID
 	}
-	workspaceContext, err := s.workspaces.Resolve(ctx, record.Cwd)
+	// A conversation reopens on the machine it happened on: its
+	// transcript, its repository, and its provider's own session state
+	// are all over there.
+	workspaceContext, err := s.workspaces.ResolveOn(
+		ctx, record.Workspace.Host, record.Cwd)
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("resolve workspace: %w", err)
 	}
