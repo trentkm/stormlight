@@ -1,0 +1,173 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; background: #171C20; }
+    a { color: #62AEEF; } a:hover { color: #7DCFFF; }
+    .tl { white-space: pre; overflow: hidden; }
+    .card-head { height: 34px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #1B2126; border-bottom: 1px solid #2A3138; font-size: 12px; }
+    .card-body { flex: 1 1 auto; padding: 10px 12px; font-size: 10.5px; line-height: 1.6; color: #A9B4BC; }
+  </style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: #171C20; color: #D7DEE5; font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; overflow: hidden">
+
+  <!-- Top bar -->
+  <div style="height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: #1B2126; border-bottom: 1px solid #2A3138">
+    <div style="font-size: 15px; font-weight: 700; letter-spacing: 0.04em; background: linear-gradient(90deg, #7AA2F7, #7DCFFF, #C8F7EF); -webkit-background-clip: text; background-clip: text; color: transparent">Stormlight</div>
+    <div style="display: flex; align-items: center; gap: 2px; padding: 3px; background: #14181D; border: 1px solid #2A3138; border-radius: 6px">
+      <div style="padding: 3px 12px; border-radius: 4px; color: #74818B; font-size: 12px">Roster</div>
+      <div style="padding: 3px 12px; border-radius: 4px; background: #C6E9FF; color: #0F2338; font-weight: 500; font-size: 12px">Wall</div>
+      <div style="padding: 3px 12px; border-radius: 4px; color: #74818B; font-size: 12px">History</div>
+    </div>
+    <div style="flex: 1 1 auto"></div>
+    <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #74818B">
+      <span style="color: #E5C07B">◆ 1 needs input</span>
+      <span>·</span>
+      <span style="color: #61AFEF">● 3 working</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: #74818B">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #72C087; display: inline-block"></span>
+      <span>windrunner · 6 sessions</span>
+    </div>
+  </div>
+
+  <!-- Wall grid -->
+  <div style="flex: 1 1 auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 16px; min-height: 0">
+
+    <!-- Card: working, selected -->
+    <div style="display: flex; flex-direction: column; background: #14181D; border: 1px solid #7DCFFF; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px rgba(125, 207, 255, 0.25)">
+      <div class="card-head">
+        <span style="color: #61AFEF">●</span>
+        <span style="color: #F3F5F6; font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Port grid renderer to windrunner</span>
+        <span style="color: #74818B; font-size: 11px">spanreed-pty · 12m</span>
+      </div>
+      <div class="card-body tl"><span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Bash</span>(go test ./internal/pty/...)
+  <span style="color: #74818B">⎿ </span><span style="color: #8FDCCB">ok  internal/pty  0.41s</span>
+
+<span style="color: #72C087">⏺</span> Tests pass. Wiring the dashboard side
+  next — the Gate can drop its per-frame
+  re-emulation once the grid arrives
+  pre-rendered.
+
+  <span style="color: #61AFEF; font-style: italic">✻ Churning… (12m 41s)</span></div>
+    </div>
+
+    <!-- Card: waiting for input -->
+    <div style="display: flex; flex-direction: column; background: #14181D; border: 1px solid #E5C07B; border-radius: 6px; overflow: hidden; box-shadow: 0 0 14px rgba(229, 192, 123, 0.18)">
+      <div class="card-head">
+        <span style="color: #E5C07B">◆</span>
+        <span style="color: #F3F5F6; font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Footer hint mirroring</span>
+        <span style="color: #74818B; font-size: 11px">footer-hints · 3m</span>
+      </div>
+      <div class="card-body tl"><span style="color: #72C087">⏺</span> The mirrored hints need one push to
+  land on the PR branch.
+
+<span style="color: #D7DEE5">  Bash command</span>
+  <span style="color: #8FDCCB">git push -u origin footer-hints</span>
+
+  <span style="color: #D7DEE5">Do you want to proceed?</span>
+  <span style="color: #62AEEF">❯ 1. Yes</span>
+    <span style="color: #74818B">2. No, and tell Claude what to do</span></div>
+      <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #E5C07B; color: #1F2328; font-size: 11.5px; font-weight: 700">
+        <span>◆ needs input — Allow Bash(git push)?</span>
+        <span style="flex: 1 1 auto"></span>
+        <span style="font-weight: 400">⏎ answer</span>
+      </div>
+    </div>
+
+    <!-- Card: working -->
+    <div style="display: flex; flex-direction: column; background: #14181D; border: 1px solid #2A3138; border-radius: 6px; overflow: hidden">
+      <div class="card-head">
+        <span style="color: #61AFEF">●</span>
+        <span style="color: #D7DEE5; font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Docs drift pass on site/</span>
+        <span style="color: #74818B; font-size: 11px">site-docs · 41m</span>
+      </div>
+      <div class="card-body tl"><span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Read</span>(docs/workspace-resolvers.md)
+  <span style="color: #74818B">⎿ Read 180 lines</span>
+
+<span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Edit</span>(site/docs/resolvers.html)
+  <span style="color: #74818B">⎿ Updated with 9 additions</span>
+
+<span style="color: #72C087">⏺</span> The resolver contract section now
+  matches the doc's three-layer story.
+
+  <span style="color: #61AFEF; font-style: italic">✻ Sifting… (41m 02s)</span></div>
+    </div>
+
+    <!-- Card: working (windrunner) -->
+    <div style="display: flex; flex-direction: column; background: #14181D; border: 1px solid #2A3138; border-radius: 6px; overflow: hidden">
+      <div class="card-head">
+        <span style="color: #61AFEF">●</span>
+        <span style="color: #D7DEE5; font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Attach backpressure design</span>
+        <span style="color: #74818B; font-size: 11px">windrunner · 22m</span>
+      </div>
+      <div class="card-body tl"><span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Grep</span>(backlog, engine.go)
+  <span style="color: #74818B">⎿ 14 matches</span>
+
+<span style="color: #72C087">⏺</span> The attach ring already counts unread
+  bytes per client; an ack watermark can
+  ride the existing wire frames without
+  a protocol bump.
+
+  <span style="color: #61AFEF; font-style: italic">✻ Considering… (22m 18s)</span></div>
+    </div>
+
+    <!-- Card: done -->
+    <div style="display: flex; flex-direction: column; background: #14181D; border: 1px solid #2A3138; border-radius: 6px; overflow: hidden; opacity: 0.75">
+      <div class="card-head">
+        <span style="color: #72C087">✓</span>
+        <span style="color: #D7DEE5; font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">History resume flow</span>
+        <span style="color: #74818B; font-size: 11px">history-resume · 1h</span>
+      </div>
+      <div class="card-body tl"><span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Bash</span>(go test ./...)
+  <span style="color: #74818B">⎿ </span><span style="color: #8FDCCB">ok  all packages  4.2s</span>
+
+<span style="color: #72C087">⏺</span> Done. Resume now reopens the session
+  in the workspace it left, transcript
+  intact. PR #118 is up for review.
+
+  <span style="color: #72C087">✓ exited 0 · 58m total</span></div>
+    </div>
+
+    <!-- Card: idle -->
+    <div style="display: flex; flex-direction: column; background: #14181D; border: 1px solid #2A3138; border-radius: 6px; overflow: hidden; opacity: 0.75">
+      <div class="card-head">
+        <span style="color: #E5C07B">○</span>
+        <span style="color: #D7DEE5; font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Oathgate cursor shapes</span>
+        <span style="color: #74818B; font-size: 11px">oathgate · idle 2h</span>
+      </div>
+      <div class="card-body tl"><span style="color: #72C087">⏺</span> Cursor shape sequences (DECSCUSR) now
+  round-trip through the widget.
+
+  <span style="color: #74818B">Waiting for your reply — what should
+  the default shape be when the host
+  app never sets one?</span>
+
+<span style="color: #74818B">&gt; _</span></div>
+    </div>
+
+  </div>
+
+  <!-- Footer hints -->
+  <div style="height: 30px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 0 16px; background: #1B2126; border-top: 1px solid #2A3138; font-size: 11.5px">
+    <div style="display: flex; gap: 0; color: #C6E9FF"><span>⏎ focus agent</span><span style="color: #74818B"> · </span><span>j/k move</span><span style="color: #74818B"> · </span><span>w roster</span><span style="color: #74818B"> · </span><span>m message</span><span style="color: #74818B"> · </span><span>? keys</span></div>
+    <div style="flex: 1 1 auto"></div>
+    <div style="color: #74818B">6 agents · 1 needs input</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
