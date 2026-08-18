@@ -265,18 +265,27 @@ func taskEditorSpec(binary, cwd, task string) (overlaySpec, error) {
 }
 
 func (m Model) openYazi() (tea.Model, tea.Cmd) {
-	if m.yaziPath == "" {
+	// A missing Yazi here says nothing about another machine, which has
+	// its own PATH and answers for itself.
+	if m.yaziPath == "" && m.addWorkspaceHostName() == "" {
 		m.err = fmt.Errorf("yazi is not installed or not on PATH")
 		return m, nil
 	}
+	host := ""
 	start := strings.TrimSpace(m.pickerStart)
-	if m.mode != modeAddWorkspace {
+	if m.mode == modeAddWorkspace {
+		host = m.addWorkspaceHostName()
+	} else {
 		start = strings.TrimSpace(m.cwdInput.Value())
 	}
-	if !isDirectory(start) {
+	// Only a directory on this machine can be checked, and only this
+	// machine's has a sensible fallback. Over there, an empty start means
+	// "wherever that Stormlight lands", which is the home directory of
+	// the account it runs as.
+	if host == "" && !isDirectory(start) {
 		start = m.initialCwd
 	}
-	return m, m.openOverlay(yaziPickerSpec("", start, m.yaziPath))
+	return m, m.openOverlay(yaziPickerSpec(host, start, m.yaziPath))
 }
 
 // yaziPickerSpec builds the picker overlay.
@@ -295,7 +304,9 @@ func yaziPickerSpec(host, start, localYazi string) overlaySpec {
 	if host == "" && strings.TrimSpace(localYazi) != "" {
 		args = append(args, "--yazi", localYazi)
 	}
-	args = append(args, start)
+	if strings.TrimSpace(start) != "" {
+		args = append(args, start)
+	}
 
 	return overlaySpec{
 		title: "Yazi",

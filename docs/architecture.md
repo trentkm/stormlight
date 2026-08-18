@@ -210,7 +210,8 @@ qualifies workspace IDs.
 
 A host is known because something names it, not because it was
 configured: a workspace on it, a dispatch aimed at it, a name picked out
-of `~/.ssh/config`. Members exist at start-up for the machines the
+of `~/.ssh/config` in the Add Workspace modal, which offers this machine
+first and then whatever that file names. Members exist at start-up for the machines the
 catalog says hold a workspace — listing names no host, so without that a
 machine's agents would be invisible until something mentioned one — and
 any other joins the moment it is first named. `[hosts.<name>]` is where a
