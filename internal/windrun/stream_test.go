@@ -8,35 +8,32 @@ import (
 	"github.com/trentkm/windrunner/wire"
 
 	"github.com/trentkm/stormlight/internal/pty"
-	"github.com/trentkm/stormlight/internal/session"
 )
 
-// Every terminal stream must arrive with its relay running. Built by
-// struct literal instead, its output channel is nil and every consumer
-// waits on it forever — which is exactly what happened to the overlays,
-// where a picker that opened blank and never painted was the only
-// symptom. Constructing one is a function for that reason, and this is
-// the test that says so.
-func TestEveryStreamCarriesARunningRelay(t *testing.T) {
-	agentTerminal := newTerminalStream(nil)
-	defer agentTerminal.Close()
-	overlayStream := &overlay{terminalStream: newTerminalStream(nil)}
-	// The stream, not the overlay: overlay.Close also removes the
-	// daemon session, which this one does not have.
-	defer overlayStream.terminalStream.Close()
+// newRelay builds a stream through the real constructor, with a source
+// the test controls in place of a daemon attachment. Going through the
+// constructor is the point: a test that starts the relay itself would
+// pass with construction leaving it unstarted, which is the bug that
+// killed the overlays.
+func newRelay(t *testing.T, source <-chan client.Message, buffer int) *terminalStream {
+	t.Helper()
+	stream := newStream(nil, source, buffer)
+	t.Cleanup(func() { stream.closeOnce.Do(func() { close(stream.done) }) })
+	return stream
+}
 
-	for _, testCase := range []struct {
-		name   string
-		stream session.TerminalStream
-	}{
-		{"agent terminal", agentTerminal},
-		{"overlay", overlayStream},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			if testCase.stream.Output() == nil {
-				t.Fatal("stream has no output channel; its relay never started")
-			}
-		})
+// A stream is only a stream once its relay is running. Built without one —
+// which is how the overlays were built, and why the Yazi picker opened
+// blank and never painted — nothing it is handed comes out the other side.
+// Asserting the channel is merely non-nil would not have caught that; only
+// pushing something through it does.
+func TestAStreamCarriesWhatItIsGiven(t *testing.T) {
+	source := make(chan client.Message, 1)
+	stream := newRelay(t, source, 8)
+
+	source <- client.Message{Bytes: []byte("output")}
+	if message := next(t, stream); string(message.Bytes) != "output" {
+		t.Fatalf("stream delivered %#v", message)
 	}
 }
 
@@ -45,7 +42,7 @@ func TestEveryStreamCarriesARunningRelay(t *testing.T) {
 // it leaves a replica painting a wide screen into a narrow emulator.
 func TestResyncKeepsTheSizeItWasRenderedAt(t *testing.T) {
 	source := make(chan client.Message, 1)
-	stream := newRelayForTest(t, source)
+	stream := newRelay(t, source, 8)
 
 	source <- client.Message{Resync: &wire.SnapshotPayload{
 		Cols: 132, Rows: 43, ANSI: []byte("wide state"),
@@ -63,43 +60,56 @@ func TestResyncKeepsTheSizeItWasRenderedAt(t *testing.T) {
 	}
 }
 
-// The relay stops when the consumer does. Left running it parks on a full
-// channel nobody drains, holding the client's read loop behind it — so a
-// browser tab closing mid-burst would leak a goroutine and its attachment
-// both.
-func TestRelayStopsWhenTheConsumerDoes(t *testing.T) {
-	source := make(chan client.Message)
-	stream := &terminalStream{
-		output: make(chan pty.Message, 1),
-		done:   make(chan struct{}),
-	}
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		stream.relay(source)
-	}()
+// A size a terminal cannot be must not travel just because it arrived:
+// consumers clamp, and a clamped zero is a real 2x2 reflow of a terminal
+// every viewer shares.
+func TestUnusableResyncSizeIsNotPassedOn(t *testing.T) {
+	source := make(chan client.Message, 1)
+	stream := newRelay(t, source, 8)
 
-	// Fill the one slot, then leave: without a release the next send
-	// parks forever on a channel with no reader.
-	source <- client.Message{Bytes: []byte("one")}
-	stream.Close()
-
-	select {
-	case <-stopped:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the relay outlived its consumer")
+	source <- client.Message{Resync: &wire.SnapshotPayload{ANSI: []byte("no size")}}
+	if message := next(t, stream); message.Resize != nil {
+		t.Fatalf("a %dx%d resize was passed on",
+			message.Resize.Cols, message.Resize.Rows)
 	}
 }
 
-func newRelayForTest(t *testing.T, source chan client.Message) *terminalStream {
-	t.Helper()
-	stream := &terminalStream{
-		output: make(chan pty.Message, 8),
-		done:   make(chan struct{}),
+// The relay must not park on a send once its consumer is gone — and must
+// not abandon its source either. Stopping outright strands the client's
+// read loop mid-send on its own full buffer, where it never reaches the
+// close that ends it and sits on everything it had buffered, resync
+// snapshots included.
+func TestReleasedRelayKeepsDrainingItsSource(t *testing.T) {
+	source := make(chan client.Message)
+	// One slot, so the second message finds the relay blocked on the
+	// send rather than on the receive — which is the state this is about.
+	stream := newRelay(t, source, 1)
+
+	source <- client.Message{Bytes: []byte("fills the buffer")}
+	source <- client.Message{Bytes: []byte("relay now blocked sending this")}
+	stream.closeOnce.Do(func() { close(stream.done) })
+
+	// A released relay keeps taking from its source, so this lands rather
+	// than parking the way a real client's read loop would.
+	select {
+	case source <- client.Message{Bytes: []byte("after release")}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay stopped reading; a client's read loop would strand here")
 	}
-	go stream.relay(source)
-	t.Cleanup(stream.Close)
-	return stream
+
+	// And it ends when the source does, rather than draining forever.
+	close(source)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case _, open := <-stream.Output():
+			if !open {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the relay never finished")
+		}
+	}
 }
 
 func next(t *testing.T, stream *terminalStream) pty.Message {

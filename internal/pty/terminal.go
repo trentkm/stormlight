@@ -98,8 +98,18 @@ type state struct {
 	mu                             sync.Mutex
 	emu                            *vt.Emulator
 	cols, rows, termCols, termRows int
-	scroll, scrollDelta            int
-	scrollPending, closed          bool
+	// sizeGeneration counts changes to the terminal's size. A resync
+	// parses its state off-lock, which takes long enough for a resize to
+	// land in the middle; the counter is how the swap notices.
+	sizeGeneration int
+	// sizeRequested marks a size this widget asked the daemon for and has
+	// not been confirmed on. It decides who wins when a resync disagrees:
+	// the snapshot describes the terminal as it was when it was taken,
+	// while a request the daemon has already accepted describes it as it
+	// is now. Cleared by a resize notice, which is the daemon answering.
+	sizeRequested         bool
+	scroll, scrollDelta   int
+	scrollPending, closed bool
 	// visible marks the terminal as on screen: only visible terminals
 	// knock on the gate, so a busy agent nobody is looking at costs no
 	// render passes.
@@ -148,8 +158,13 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 
 	s.mu.Lock()
 	cols, rows := s.termCols, s.termRows
+	generation, requested := s.sizeGeneration, s.sizeRequested
 	s.mu.Unlock()
-	if size != nil {
+	if size != nil && !requested {
+		// The snapshot's size is the terminal as of when it was taken. It
+		// loses to a size this widget has asked the daemon for, because
+		// that request has already moved the terminal and a viewer in
+		// resync debt receives no notice confirming it.
 		cols, rows = max(2, size.Cols), max(2, size.Rows)
 	}
 
@@ -160,6 +175,12 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	// a second for a viewer that keeps falling behind.
 	replacement := vt.NewEmulator(cols, rows)
 	replacement.Scrollback().SetMaxLines(DefaultScrollback)
+	// vt writes query responses to its input pipe, which is unbuffered.
+	// The real terminal owns those responses, so drain this end from the
+	// moment the emulator exists — a snapshot carrying a cursor-position
+	// or device-attributes query would otherwise block the very write
+	// that replays it.
+	go func() { _, _ = io.Copy(io.Discard, replacement) }()
 	replacement.Write(seed)
 
 	s.mu.Lock()
@@ -169,6 +190,15 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 		s.mu.Unlock()
 		closeEmulator(replacement)
 		return
+	}
+	if s.sizeGeneration != generation {
+		// The terminal moved while this state was being parsed, so the
+		// size that arrived with it is already stale. Installing it would
+		// leave the replica painting bytes wrapped for one width into an
+		// emulator of another — and nothing in the refresh loop would
+		// ever correct it, because the box size never changed.
+		cols, rows = s.termCols, s.termRows
+		replacement.Resize(cols, rows)
 	}
 	previous := s.emu
 	s.emu = replacement
@@ -183,9 +213,6 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	// does. Leaving them behind costs tens of megabytes per resync, in
 	// exactly the situation resyncs happen: a viewer that cannot keep up.
 	closeEmulator(previous)
-	// vt writes query responses to its input pipe. The real terminal owns
-	// those responses, so drain this end to keep a query from blocking paint.
-	go func() { _, _ = io.Copy(io.Discard, replacement) }()
 }
 
 // closeEmulator releases an emulator's input pipe, which is what lets its
@@ -209,8 +236,11 @@ func (m Model) setTerminalSize(cols, rows int) {
 	if cols != s.termCols || rows != s.termRows {
 		s.emu.Resize(cols, rows)
 		s.termCols, s.termRows = cols, rows
+		s.sizeGeneration++
 		s.viewDirty = true
 	}
+	// The daemon has spoken about the size, so nothing local is pending.
+	s.sizeRequested = false
 	s.mu.Unlock()
 	if s.visible.Load() {
 		s.gate.Notify()
@@ -318,6 +348,8 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	if cols != s.cols || rows != s.rows {
 		s.emu.Resize(cols, rows)
 		s.cols, s.rows, s.termCols, s.termRows = cols, rows, cols, rows
+		s.sizeGeneration++
+		s.sizeRequested = true
 		s.viewDirty = true
 	}
 	s.mu.Unlock()

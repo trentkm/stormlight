@@ -314,7 +314,7 @@ func TestResyncDoesNotLeakTheReplicaItReplaced(t *testing.T) {
 	terminal := New(transport, NewGate(), 80, 24)
 	terminal.SetVisible(true)
 
-	before := runtime.NumGoroutine()
+	before := goroutinesAtRest()
 	for i := 0; i < 20; i++ {
 		transport.output <- Message{Resync: []byte("replacement")}
 		<-terminal.state.gate.frames
@@ -322,11 +322,7 @@ func TestResyncDoesNotLeakTheReplicaItReplaced(t *testing.T) {
 	terminal.Close()
 
 	// The drains end asynchronously once their pipes close.
-	deadline := time.Now().Add(5 * time.Second)
-	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if after := runtime.NumGoroutine(); after > before {
+	if after := goroutinesAtRest(); after > before {
 		t.Fatalf("%d goroutines survived 20 resyncs and a close (%d before, %d after)",
 			after-before, before, after)
 	}
@@ -352,7 +348,34 @@ func TestResyncCarriesTheSizeItWasRenderedAt(t *testing.T) {
 
 // A resync already in flight when the widget closes must not revive it:
 // installing that state would start a drain nothing is left to stop.
+// Parsing a resync happens off the lock, which takes long enough for a
+// resize to land in the middle of it. The newer size has to win: the
+// daemon terminal is already at it, so installing the size the snapshot
+// was rendered at leaves every later byte wrapped for one width and
+// painted into an emulator of another — and nothing corrects it, because
+// the box size never changed.
+func TestResizeDuringAResyncIsNotLost(t *testing.T) {
+	transport := newFakeTransport("start")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+
+	// Move the terminal, then apply state that predates the move.
+	terminal.SetSize(200, 50)
+	terminal.state.replaceReplica([]byte("state from before the resize"),
+		&Size{Cols: 80, Rows: 24})
+
+	if cols, rows := terminal.TerminalSize(); cols != 200 || rows != 50 {
+		t.Fatalf("emulator is %dx%d after a resize during a resync, want 200x50",
+			cols, rows)
+	}
+}
+
 func TestResyncAfterCloseIsIgnored(t *testing.T) {
+	// Sampled before the widget exists, so winding-down goroutines cannot
+	// pad the baseline and hide a leak — which is exactly what sampling
+	// it after Close did.
+	before := goroutinesAtRest()
+
 	transport := newFakeTransport("start")
 	terminal := New(transport, NewGate(), 40, 6)
 	terminal.SetVisible(true)
@@ -361,17 +384,33 @@ func TestResyncAfterCloseIsIgnored(t *testing.T) {
 	// Driven directly rather than through the pump: a message already in
 	// flight when the widget closes is a race the test would have to win,
 	// and what needs proving is the guard, not the timing.
-	before := runtime.NumGoroutine()
 	terminal.state.replaceReplica([]byte("after close"), nil)
 
 	if view := terminal.View(); strings.Contains(view, "after close") {
 		t.Fatalf("a closed terminal took a resync:\n%s", view)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	if after := goroutinesAtRest(); after > before {
+		t.Fatalf("a resync after close left %d goroutines behind (%d before, %d after)",
+			after-before, before, after)
 	}
-	if after := runtime.NumGoroutine(); after > before {
-		t.Fatalf("a resync after close left %d goroutines behind", after-before)
+}
+
+// goroutinesAtRest waits for the count to stop falling, so a measurement
+// is not taken while something is still winding down.
+func goroutinesAtRest() int {
+	previous := runtime.NumGoroutine()
+	settled := 0
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		current := runtime.NumGoroutine()
+		if current >= previous {
+			if settled++; settled >= 3 {
+				return current
+			}
+		} else {
+			settled = 0
+		}
+		previous = current
 	}
+	return runtime.NumGoroutine()
 }
