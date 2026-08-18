@@ -344,3 +344,52 @@ func TestFileReadsFollowTheAgentToItsHost(t *testing.T) {
 			local.readPaths, devbox.readPaths)
 	}
 }
+
+// TestTheLocalDaemonIsRetriedImmediately: a daemon that died takes its
+// agents with it, and the runtime will start a new one on the next
+// connect. Holding the local member off for the remote retry window
+// leaves the dashboard dark for half a minute after it could have been
+// back — which is what a killed daemon looked like before this.
+func TestTheLocalDaemonIsRetriedImmediately(t *testing.T) {
+	healthy := &stub{agents: []agent.Agent{{ID: "aaa"}}}
+	connects := 0
+	f := New(Member{Host: "", Connect: func() (session.Runtime, error) {
+		connects++
+		if connects == 1 {
+			return nil, errors.New("dial unix: connection refused")
+		}
+		return healthy, nil
+	}})
+
+	if _, err := f.ListAgents(context.Background()); err == nil {
+		t.Fatal("the first refresh should report the daemon down")
+	}
+	agents, err := f.ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("the very next refresh should reconnect: %v", err)
+	}
+	if len(agents) != 1 || agents[0].ID != "aaa" {
+		t.Fatalf("agents = %+v", agents)
+	}
+}
+
+// TestARemoteHostStillWaits: the window earns its keep where dialling
+// costs an SSH handshake.
+func TestARemoteHostStillWaits(t *testing.T) {
+	attempts := 0
+	f := New(reachable("", &stub{}), Member{
+		Host: "devbox",
+		Connect: func() (session.Runtime, error) {
+			attempts++
+			return nil, errors.New("ssh: connection timed out")
+		},
+	})
+	for range 3 {
+		if _, err := f.ListAgents(context.Background()); err != nil {
+			t.Fatalf("ListAgents: %v", err)
+		}
+	}
+	if attempts != 1 {
+		t.Fatalf("dialled %d times; the window should hold it to 1", attempts)
+	}
+}

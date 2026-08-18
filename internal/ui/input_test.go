@@ -269,7 +269,7 @@ func TestDispatchViewFitsEightyColumnTmuxPane(t *testing.T) {
 	}
 	model := NewModel(backend)
 	model.yaziPath = "/opt/homebrew/bin/yazi"
-	model.prepareDirectoryChoices(model.initialCwd)
+	model.prepareDirectoryChoices("", model.initialCwd)
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model = updated.(Model)
 	model.mode = modeDispatch
@@ -298,7 +298,7 @@ func TestDispatchCustomPathFitsShortPane(t *testing.T) {
 	} {
 		model := NewModel(stubBackend{})
 		model.yaziPath = "/opt/homebrew/bin/yazi"
-		model.prepareDirectoryChoices(model.initialCwd)
+		model.prepareDirectoryChoices("", model.initialCwd)
 		for index, choice := range model.directories {
 			if choice.kind == directoryCustom {
 				model.directoryIndex = index
@@ -626,7 +626,7 @@ func TestDispatchFormFitsEveryHeight(t *testing.T) {
 				model := dispatchTaskFixture(t, width, height)
 				model.chooseDispatchDirectory = picker
 				if picker {
-					model.prepareDirectoryChoices(model.initialCwd)
+					model.prepareDirectoryChoices("", model.initialCwd)
 					model.directoryIndex = 0
 				}
 				model.syncTaskComposerSize()
@@ -669,7 +669,7 @@ func TestDispatchNameSurvivesAnExtraDirectoryRow(t *testing.T) {
 		model := dispatchTaskFixture(t, 100, 30)
 		model.chooseDispatchDirectory = true
 		model.yaziPath = yazi
-		model.prepareDirectoryChoices(model.initialCwd)
+		model.prepareDirectoryChoices("", model.initialCwd)
 		model.syncTaskComposerSize()
 
 		if !model.dispatchNameVisible() {
@@ -1262,7 +1262,7 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 func TestDispatchLocationUsesVimNavigation(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.yaziPath = "/opt/homebrew/bin/yazi"
-	model.prepareDirectoryChoices(model.initialCwd)
+	model.prepareDirectoryChoices("", model.initialCwd)
 	model.mode = modeDispatch
 	model.chooseDispatchDirectory = true
 	model.formFocus = dispatchDirectory
@@ -1297,7 +1297,7 @@ func TestDirectorySelectorUpdatesPathAndPickerResult(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.initialCwd = current
 	model.yaziPath = "/opt/homebrew/bin/yazi"
-	model.prepareDirectoryChoices(current)
+	model.prepareDirectoryChoices("", current)
 	model.mode = modeDispatch
 	model.chooseDispatchDirectory = true
 	model.formFocus = dispatchDirectory
@@ -2432,7 +2432,7 @@ func TestDirectoryPickerIncludesDiscoveredExecutionRoots(t *testing.T) {
 	}
 	model := NewModel(&recordingBackend{})
 	model.workspaceRoots = []workspace.Context{primary, linked}
-	model.prepareDirectoryChoices(root)
+	model.prepareDirectoryChoices("", root)
 
 	labels := make(map[string]string)
 	for _, choice := range model.directories {

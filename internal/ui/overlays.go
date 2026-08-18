@@ -372,6 +372,14 @@ func firstYaziPath(data []byte) string {
 	return ""
 }
 
+// choiceKey identifies a directory choice. The host is part of it: the
+// same path on two machines is two different places to start an agent,
+// and folding them together would offer one row that runs on whichever
+// happened to be listed first.
+func choiceKey(host, path string) string {
+	return host + "\x00" + directoryKey(path)
+}
+
 func directoryKey(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
