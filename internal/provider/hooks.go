@@ -40,10 +40,17 @@ const hookTimeoutSeconds = 5
 // The provider passes the payload on stdin, and $STORMLIGHT_BIN is read at
 // hook time rather than baked in so the value comes from the environment
 // the managed process was started with.
+//
+// It falls back to the name on PATH, because an empty variable is not a
+// hypothetical: a daemon older than the field carrying it drops it
+// silently, and `exec ""` fails as `exec: : not found` — an error three
+// layers from anything that explains it. Any machine hosting agents has
+// Stormlight installed by definition, so the fallback is the same binary
+// nine times in ten, and a legible failure the tenth.
 func reportEvent(providerID agent.Provider) hookCommand {
 	return hookCommand{
 		Type:    "command",
-		Command: `exec "$STORMLIGHT_BIN" _provider-event ` + string(providerID),
+		Command: `exec "${STORMLIGHT_BIN:-stormlight}" _provider-event ` + string(providerID),
 		Timeout: hookTimeoutSeconds,
 	}
 }
