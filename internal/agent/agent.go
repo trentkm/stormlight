@@ -151,6 +151,11 @@ func ParseMode(value string) (PermissionMode, error) {
 }
 
 type Agent struct {
+	// Host names the machine this agent is running on; empty is this one.
+	// It is never stored in the agent's document: the daemon that
+	// answered for it is the fact, and a name recorded on one dashboard
+	// would be a claim about the world made from the wrong place.
+	Host      string    `json:"-"`
 	ID        string    `json:"id"`
 	Provider  Provider  `json:"provider"`
 	Name      string    `json:"name"`

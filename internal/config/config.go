@@ -26,6 +26,26 @@ type Config struct {
 	Tools      Tools                        `toml:"tools"`
 	Workspaces map[string]WorkspaceOverride `toml:"workspaces"`
 	Providers  map[string]Provider          `toml:"providers"`
+	// Hosts are other machines this dashboard works, keyed by the name it
+	// calls them. Each runs its own daemon and its own agents; Stormlight
+	// reaches them over SSH.
+	Hosts map[string]Host `toml:"hosts"`
+}
+
+// Host is one machine reachable over SSH.
+type Host struct {
+	// Destination is what ssh is given — user@host, an ssh_config alias,
+	// a tailnet name. Empty means the key names it.
+	Destination string `toml:"destination"`
+	// Bin is the remote stormlight when it is not simply on PATH. A
+	// non-interactive SSH shell often has no ~/.local/bin, which is the
+	// usual reason to need this.
+	Bin string `toml:"bin"`
+	// Options are extra ssh flags, placed ahead of the destination.
+	Options []string `toml:"options"`
+	// NoMultiplex turns off SSH connection sharing, which is on by
+	// default because a dashboard opens several connections per host.
+	NoMultiplex bool `toml:"no_multiplex"`
 }
 
 type Defaults struct {
@@ -149,6 +169,26 @@ func (c Config) normalize(path string) (Config, []string, error) {
 		if info, err := os.Stat(*tool.path); err != nil || info.IsDir() {
 			warn("%s: %q is not an executable file", tool.name, *tool.path)
 			*tool.path = ""
+		}
+	}
+	for name, host := range c.Hosts {
+		if strings.TrimSpace(name) == "" {
+			warn("hosts: a host needs a name")
+			delete(c.Hosts, name)
+			continue
+		}
+		// The name qualifies workspace IDs and is spliced into an ssh
+		// command line, so it stays a plain word.
+		if strings.ContainsAny(name, " \t:'\"") {
+			warn("hosts.%s: a host name cannot contain spaces, colons, or quotes", name)
+			delete(c.Hosts, name)
+			continue
+		}
+		if strings.TrimSpace(host.Destination) == "" && strings.Contains(name, "@") {
+			// A key like trent@devbox is already a destination; taking it
+			// as one saves saying it twice.
+			host.Destination = name
+			c.Hosts[name] = host
 		}
 	}
 	for root, override := range c.Workspaces {

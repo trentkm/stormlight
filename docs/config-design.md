@@ -103,6 +103,19 @@ provider = "claude"
 # args   = ["--message", "{task}"]
 # [providers.aider.mode_args]
 # auto = ["--yes-always"]
+
+# Other machines this dashboard works. Each runs its own daemon and its
+# own agents, reached over SSH; the key is the name Stormlight calls it,
+# and what qualifies the workspace IDs of everything running there.
+[hosts.devbox]
+# destination  = "trent@10.0.0.4"  # defaults to the key; an ssh_config
+#                                  # alias or a tailnet name works too
+# bin          = "/opt/bin/stormlight"  # when it is not on PATH — a
+#                                       # non-interactive SSH shell often
+#                                       # has no ~/.local/bin
+# options      = ["-p", "2222"]    # extra ssh flags, before the destination
+# no_multiplex = false             # sharing is on: a dashboard opens
+#                                  # several connections per host
 ```
 
 ## Wiring

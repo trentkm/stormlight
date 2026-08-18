@@ -97,10 +97,16 @@ func (m Model) rosterLit() bool {
 }
 
 // renderWorkspacesBar is the band's first segment: the pane's name and
-// how many workspaces the catalog holds.
+// how many workspaces are listed under it.
+//
+// The count is of the rows, not of the catalog. The pane has always shown
+// both — catalogued workspaces and any that merely hold an agent — and
+// counting only the catalogue was a number that happened to agree.
+// Workspaces on another machine are not in this machine's catalogue, so
+// it stopped agreeing.
 func (m Model) renderWorkspacesBar(meta string, width int) string {
 	if meta == "" {
-		meta = fmt.Sprintf("%d", len(m.catalogWorkspaces))
+		meta = fmt.Sprintf("%d", len(m.groups))
 	}
 	return rosterSegment("Workspaces", meta,
 		m.activePane == paneWorkspaces, m.rosterLit(), width)
