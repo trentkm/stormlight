@@ -197,3 +197,42 @@ func TestAWorkspaceRowNamesItsMachine(t *testing.T) {
 		t.Fatalf("a local workspace says nothing about hosts: %q", workspaceDetail(local, 60))
 	}
 }
+
+// TestTheNewAgentPickerBrowsesTheFormsMachine: the New Agent form can be
+// aimed at another machine, and browsing this one instead sends you
+// hunting for a path that was never here.
+func TestTheNewAgentPickerBrowsesTheFormsMachine(t *testing.T) {
+	model := flowModelFixture(t, &recordingBackend{})
+	model.yaziPath = "/usr/local/bin/yazi"
+	model.mode = modeDispatch
+	model.dispatchHost = "devbox"
+	model.cwdInput.SetValue("/srv/api")
+
+	if _, cmd := model.openYazi(); cmd == nil {
+		t.Fatalf("browsing was refused: %v", model.err)
+	}
+	spec := yaziPickerSpec(model.dispatchHost, "", model.yaziPath)
+	if spec.host != "devbox" {
+		t.Fatalf("picker spec = %#v", spec)
+	}
+
+	// And with no host it is still this machine, starting where the form
+	// is pointing.
+	model.dispatchHost = ""
+	if _, cmd := model.openYazi(); cmd == nil {
+		t.Fatalf("local browsing was refused: %v", model.err)
+	}
+}
+
+// TestNoLocalYaziStillBrowsesAnotherMachineFromTheAgentForm: this
+// machine's PATH says nothing about that one's.
+func TestNoLocalYaziStillBrowsesAnotherMachineFromTheAgentForm(t *testing.T) {
+	model := flowModelFixture(t, &recordingBackend{})
+	model.yaziPath = ""
+	model.mode = modeDispatch
+	model.dispatchHost = "devbox"
+
+	if _, cmd := model.openYazi(); cmd == nil {
+		t.Fatalf("a remote browse should not need a local yazi: %v", model.err)
+	}
+}

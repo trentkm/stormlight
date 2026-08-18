@@ -439,6 +439,35 @@ func (f *Runtime) ReadAgentFile(
 	return reader.ReadAgentFile(ctx, id, path)
 }
 
+// ReadHistory collects every machine's conversation log. A host that
+// cannot answer costs its own history and not the browser: the
+// conversations that can be listed still are.
+func (f *Runtime) ReadHistory(ctx context.Context) (map[string][]byte, error) {
+	logs := map[string][]byte{}
+	for _, m := range f.roster() {
+		runtime, err := m.resolve()
+		if err != nil {
+			continue
+		}
+		reader, ok := runtime.(session.HistoryReader)
+		if !ok {
+			continue
+		}
+		hostLogs, err := reader.ReadHistory(ctx)
+		if err != nil {
+			diagnostic.Logger().Warn("history unavailable",
+				"host", hostName(m.host),
+				"error", err,
+			)
+			continue
+		}
+		for host, log := range hostLogs {
+			logs[host] = log
+		}
+	}
+	return logs, nil
+}
+
 // StartOverlay runs the picker or the editor on the machine whose
 // filesystem it is about to browse.
 func (f *Runtime) StartOverlay(

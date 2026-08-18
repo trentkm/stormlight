@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/history"
@@ -214,5 +215,89 @@ func TestAnUnreachableHostIsNotAskedEveryRefresh(t *testing.T) {
 	}
 	if got := strings.Count(string(content), "attempt"); got != 1 {
 		t.Fatalf("dialled %d times across four refreshes, want 1", got)
+	}
+}
+
+// historyRuntime is a runtime spanning machines that keep their own logs.
+type historyRuntime struct {
+	readingRuntime
+	logs map[string][]byte
+}
+
+func (h *historyRuntime) ReadHistory(context.Context) (map[string][]byte, error) {
+	return h.logs, nil
+}
+
+// TestHistoryGathersEveryMachinesConversations: a conversation is
+// recorded where it happened, so without asking the other machines the
+// browser can only reopen the ones that happened here — and a remote
+// agent's conversation dies with the agent.
+func TestHistoryGathersEveryMachinesConversations(t *testing.T) {
+	directory := t.TempDir()
+	log := history.NewLogAt(filepath.Join(directory, "sessions.jsonl"))
+	if err := log.Append(history.Record{
+		SessionID: "here-1", Provider: agent.ProviderClaude, Task: "local work",
+		UpdatedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := &historyRuntime{logs: map[string][]byte{
+		"devbox": []byte(`{"session_id":"there-1","provider":"claude","task":"remote work",` +
+			`"cwd":"/srv/api","workspace":{"id":"git:/srv/api/.git","kind":"git",` +
+			`"name":"api","root":"/srv/api","execution_root":"/srv/api"},` +
+			`"updated_at":"` + time.Now().Format(time.RFC3339) + `"}` + "\n"),
+	}}
+	service := NewServiceWithCatalog(
+		runtime, provider.NewRegistry(), workspace.NewRegistry(),
+		workspace.NewCatalogAt(filepath.Join(directory, "workspaces.json")), log,
+	)
+
+	records, err := service.SessionHistory(context.Background())
+	if err != nil {
+		t.Fatalf("SessionHistory: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records = %+v", records)
+	}
+	// Newest first, across machines: they arrive as several sorted lists
+	// and have to read as one.
+	if records[0].SessionID != "there-1" {
+		t.Fatalf("order = %s, %s", records[0].SessionID, records[1].SessionID)
+	}
+	// The stamp is what sends a resumed conversation back to the machine
+	// it belongs to.
+	if records[0].Workspace.Host != "devbox" {
+		t.Fatalf("remote record was not stamped: %+v", records[0].Workspace)
+	}
+	if !strings.HasPrefix(records[0].Workspace.ID, "devbox:") {
+		t.Fatalf("workspace id = %q", records[0].Workspace.ID)
+	}
+	if records[1].Workspace.Host != "" {
+		t.Fatalf("a local record must stay local: %+v", records[1].Workspace)
+	}
+}
+
+// TestALiveRemoteAgentIsNotAlsoHistory: history is what no window claims,
+// and that has to hold across machines too.
+func TestALiveRemoteAgentIsNotAlsoHistory(t *testing.T) {
+	directory := t.TempDir()
+	runtime := &historyRuntime{logs: map[string][]byte{
+		"devbox": []byte(`{"session_id":"there-1","provider":"claude","task":"still going",` +
+			`"updated_at":"` + time.Now().Format(time.RFC3339) + `"}` + "\n"),
+	}}
+	runtime.agents = []agent.Agent{{ID: "aaa", Host: "devbox", SessionID: "there-1"}}
+
+	service := NewServiceWithCatalog(
+		runtime, provider.NewRegistry(), workspace.NewRegistry(),
+		workspace.NewCatalogAt(filepath.Join(directory, "workspaces.json")),
+		history.NewLogAt(filepath.Join(directory, "sessions.jsonl")),
+	)
+	records, err := service.SessionHistory(context.Background())
+	if err != nil {
+		t.Fatalf("SessionHistory: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("a conversation still running is not history yet: %+v", records)
 	}
 }

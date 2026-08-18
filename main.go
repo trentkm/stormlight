@@ -128,6 +128,7 @@ func newRootCommand() *cobra.Command {
 		newResolveCommand(),
 		newReadCommand(),
 		newPickCommand(),
+		newHistoryCommand(),
 		newBenchCommand(),
 		newServeCommand(cfg),
 	)
@@ -333,6 +334,31 @@ func writeOverlayMetadata(key, value string) error {
 	}
 	metadata[key] = value
 	return c.SetMetadata(sessionID, metadata)
+}
+
+// newHistoryCommand hands this machine's conversation log to a dashboard
+// on another one. The log is written where the agent ran, so a machine's
+// own copy is the only copy, and reopening a conversation that happened
+// there means asking it.
+func newHistoryCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "_history",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			records, err := history.NewLog().Records()
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			for _, record := range records {
+				if err := encoder.Encode(record); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
 }
 
 // newWindrunnerAttachCommand is the F key's other half: a full-terminal

@@ -396,7 +396,17 @@ takes the processes and their terminals with it — but not the
 conversations. `internal/history` keeps an append-only session log
 (`sessions.jsonl`) recording every session id the providers ever report,
 with the task, workspace, and transcript path; the log is compacted once
-per dashboard launch, off every event path. A provider adapter's `Resume`
+per dashboard launch, off every event path.
+
+A conversation is recorded where it happened. The provider's hooks report
+to the Stormlight on that host, which appends to that host's log, so a
+machine's own copy is the only copy — and the history browser asks each
+machine for it (`stormlight _history`) rather than pretending one file
+covers them all. Records come back stamped with the machine they came
+from, which is what sends a resumed conversation back to it and what
+keeps two machines' sessions from reading as one list of paths that half
+exist. A host that cannot answer costs its own history and not the
+browser. A provider adapter's `Resume`
 maps a session id — the one the agent's hooks reported, or failing that
 the one the provider's transcript naming encodes — to a launch that
 reopens the conversation, and that launch carries no prompt: a resumed

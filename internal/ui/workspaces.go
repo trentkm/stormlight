@@ -191,7 +191,7 @@ func (m Model) renderWorkspaceRow(
 	// so that a remote workspace is not also a truncated one.
 	remote := group.context.Host != ""
 	if remote {
-		suffix = remoteMarker + " " + suffix
+		suffix = remoteMark(group.context.Host) + " " + suffix
 	}
 	// Nothing marks this column. A selected-but-unfocused workspace is
 	// already named by the row that stays at full strength while its
@@ -248,7 +248,7 @@ func (m Model) renderWorkspaceRow(
 	}
 	styledSuffix := chipsStyled(chips)
 	if remote {
-		styledSuffix = mutedStyle().Render(remoteMarker+" ") + styledSuffix
+		styledSuffix = mutedStyle().Render(remoteMark(group.context.Host)+" ") + styledSuffix
 	}
 	top := gutter +
 		renderedName +
@@ -424,10 +424,25 @@ func renderSelectedWorkspaceRow(
 // tokens — resolver kind, home-relative root, and the component when it
 // adds information — indented under the name rather than justified across
 // the row.
-// remoteMarker prefixes a workspace that lives on another machine. It is
-// the same geometric vocabulary as the status glyphs rather than a Nerd
-// Font icon, which not every terminal Stormlight runs in would have.
-const remoteMarker = "⇢"
+// remoteMark is how a workspace on another machine is marked: that
+// machine's initial, in the column before the counts.
+//
+// A glyph could only say "somewhere else", and a dashboard worth having
+// several machines on is one where "which" is the question. An initial
+// answers it in the same two columns, and reads as a mark rather than a
+// word when there is only one host to tell apart.
+//
+// It is a plain letter, not a superscript: the superscript capitals exist
+// for most of the alphabet and not all of it, and a host beginning with Q
+// or Z should not render as a box. Two machines sharing an initial share
+// a mark — the subtitle carries the name in full, which is where an
+// ambiguity is worth resolving rather than in a single column.
+func remoteMark(host string) string {
+	for _, letter := range host {
+		return strings.ToUpper(string(letter))
+	}
+	return ""
+}
 
 func workspaceDetail(value workspace.Context, width int) string {
 	width = max(1, width)

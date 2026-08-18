@@ -133,6 +133,16 @@ func (l *Log) Records() ([]Record, error) {
 	return records, err
 }
 
+// Decode reads a log's contents the way Records does — newest first, one
+// record per session, torn lines skipped — without owning the file. It is
+// how a dashboard reads the log of a machine it is not on: that machine
+// hands over its own, and the rules for making sense of it are the same
+// everywhere.
+func Decode(data []byte) []Record {
+	records, _ := decode(data)
+	return records
+}
+
 func (l *Log) load() ([]Record, int, error) {
 	if l.path == "" {
 		return nil, 0, fmt.Errorf("session history path is not resolvable")
@@ -144,6 +154,11 @@ func (l *Log) load() ([]Record, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("read session history: %w", err)
 	}
+	records, lines := decode(data)
+	return records, lines, nil
+}
+
+func decode(data []byte) ([]Record, int) {
 	lines := 0
 	byID := map[string]int{}
 	var records []Record
@@ -169,7 +184,7 @@ func (l *Log) load() ([]Record, int, error) {
 	slices.SortStableFunc(records, func(a, b Record) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
-	return records, lines, nil
+	return records, lines
 }
 
 // compactionSlack is how many redundant lines the log tolerates before

@@ -267,16 +267,25 @@ func taskEditorSpec(binary, cwd, task string) (overlaySpec, error) {
 func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	// A missing Yazi here says nothing about another machine, which has
 	// its own PATH and answers for itself.
-	if m.yaziPath == "" && m.addWorkspaceHostName() == "" {
+	if m.yaziPath == "" && m.addWorkspaceHostName() == "" && m.dispatchHost == "" {
 		m.err = fmt.Errorf("yazi is not installed or not on PATH")
 		return m, nil
 	}
-	host := ""
+	// The picker browses the machine the form is already aimed at.
+	// Adding a workspace, that is the machine chosen in the Remote tab;
+	// starting an agent, it is the machine the highlighted directory is
+	// on. Browsing this one while the form means another is how you end
+	// up hunting for a path that was never here.
+	host := m.addWorkspaceHostName()
 	start := strings.TrimSpace(m.pickerStart)
-	if m.mode == modeAddWorkspace {
-		host = m.addWorkspaceHostName()
-	} else {
+	if m.mode != modeAddWorkspace {
+		host = m.dispatchHost
 		start = strings.TrimSpace(m.cwdInput.Value())
+	}
+	if host != "" {
+		// A path from this filesystem means nothing there, so the picker
+		// starts wherever that machine's Stormlight lands.
+		start = ""
 	}
 	// Only a directory on this machine can be checked, and only this
 	// machine's has a sensible fallback. Over there, an empty start means
