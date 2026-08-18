@@ -46,7 +46,7 @@ func newServeCommand(cfg config.Config) *cobra.Command {
 					return err
 				}
 			}
-			server, err := api.New(service, token)
+			server, err := api.New(service, token, webClient())
 			if err != nil {
 				return err
 			}

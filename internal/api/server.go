@@ -39,6 +39,7 @@ type Server struct {
 	token   string
 	events  *hub
 	mux     *http.ServeMux
+	assets  Assets
 }
 
 // NewToken mints a fresh access token. One per run: nothing persists it,
@@ -55,7 +56,9 @@ func NewToken() (string, error) {
 // routes dispatch agents and stream terminals in every workspace the
 // catalog knows, which is shell access to all of them. There is
 // deliberately no unauthenticated mode to ship by accident.
-func New(service *app.Service, token string) (*Server, error) {
+// New builds the server. assets is the built web client, or nil to serve
+// the API alone.
+func New(service *app.Service, token string, assets Assets) (*Server, error) {
 	if service == nil {
 		return nil, fmt.Errorf("api: a service is required")
 	}
@@ -67,6 +70,7 @@ func New(service *app.Service, token string) (*Server, error) {
 		token:   token,
 		events:  newHub(service),
 		mux:     http.NewServeMux(),
+		assets:  assets,
 	}
 	s.routes()
 	return s, nil
@@ -106,6 +110,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/history/{id}/resume", s.resumeHistory)
 
 	s.mux.HandleFunc("GET /api/events", s.eventStream)
+
+	// Everything else is the page. Registration order does not decide
+	// this — ServeMux takes the most specific pattern — so /api/… wins
+	// over "/" wherever both could match.
+	s.mux.HandleFunc("/", s.serveAssets)
 }
 
 // authenticated gates every route on the run's token and, for WebSocket
@@ -116,9 +125,17 @@ func (s *Server) routes() {
 // terminal socket is the whole point of this server.
 func (s *Server) authenticated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.tokenMatches(r) {
-			// First, and with no detail: a wrong token learns nothing
-			// about the right one, nor about what else would be accepted.
+		// The token guards the API, not the page. A browser cannot put
+		// one on its own script and stylesheet requests — those come
+		// from a tag, with no way to carry a query parameter the
+		// document had — so gating them would mean the page could never
+		// load its own code. Nothing is lost by that: the static files
+		// are inert, and everything they can *do* is behind /api, which
+		// is checked here. A visitor without a token gets a page that
+		// tells them to open the URL `stormlight serve` printed.
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.tokenMatches(r) {
+			// No detail: a wrong token learns nothing about the right
+			// one, nor about what else would be accepted.
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}

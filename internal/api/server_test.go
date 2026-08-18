@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -159,7 +160,10 @@ func startAPI(t *testing.T) (*httptest.Server, *fakeRuntime) {
 		},
 	}
 	service := app.NewService(runtime, provider.NewRegistry(), workspace.NewRegistry())
-	server, err := New(service, testToken)
+	server, err := New(service, testToken, fstest.MapFS{
+		"index.html":    &fstest.MapFile{Data: []byte("<title>Stormlight</title>")},
+		"assets/app.js": &fstest.MapFile{Data: []byte("console.log('app')")},
+	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -789,5 +793,77 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The page is served from the binary, and everything that is not an API
+// route is the page: a single document, so a reload of any path has to
+// reach it rather than 404.
+func TestThePageIsServedFromTheBinary(t *testing.T) {
+	server, _ := startAPI(t)
+
+	for _, testCase := range []struct{ path, want string }{
+		{"/", "<title>Stormlight</title>"},
+		{"/assets/app.js", "console.log('app')"},
+		// A path the client routes itself; the document answers.
+		{"/agents/agent-one", "<title>Stormlight</title>"},
+	} {
+		response := get(t, server, testCase.path)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s answered %d", testCase.path, response.StatusCode)
+		}
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatalf("%s: %v", testCase.path, err)
+		}
+		if !strings.Contains(string(body), testCase.want) {
+			t.Fatalf("%s served %q, want %q", testCase.path, body, testCase.want)
+		}
+	}
+}
+
+// The page loads without a token and the API does not. A browser cannot
+// attach a token to its own script and stylesheet requests — they come
+// from tags, not from code — so gating the static files would stop the
+// page loading its own bundle. Nothing is given away: the files are
+// inert, and every route that reads or changes anything is behind /api.
+func TestThePageLoadsWithoutATokenButTheAPIDoesNot(t *testing.T) {
+	server, _ := startAPI(t)
+
+	for _, path := range []string{"/", "/assets/app.js"} {
+		response, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s answered %d without a token, want 200", path, response.StatusCode)
+		}
+	}
+
+	response, err := http.Get(server.URL + "/api/agents")
+	if err != nil {
+		t.Fatalf("GET /api/agents: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the API answered %d without a token, want 401", response.StatusCode)
+	}
+}
+
+// An API route must never be shadowed by the catch-all that serves the
+// page. ServeMux's specificity rule makes that true today; the test is
+// here so a future pattern that broke it would say so, rather than the
+// API quietly starting to answer in HTML.
+func TestAPIRoutesOutrankThePage(t *testing.T) {
+	server, _ := startAPI(t)
+
+	response := get(t, server, "/api/agents")
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "<title>") {
+		t.Fatalf("/api/agents served the page:\n%s", body)
 	}
 }
