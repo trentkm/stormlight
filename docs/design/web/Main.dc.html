@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+  <style>
+    body { margin: 0; background: #171C20; }
+    a { color: #62AEEF; } a:hover { color: #7DCFFF; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+    .tl { white-space: pre; overflow: hidden; }
+  </style>
+</helmet>
+<div class="mono" style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: #171C20; color: #D7DEE5; font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; overflow: hidden">
+
+  <!-- Top bar -->
+  <div style="height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: #1B2126; border-bottom: 1px solid #2A3138">
+    <div style="font-size: 15px; font-weight: 700; letter-spacing: 0.04em; background: linear-gradient(90deg, #7AA2F7, #7DCFFF, #C8F7EF); -webkit-background-clip: text; background-clip: text; color: transparent">Stormlight</div>
+    <div style="display: flex; align-items: center; gap: 2px; padding: 3px; background: #14181D; border: 1px solid #2A3138; border-radius: 6px">
+      <div style="padding: 3px 12px; border-radius: 4px; background: #C6E9FF; color: #0F2338; font-weight: 500; font-size: 12px">Roster</div>
+      <div style="padding: 3px 12px; border-radius: 4px; color: #74818B; font-size: 12px">Wall</div>
+      <div style="padding: 3px 12px; border-radius: 4px; color: #74818B; font-size: 12px">History</div>
+    </div>
+    <div style="flex: 1 1 auto"></div>
+    <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #74818B">
+      <span style="color: #E5C07B">◆ 1 needs input</span>
+      <span>·</span>
+      <span style="color: #61AFEF">● 3 working</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: #74818B">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #72C087; display: inline-block"></span>
+      <span>windrunner · 6 sessions</span>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div style="flex: 1 1 auto; display: flex; min-height: 0">
+
+    <!-- Workspace rail -->
+    <div style="width: 236px; flex: 0 0 auto; display: flex; flex-direction: column; background: #191E23; border-right: 1px solid #2A3138; padding: 12px 0">
+      <div style="padding: 0 16px 8px; font-size: 10px; letter-spacing: 0.14em; color: #74818B">WORKSPACES</div>
+      <div style="display: flex; flex-direction: column">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 7px 14px; background: rgba(98, 174, 239, 0.16); border-left: 2px solid #7DCFFF; color: #F3F5F6">
+          <span style="flex: 1 1 auto">stormlight</span>
+          <span style="font-size: 11px; color: #61AFEF">●2</span>
+          <span style="font-size: 11px; color: #E5C07B">◆1</span>
+        </div>
+        <div style="display: flex; flex-direction: column; padding: 4px 0 6px; border-left: 2px solid transparent">
+          <div style="display: flex; gap: 8px; padding: 3px 14px 3px 28px; font-size: 12px; color: #74818B"><span>main</span></div>
+          <div style="display: flex; gap: 8px; padding: 3px 14px 3px 28px; font-size: 12px; color: #D7DEE5"><span style="color: #61AFEF">●</span><span>spanreed-pty</span></div>
+          <div style="display: flex; gap: 8px; padding: 3px 14px 3px 28px; font-size: 12px; color: #D7DEE5"><span style="color: #E5C07B">◆</span><span>footer-hints</span></div>
+          <div style="display: flex; gap: 8px; padding: 3px 14px 3px 28px; font-size: 12px; color: #D7DEE5"><span style="color: #61AFEF">●</span><span>site-docs</span></div>
+          <div style="display: flex; gap: 8px; padding: 3px 14px 3px 28px; font-size: 12px; color: #74818B"><span style="color: #72C087">✓</span><span>history-resume</span></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-left: 2px solid transparent; color: #D7DEE5">
+          <span style="flex: 1 1 auto">windrunner</span>
+          <span style="font-size: 11px; color: #61AFEF">●1</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-left: 2px solid transparent; color: #D7DEE5">
+          <span style="flex: 1 1 auto">oathgate</span>
+          <span style="font-size: 11px; color: #E5C07B">○</span>
+        </div>
+      </div>
+      <div style="flex: 1 1 auto"></div>
+      <div style="padding: 8px 16px; font-size: 12px; color: #74818B; border-top: 1px solid #2A3138">a add workspace</div>
+    </div>
+
+    <!-- Agent roster -->
+    <div style="width: 348px; flex: 0 0 auto; display: flex; flex-direction: column; background: #171C20; border-right: 1px solid #2A3138; padding: 12px 0">
+      <div style="display: flex; align-items: baseline; gap: 8px; padding: 0 16px 8px">
+        <span style="font-size: 10px; letter-spacing: 0.14em; color: #74818B">AGENTS</span>
+        <span style="font-size: 11px; color: #74818B">5 of 6 · by attention</span>
+      </div>
+      <div style="display: flex; flex-direction: column">
+
+        <div style="display: flex; gap: 10px; padding: 9px 14px; background: rgba(98, 174, 239, 0.16); border-left: 2px solid #7DCFFF">
+          <span style="color: #61AFEF; flex: 0 0 auto">●</span>
+          <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+            <div style="color: #F3F5F6; font-weight: 500">Port grid renderer to windrunner</div>
+            <div style="font-size: 11px; color: #8AB3D1">spanreed-pty · claude · 12m</div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; padding: 9px 14px; background: #E5C07B; border-left: 2px solid #E5C07B">
+          <span style="color: #1F2328; flex: 0 0 auto; font-weight: 700">◆</span>
+          <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+            <div style="color: #1F2328; font-weight: 700">Footer hint mirroring</div>
+            <div style="font-size: 11px; color: #4A3E1E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">footer-hints · waiting 3m — git push?</div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; padding: 9px 14px; border-left: 2px solid transparent">
+          <span style="color: #61AFEF; flex: 0 0 auto">●</span>
+          <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+            <div style="color: #D7DEE5">Docs drift pass on site/</div>
+            <div style="font-size: 11px; color: #74818B">site-docs · claude · 41m</div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; padding: 9px 14px; border-left: 2px solid transparent">
+          <span style="color: #72C087; flex: 0 0 auto">✓</span>
+          <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+            <div style="color: #D7DEE5">History resume flow</div>
+            <div style="font-size: 11px; color: #74818B">history-resume · claude · done · 1h</div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; padding: 9px 14px; border-left: 2px solid transparent">
+          <span style="color: #61AFEF; flex: 0 0 auto">●</span>
+          <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+            <div style="color: #D7DEE5">Attach backpressure design</div>
+            <div style="font-size: 11px; color: #74818B">windrunner · claude · 22m</div>
+          </div>
+        </div>
+
+      </div>
+      <div style="flex: 1 1 auto"></div>
+      <div style="padding: 8px 16px; font-size: 12px; color: #74818B; border-top: 1px solid #2A3138">n new agent · m message · x delete</div>
+    </div>
+
+    <!-- Spanreed pane -->
+    <div style="flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; background: #14181D">
+      <div style="height: 40px; flex: 0 0 auto; display: flex; align-items: center; gap: 18px; padding: 0 16px; background: #1B2126; border-bottom: 1px solid #2A3138">
+        <div style="display: flex; align-items: center; gap: 8px; min-width: 0">
+          <span style="color: #61AFEF">●</span>
+          <span style="color: #C6E9FF; font-weight: 500; white-space: nowrap">Port grid renderer to windrunner</span>
+        </div>
+        <div style="display: flex; align-items: stretch; gap: 4px; height: 100%">
+          <div style="display: flex; align-items: center; padding: 0 12px; color: #C6E9FF; border-bottom: 2px solid #7DCFFF; font-size: 12px">Terminal</div>
+          <div style="display: flex; align-items: center; padding: 0 12px; color: #74818B; border-bottom: 2px solid transparent; font-size: 12px">Transcript</div>
+          <div style="display: flex; align-items: center; padding: 0 12px; color: #74818B; border-bottom: 2px solid transparent; font-size: 12px">Diff</div>
+        </div>
+        <div style="flex: 1 1 auto"></div>
+        <div style="display: flex; gap: 6px">
+          <span style="padding: 2px 8px; border: 1px solid #3A4046; border-radius: 4px; font-size: 11px; color: #74818B">⏎ walk in</span>
+          <span style="padding: 2px 8px; border: 1px solid #3A4046; border-radius: 4px; font-size: 11px; color: #74818B">⌥z zoom</span>
+          <span style="padding: 2px 8px; border: 1px solid #3A4046; border-radius: 4px; font-size: 11px; color: #74818B">F full</span>
+        </div>
+      </div>
+
+      <div class="tl" style="flex: 1 1 auto; padding: 16px 18px; font-size: 12.5px; line-height: 1.62; color: #D7DEE5"><span style="color: #74818B">&gt; Port the grid renderer to consume windrunner's snapshot stream
+  instead of re-parsing bytes on attach.</span>
+
+<span style="color: #72C087">⏺</span> I'll look at how the attach path seeds the emulator first.
+
+<span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Read</span>(internal/pty/terminal.go)
+  <span style="color: #74818B">⎿ Read 214 lines</span>
+
+<span style="color: #72C087">⏺</span> The seed path re-parses the full snapshot through x/vt on every
+  attach. Windrunner already holds authoritative cell state, so the
+  client can request the grid directly and skip emulation entirely.
+
+<span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Edit</span>(internal/pty/terminal.go)
+  <span style="color: #74818B">⎿ Updated terminal.go with 31 additions and 12 removals</span>
+
+<span style="color: #72C087">⏺</span> <span style="color: #62AEEF">Bash</span>(go test ./internal/pty/...)
+  <span style="color: #74818B">⎿ </span><span style="color: #8FDCCB">ok   github.com/trentkm/stormlight/internal/pty   0.41s</span>
+
+<span style="color: #72C087">⏺</span> Tests pass. Wiring the dashboard side next — the Gate can drop its
+  per-frame re-emulation once the grid arrives pre-rendered.
+
+  <span style="color: #61AFEF; font-style: italic">✻ Churning… (esc to interrupt · 12m 41s · ↑ 8.2k tokens)</span></div>
+    </div>
+  </div>
+
+  <!-- Footer hints -->
+  <div style="height: 30px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 0 16px; background: #1B2126; border-top: 1px solid #2A3138; font-size: 11.5px">
+    <div style="display: flex; gap: 0; color: #C6E9FF"><span>⏎ walk in</span><span style="color: #74818B"> · </span><span>⌥j/k switch</span><span style="color: #74818B"> · </span><span>⌥z zoom</span><span style="color: #74818B"> · </span><span>t transcript</span><span style="color: #74818B"> · </span><span>d diff</span><span style="color: #74818B"> · </span><span>w wall</span><span style="color: #74818B"> · </span><span>H history</span><span style="color: #74818B"> · </span><span>? keys</span></div>
+    <div style="flex: 1 1 auto"></div>
+    <div style="color: #74818B">/Volumes/repos/stormlight</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

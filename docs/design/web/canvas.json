@@ -1,0 +1,15 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1440, "h": 900, "title": "Roster · Spanreed pane" },
+    { "file": "Wall.dc.html", "x": 1560, "y": 0, "w": 1440, "h": 900, "title": "The Wall" },
+    { "file": "Transcript.dc.html", "x": 0, "y": 1040, "w": 880, "h": 780, "title": "Transcript tab" },
+    { "file": "Diff.dc.html", "x": 1000, "y": 1040, "w": 880, "h": 780, "title": "Diff tab" }
+  ],
+  "annotations": [
+    { "id": "note-overview", "x": -320, "y": 0, "w": 280, "text": "Stage 2 of stormlight web — a second client on the same windrunner daemon.\n\nLayout keeps the TUI's DNA: workspaces → agent roster → Spanreed pane. Palette, status glyphs (● ◆ ○ ✓), and dot-separated footer hints lifted from internal/theme." },
+    { "id": "note-wall", "x": 3040, "y": 0, "w": 260, "text": "The Wall: every agent's terminal live at once — the thing terminal cells can't do. Each card is its own xterm.js pane on the same attach stream.\n\nAmber border + band = waiting for input. Click a card (or ⏎) to focus it." },
+    { "id": "note-transcript", "x": -320, "y": 1040, "w": 280, "text": "Transcript as rendered markdown: prose, highlighted code, tool calls as collapsible rows. Reading what an agent DID is the part cells serve worst." },
+    { "id": "note-diff", "x": 1000, "y": 1880, "w": 300, "text": "Diff tab: every agent works a worktree, so every agent has a reviewable diff — review the work product without walking into the terminal.\n\nThe one v1 scope question: this is the only tab that needs the API to know git, not just the daemon." }
+  ],
+  "launch": { "view": "canvas" }
+}
