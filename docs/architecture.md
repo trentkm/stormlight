@@ -145,6 +145,15 @@ nothing else. Closing the laptop stops nothing.
 - `F` runs `ssh -t <host> stormlight _wrattach`, carrying the socket
   directory explicitly: a tty session runs a login shell where a bridge
   does not, and the two can disagree about where XDG state lives.
+- An agent's transcript is written by its provider, beside its repository,
+  on its own host — so `session.FileReader` is a runtime capability for
+  reading a file where the agent is (`stormlight _read` over the same
+  SSH, size-capped on the far side so a cap never pays for the bytes it
+  discards). Deliberately not a channel in the wire protocol, which is
+  about terminals and knows nothing of files. Remote renders are cached
+  for a beat, because this runs on the refresh path; the live screen
+  below the divider comes from the terminal snapshot and is never cached,
+  so output in flight still arrives every frame.
 
 The trust boundary comes along unchanged. The wire protocol has no
 authentication of its own and needs none: reaching the socket means being

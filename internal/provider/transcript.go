@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -106,10 +107,15 @@ func RenderClaudeTranscript(path string) (rendered string, ok bool) {
 		return "", false
 	}
 	defer file.Close()
+	return RenderClaudeTranscriptFrom(file)
+}
 
+// RenderClaudeTranscriptFrom is RenderClaudeTranscript over an already-open
+// transcript, for the ones that are not on this machine.
+func RenderClaudeTranscriptFrom(source io.Reader) (rendered string, ok bool) {
 	var out strings.Builder
 	turns := 0
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 0, 64*1024), transcriptScanBuffer)
 	for scanner.Scan() {
 		var line transcriptLine
