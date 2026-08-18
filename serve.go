@@ -24,8 +24,11 @@ import (
 // It binds loopback and nothing else. These routes dispatch agents and
 // stream terminals in every workspace the catalog knows, which is shell
 // access to all of them — reaching them from another machine is a tunnel
-// the operator opens deliberately (`ssh -L`, Tailscale), never a default
-// this command chose for them.
+// the operator opens deliberately, never a default this command chose for
+// them. Port forwarding (`ssh -L`) is the shape that works: the request
+// still arrives as localhost, which is what the server requires. A proxy
+// that presents some other hostname is refused, deliberately — that is
+// the same check that stops a rebound DNS name.
 func newServeCommand(cfg config.Config) *cobra.Command {
 	var port int
 	var token string

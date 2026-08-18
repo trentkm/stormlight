@@ -88,7 +88,11 @@ type fakeStream struct {
 	mu         sync.Mutex
 	written    []byte
 	cols, rows int
-	closed     bool
+	// resizes records every size the terminal was asked for, because a
+	// bad one that is corrected a moment later still reflowed the
+	// terminal every viewer shares.
+	resizes [][2]int
+	closed  bool
 }
 
 func (f *fakeStream) Seed() []byte          { return f.seed }
@@ -104,7 +108,14 @@ func (f *fakeStream) Resize(_ context.Context, cols, rows int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cols, f.rows = cols, rows
+	f.resizes = append(f.resizes, [2]int{cols, rows})
 	return nil
+}
+
+func (f *fakeStream) resizeHistory() [][2]int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][2]int(nil), f.resizes...)
 }
 
 func (f *fakeStream) Close() {
@@ -270,6 +281,44 @@ func TestCrossOriginRequestsAreRefused(t *testing.T) {
 	}
 }
 
+// TestSameOriginRequestsAreAllowed is the other half of the origin
+// tests, and the half that fails if the policy is merely strict: a page
+// this server serves must be able to call it. Refusing everything would
+// satisfy every "is it refused" test ever written.
+func TestSameOriginRequestsAreAllowed(t *testing.T) {
+	server, _ := startAPI(t)
+
+	request, err := http.NewRequest(http.MethodPost,
+		server.URL+"/api/agents/agent-one/message?token="+testToken,
+		strings.NewReader(`{"message":"from the page you served me"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What a browser sends for a page loaded from this very server.
+	request.Header.Set("Origin", server.URL)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("a same-origin request answered %d, want 204", response.StatusCode)
+	}
+
+	// And a terminal socket from that same page.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/agents/agent-one/terminal?token=" + testToken
+	conn, _, err := websocket.Dial(ctx, address, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{server.URL}},
+	})
+	if err != nil {
+		t.Fatalf("a same-origin upgrade was refused: %v", err)
+	}
+	conn.CloseNow()
+}
+
 // TestRebindingHostIsRefused: comparing Origin against the request's own
 // Host makes the check self-referential. Under DNS rebinding both carry
 // the attacker's name and match each other perfectly, so the Host has to
@@ -358,8 +407,13 @@ func TestTerminalGeometryIsBounded(t *testing.T) {
 		return cols > 0 && rows > 0
 	})
 	cols, rows := runtime.stream.size()
-	if cols > maxTerminalDimension || rows > maxTerminalDimension {
+	if !usableSize(cols, rows) {
 		t.Fatalf("the daemon was asked for %dx%d", cols, rows)
+	}
+	// Refused, not corrected: a size nobody can use must leave the
+	// terminal where it was.
+	if cols != 80 || rows != 24 {
+		t.Fatalf("an unusable size became %dx%d instead of the default", cols, rows)
 	}
 
 	// The resize control message is the same number by another route.
@@ -367,10 +421,35 @@ func TestTerminalGeometryIsBounded(t *testing.T) {
 		[]byte(`{"type":"resize","cols":99999,"rows":99999}`)); err != nil {
 		t.Fatalf("write resize: %v", err)
 	}
-	waitFor(t, "the resize to land", func() bool {
+	// A resize the terminal cannot be is ignored, not clamped: flooring
+	// it would let one message reflow the terminal every viewer shares.
+	if err := conn.Write(ctx, websocket.MessageText,
+		[]byte(`{"type":"resize"}`)); err != nil {
+		t.Fatalf("write empty resize: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText,
+		[]byte(`{"type":"resize","cols":120,"rows":40}`)); err != nil {
+		t.Fatalf("write resize: %v", err)
+	}
+	// The good one lands, which also proves the bad ones did not: they
+	// were sent first, on one ordered socket.
+	waitFor(t, "the usable resize to land", func() bool {
 		cols, rows := runtime.stream.size()
-		return cols == maxTerminalDimension && rows == maxTerminalDimension
+		return cols == 120 && rows == 40
 	})
+	// The socket is ordered, so the unusable ones were handled before the
+	// one that landed. None of them may have reached the terminal — a
+	// size corrected to 2x2 a moment later still reflowed the pane every
+	// viewer shares, which is the whole failure being prevented.
+	for _, size := range runtime.stream.resizeHistory() {
+		if !usableSize(size[0], size[1]) {
+			t.Fatalf("the terminal was resized to %dx%d", size[0], size[1])
+		}
+		if size[0] == 2 || size[1] == 2 {
+			t.Fatalf("an unusable resize was floored to %dx%d instead of refused",
+				size[0], size[1])
+		}
+	}
 }
 
 // TestPlainGetDoesNotDisturbTheTerminal: attaching resizes the agent's

@@ -116,16 +116,17 @@ func (s *Server) routes() {
 // terminal socket is the whole point of this server.
 func (s *Server) authenticated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.tokenMatches(r) {
+			// First, and with no detail: a wrong token learns nothing
+			// about the right one, nor about what else would be accepted.
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		// A Host this server does not answer to means the name resolved
 		// here from somewhere else — the rebinding trick that turns a
 		// page the user is visiting into a client of their own machine.
 		if !loopbackHost(r.Host) {
 			writeError(w, http.StatusForbidden, "unrecognized host")
-			return
-		}
-		if !s.tokenMatches(r) {
-			// No detail: a wrong token learns nothing about the right one.
-			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		// Every request that acts, not only the upgrades. A cross-origin
@@ -163,10 +164,6 @@ func bearerToken(header string) (string, bool) {
 	}
 	credential = strings.TrimSpace(credential)
 	return credential, credential != ""
-}
-
-func isUpgrade(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 
 // loopbackHost reports whether a Host header names this machine. The
@@ -211,6 +208,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		// The status line is already out; all that is left is a record.

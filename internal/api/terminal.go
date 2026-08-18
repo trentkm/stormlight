@@ -104,9 +104,15 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			return
 		case chunk, ok := <-transport.Output():
 			if !ok {
-				// The session ended; let the client see a clean close
-				// rather than a dropped connection.
-				_ = conn.Close(websocket.StatusNormalClosure, "session ended")
+				// The stream ended — and this layer cannot say why. The
+				// agent may have exited, or the daemon may have dropped
+				// this attachment for falling behind, which it does
+				// silently and which a burst of output makes ordinary
+				// (trentkm/windrunner#15, fixed by the resync attach in
+				// trentkm/windrunner#17). Saying "session ended" here
+				// would have a live agent read as a dead one; the client
+				// reconnects and asks the roster, which knows.
+				_ = conn.Close(websocket.StatusNormalClosure, "stream ended")
 				return
 			}
 			if err := conn.Write(ctx, websocket.MessageBinary, chunk); err != nil {
@@ -142,11 +148,16 @@ func (s *Server) pumpInput(
 			if message.Type != controlResize {
 				continue
 			}
-			// The same bound as the query string: this number reaches the
-			// daemon's emulator, which allocates what it is told to.
-			cols := min(max(message.Cols, 2), maxTerminalDimension)
-			rows := min(max(message.Rows, 2), maxTerminalDimension)
-			if err := transport.Resize(ctx, cols, rows); err != nil {
+			// Refuse a size rather than correct it. Clamping upward looks
+			// harmless and is not: a message with no size at all would
+			// become a legal 2x2, and one resize reflows the terminal
+			// every viewer shares — including the dashboard someone is
+			// reading. An unusable number is a client bug; the terminal
+			// is not the place to absorb it.
+			if !usableSize(message.Cols, message.Rows) {
+				continue
+			}
+			if err := transport.Resize(ctx, message.Cols, message.Rows); err != nil {
 				// A resize that loses a race with the session ending is
 				// not worth dropping the connection over.
 				diagnostic.Logger().Debug("terminal resize failed", "error", err)
@@ -198,11 +209,27 @@ func writeControl(ctx context.Context, conn *websocket.Conn, message controlMess
 
 // A terminal's geometry is not a matter of opinion, and this is the one
 // place a client's number reaches the daemon's emulator. The emulator
-// allocates the whole grid, so an unbounded size is an out-of-memory
-// request served on demand: the daemon owns every agent's process, and
-// taking it down takes the fleet with it. maxTerminalDimension is far
-// past any real display and cheap at the limit.
-const maxTerminalDimension = 1000
+// allocates the whole grid — screen and scrollback both — so an unbounded
+// size is an out-of-memory request served on demand, and the daemon that
+// serves it owns every agent's process.
+//
+// The bounds are sized against real displays with room to spare, not
+// against what the format allows: an ultrawide monitor at a small font
+// reaches perhaps 400 columns, and rows past a couple of hundred are a
+// scrollback question rather than a screen one. Generous limits are not
+// free here — scrollback is columns times its line count, so width is
+// what actually costs, and a cap ten times any real terminal would mean
+// hundreds of megabytes per session for no one's benefit.
+const (
+	maxTerminalCols = 500
+	maxTerminalRows = 200
+)
+
+// usableSize reports whether a client's geometry is one a terminal can
+// actually be.
+func usableSize(cols, rows int) bool {
+	return cols >= 2 && rows >= 2 && cols <= maxTerminalCols && rows <= maxTerminalRows
+}
 
 // maxTerminalMessage bounds one inbound message — a keystroke, or a
 // paste. Generous enough for pasting a file, small enough that a client
@@ -210,16 +237,23 @@ const maxTerminalDimension = 1000
 const maxTerminalMessage = 4 << 20
 
 // terminalSize reads the viewer's geometry from the query string. A
-// viewer that does not say gets a conventional terminal; it will resize
-// as soon as it has laid itself out.
+// viewer that does not say — or says something a terminal cannot be —
+// gets a conventional one; it will resize as soon as it has laid itself
+// out. Unlike the resize message, there is no client to inform here, and
+// refusing the whole attachment over a query string would be a worse
+// answer than starting at 80x24.
 func terminalSize(r *http.Request) (cols, rows int) {
-	return boundedQuery(r, "cols", 80), boundedQuery(r, "rows", 24)
+	cols, rows = queryInt(r, "cols"), queryInt(r, "rows")
+	if !usableSize(cols, rows) {
+		return 80, 24
+	}
+	return cols, rows
 }
 
-func boundedQuery(r *http.Request, name string, fallback int) int {
+func queryInt(r *http.Request, name string) int {
 	value, err := strconv.Atoi(r.URL.Query().Get(name))
-	if err != nil || value < 2 {
-		return fallback
+	if err != nil {
+		return 0
 	}
-	return min(value, maxTerminalDimension)
+	return value
 }
