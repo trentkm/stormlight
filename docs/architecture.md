@@ -46,9 +46,9 @@ SDK can similarly replace its CLI hook bridge. The runtime exposes
 ### Application service
 
 The application service validates requests, resolves a provider and workspace,
-and delegates terminal operations to the runtime. The TUI and CLI use the same
-service. A persistent workspace catalog supplies workspaces that
-do not currently contain an agent.
+and delegates terminal operations to the runtime. The TUI, the CLI, and the
+HTTP API all use the same service. A persistent workspace catalog supplies
+workspaces that do not currently contain an agent.
 
 Workspace resolvers return a stable group ID, a group root, an execution root,
 and optional component metadata. External executable resolvers run before the
@@ -59,6 +59,33 @@ Enumeration is routed back to the resolver that claimed the workspace and is
 bounded, cached, and best-effort, so a failed external integration cannot block
 dashboard refresh. This keeps environment-specific workspace semantics outside
 the public runtime.
+
+### HTTP API
+
+`stormlight serve` exposes the application service to clients that are not a
+terminal — a browser front end first among them. It is a peer of the TUI, not
+a layer above or below it: both drive the same service, so a rule about what a
+dispatch means or when an agent needs attention is written once.
+
+Two planes share the listener and never mix. The control plane is JSON over
+HTTP — roster, workspaces, dispatch, history — where latency is irrelevant.
+The data plane is one WebSocket per attached terminal carrying raw bytes in
+both directions: the daemon's exact snapshot arrives first as state, then live
+output, and keystrokes travel back unwrapped. Terminal input is never queued
+behind a control request and never encoded as JSON, because everything about
+how typing feels lives on that path. Sizes and resync notices ride the same
+socket as text messages, which are rare and never in the typing path.
+
+A second client attaching changes nothing for the first: the daemon owns the
+terminal, so the dashboard and a browser can hold the same agent at once, each
+seeded with its own exact snapshot.
+
+The server binds loopback only and requires a per-run token on every request
+and upgrade — these routes dispatch agents and stream terminals in every
+workspace the catalog knows. Reaching them from another machine is a tunnel
+the operator opens deliberately, never a default. WebSocket upgrades also
+check `Origin`, so a page the user merely visited cannot reach the API just
+because it is on localhost.
 
 ### windrunner runtime
 
