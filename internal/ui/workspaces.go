@@ -44,6 +44,16 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		m.blurForm()
 		return m, nil
+	case "h", "left":
+		if m.formFocus == dispatchDirectory {
+			m.selectAddWorkspaceHost(-1)
+			return m, nil
+		}
+	case "l", "right":
+		if m.formFocus == dispatchDirectory {
+			m.selectAddWorkspaceHost(1)
+			return m, nil
+		}
 	case "j", "down":
 		if m.formFocus == dispatchDirectory {
 			m.selectDirectory(1)
@@ -375,6 +385,13 @@ func workspaceDetail(value workspace.Context, width int) string {
 	}
 	join := func(pathToken string) string {
 		parts := []string{}
+		// The machine comes first: it is the most significant thing about
+		// a workspace that is not on this one, and two checkouts at the
+		// same path on different machines are otherwise the same row
+		// twice.
+		if value.Host != "" {
+			parts = append(parts, value.Host)
+		}
 		if kind != "" {
 			parts = append(parts, kind)
 		}
@@ -427,13 +444,17 @@ func (m Model) beginAddWorkspace() (tea.Model, tea.Cmd) {
 
 func (m Model) submitAddWorkspace(path string) (tea.Model, tea.Cmd) {
 	path = strings.TrimSpace(path)
-	if !isDirectory(path) {
+	host := m.addWorkspaceHostName()
+	// Only this machine's directories can be checked here; that host
+	// resolves its own, and says so if the path is not there.
+	if host == "" && !isDirectory(path) {
 		m.err = fmt.Errorf("workspace directory is unavailable: %s", path)
 		return m, nil
 	}
+	if host != "" && !filepath.IsAbs(path) {
+		m.err = fmt.Errorf("a path on %s must be absolute: %s", host, path)
+		return m, nil
+	}
 	m.blurForm()
-	// A typed path is this machine's until the modal grows a host
-	// selector (#138); one browsed with the picker already carries the
-	// machine it was browsed on.
-	return m, addWorkspaceCmd(m.backend, "", path)
+	return m, addWorkspaceCmd(m.backend, host, path)
 }

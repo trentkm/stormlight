@@ -457,6 +457,11 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 		ModeForDir:      cfg.ModeForDir,
 		ProviderForDir:  cfg.ProviderForDir,
 		Columns:         ui.LoadColumnPrefs(),
+		// The machines to offer when adding a workspace: the ones the
+		// user's SSH configuration names, plus any they have configured
+		// here. Naming one is what makes it usable, so this list is
+		// suggestions rather than permission.
+		Hosts: dashboardHosts(cfg),
 	}
 	if openPath != "" {
 		value, err := service.AddWorkspace(context.Background(), "", openPath)
@@ -593,6 +598,19 @@ func fleetHosts(cfg config.Config, catalog *workspace.Catalog) []string {
 	for _, entry := range entries {
 		if entry.Host != "" && !slices.Contains(hosts, entry.Host) {
 			hosts = append(hosts, entry.Host)
+		}
+	}
+	return hosts
+}
+
+// dashboardHosts is every machine worth offering, in a stable order:
+// what ~/.ssh/config names first, then anything configured here that it
+// did not.
+func dashboardHosts(cfg config.Config) []string {
+	hosts := remote.KnownHosts()
+	for _, name := range slices.Sorted(maps.Keys(cfg.Hosts)) {
+		if !slices.Contains(hosts, name) {
+			hosts = append(hosts, name)
 		}
 	}
 	return hosts

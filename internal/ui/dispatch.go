@@ -221,6 +221,8 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 	lines := []string{
 		titleStyle().Render("  Add workspace"),
 		"",
+		"  " + m.renderMachineStrip(contentWidth),
+		"",
 		"  " + m.renderDispatchSectionTitle(
 			accentStyle(),
 			"Choose a directory",
@@ -255,6 +257,33 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 		)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// renderMachineStrip is the machine the modal is adding a workspace on.
+//
+// It reads as one row rather than a list because it usually has one
+// answer — this machine — and because a directory only means anything
+// once you know which machine it is on, so it belongs above the
+// directory rows rather than beside them.
+func (m Model) renderMachineStrip(width int) string {
+	name := "This machine"
+	if host := m.addWorkspaceHostName(); host != "" {
+		name = host
+	}
+	hint := "no other machines in ~/.ssh/config"
+	if len(m.hosts) > 1 {
+		hint = fmt.Sprintf("%d of %d · h/l", m.addWorkspaceHost+1, len(m.hosts))
+	}
+	label := mutedStyle().Copy().Bold(true).Render("Machine")
+	value := accentStyle().Render(name)
+	detail := mutedStyle().Render(hint)
+
+	plain := "Machine  " + name + "  " + hint
+	styled := label + "  " + value + "  " + detail
+	if lipgloss.Width(plain) > width {
+		return label + "  " + value
+	}
+	return styled
 }
 
 // The task composer's floor and ceiling. Under three rows a wrapped task
@@ -1073,20 +1102,59 @@ func (m *Model) prepareAddWorkspaceChoices(start string) {
 		start = m.initialCwd
 	}
 	m.pickerStart = start
+	m.addWorkspaceHost = 0
+	m.setAddWorkspaceChoices()
+	m.cwdInput.SetValue("")
+}
+
+// setAddWorkspaceChoices rebuilds the rows for the machine now selected.
+// Browsing needs a picker on that machine, and this one's Yazi says
+// nothing about whether another has it — so the row is offered and the
+// far side answers.
+func (m *Model) setAddWorkspaceChoices() {
 	choices := make([]directoryChoice, 0, 2)
-	if m.yaziPath != "" {
+	if m.yaziPath != "" || m.addWorkspaceHostName() != "" {
 		choices = append(choices, directoryChoice{
 			kind:  directoryYazi,
+			host:  m.addWorkspaceHostName(),
 			label: "Browse with Yazi",
 		})
 	}
 	choices = append(choices, directoryChoice{
 		kind:  directoryCustom,
+		host:  m.addWorkspaceHostName(),
 		label: "Enter a path",
 	})
 	m.directories = choices
 	m.directoryIndex = 0
+}
+
+// addWorkspaceHostName is the machine the modal is on; empty is this one.
+func (m Model) addWorkspaceHostName() string {
+	if m.addWorkspaceHost <= 0 || m.addWorkspaceHost >= len(m.hosts) {
+		return ""
+	}
+	return m.hosts[m.addWorkspaceHost]
+}
+
+// selectAddWorkspaceHost moves along the machine strip. It wraps, because
+// the list is short and a dead end at either side is a keypress that
+// silently does nothing.
+func (m *Model) selectAddWorkspaceHost(delta int) {
+	if len(m.hosts) <= 1 {
+		return
+	}
+	m.addWorkspaceHost = (m.addWorkspaceHost + delta + len(m.hosts)) % len(m.hosts)
+	m.setAddWorkspaceChoices()
+	// The path box was about the machine we just left.
 	m.cwdInput.SetValue("")
+	if m.addWorkspaceHostName() == "" {
+		m.pickerStart = m.initialCwd
+	} else {
+		// Nothing here knows that machine's directories; its own
+		// Stormlight starts the picker wherever it lands.
+		m.pickerStart = ""
+	}
 }
 
 func (m *Model) selectDirectory(delta int) {

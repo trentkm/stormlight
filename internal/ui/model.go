@@ -136,6 +136,11 @@ type Model struct {
 	catalogWorkspaces []workspace.Context
 	workspaceRoots    []workspace.Context
 	groups            []workspaceGroup
+	// hosts are the machines the Add Workspace modal can browse, and
+	// addWorkspaceHost is which of them it is on. Index 0 is always this
+	// machine, named by the empty string.
+	hosts            []string
+	addWorkspaceHost int
 	// dispatchHost is the machine the open dispatch form is aimed at. It
 	// travels with the directory rather than being asked for separately:
 	// a path only means anything alongside the machine it is on.
@@ -299,6 +304,10 @@ type Options struct {
 	Columns ColumnPrefs
 	// Keys rebinds the seam chords; empty lists keep the defaults.
 	Keys KeyBindings
+	// Hosts are the machines to offer when adding a workspace, in the
+	// order they should appear — read from the user's SSH configuration.
+	// This machine is always the first choice and is not in this list.
+	Hosts []string
 }
 
 func NewModelWithOptions(backend Backend, options Options) Model {
@@ -351,6 +360,9 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		ptyEnabled:         true,
 		ptyManager:         ptyview.NewManager(backend),
 		keys:               fillKeyDefaults(options.Keys),
+		// This machine first, then whatever the user's SSH configuration
+		// names. The empty string is how everything else says "here".
+		hosts: append([]string{""}, options.Hosts...),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
