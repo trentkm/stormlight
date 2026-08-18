@@ -36,10 +36,13 @@ type Report struct {
 	Home       string
 	Stormlight Requirement
 	Yazi       Requirement
-	// PackageManager is the first recognised one on the host, and the
-	// only thing that makes installing Yazi something Stormlight can
-	// offer rather than describe.
+	// PackageManager is the first recognised one on the host. It is
+	// reported for the message it makes possible, not because Yazi is
+	// installed with it.
 	PackageManager string
+	// Musl says the host links against musl rather than glibc, which is
+	// a different binary rather than a slower one.
+	Musl bool
 }
 
 // Ready reports whether the host can host agents at all.
@@ -57,7 +60,19 @@ look() {
 }
 printf 'platform=%s\n' "$(uname -sm)"
 printf 'home=%s\n' "$HOME"
-sl=$(look stormlight) && printf 'stormlight=%s\n' "$sl"
+if [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ] || \
+   (command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl); then
+  printf 'libc=musl\n'
+fi
+# A configured bin is the binary the bridge will actually run, so it is
+# the one worth asking about — a Stormlight elsewhere on PATH says
+# nothing about whether the configured path exists.
+if [ -n "$STORMLIGHT_CONFIGURED_BIN" ]; then
+  [ -x "$STORMLIGHT_CONFIGURED_BIN" ] && sl="$STORMLIGHT_CONFIGURED_BIN"
+else
+  sl=$(look stormlight)
+fi
+[ -n "$sl" ] && printf 'stormlight=%s\n' "$sl"
 [ -n "$sl" ] && printf 'stormlight_version=%s\n' "$("$sl" --version 2>/dev/null | head -1)"
 yz=$(look yazi) && printf 'yazi=%s\n' "$yz"
 for manager in brew apt-get dnf pacman apk; do
@@ -69,7 +84,15 @@ done
 // machine, so its errors are the ones that have to be legible: an
 // unaccepted host key, a refused login, a name that does not resolve.
 func Probe(ctx context.Context, transport *Transport) (Report, error) {
-	command := transport.ShellCommand(ctx, probeScript)
+	// The configured binary travels as an environment variable rather
+	// than spliced into the script: it is a path someone typed, and a
+	// script is not the place to find out it had a quote in it.
+	script := probeScript
+	if bin := transport.Host().Bin; bin != "" {
+		script = "STORMLIGHT_CONFIGURED_BIN=" +
+			shellQuote([]string{bin}) + "\n" + script
+	}
+	command := transport.ShellCommand(ctx, script)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
@@ -103,6 +126,8 @@ func Probe(ctx context.Context, transport *Transport) (Report, error) {
 			report.Yazi.Path = value
 		case "package_manager":
 			report.PackageManager = value
+		case "libc":
+			report.Musl = value == "musl"
 		}
 	}
 	return report, nil
@@ -134,22 +159,20 @@ func (r Report) CanCopyBinary() bool {
 // Target is the host's platform in the naming published builds use.
 func (r Report) Target() (Target, bool) { return TargetFor(r.Platform) }
 
-// YaziInstallCommand is how this host would install Yazi, or empty when
-// Stormlight has no business guessing. Package management belongs to the
-// machine's owner; offering to run the one command its own package
-// manager would use is help, and inventing one is damage.
+// YaziInstallCommand is what this host's own package manager would use,
+// for the machines where Yazi is actually packaged.
+//
+// It is a suggestion printed for the reader, not the path Stormlight
+// takes. Yazi is in Homebrew and in Arch's repositories; it is not in
+// Fedora's, and its presence in Debian's and Alpine's depends on how new
+// they are. Naming a command that does not exist is worse than naming
+// none — `No match for argument: yazi` is how that was found out.
 func (r Report) YaziInstallCommand() string {
 	switch r.PackageManager {
 	case "brew":
 		return "brew install yazi"
-	case "apt-get":
-		return "sudo apt-get install -y yazi"
-	case "dnf":
-		return "sudo dnf install -y yazi"
 	case "pacman":
-		return "sudo pacman -S --noconfirm yazi"
-	case "apk":
-		return "sudo apk add yazi"
+		return "sudo pacman -S yazi"
 	default:
 		return ""
 	}
@@ -241,26 +264,60 @@ func pathDir(path string) string {
 	return "."
 }
 
-// InstallYazi runs the host's own package manager.
+// InstallYazi puts Yazi's own published build beside Stormlight on the
+// host.
+//
+// Not through the host's package manager: Yazi is absent from some
+// distributions' repositories entirely, and a package install wants a
+// password that a popup is a poor place to ask for. A user-local binary
+// needs no privileges and is the same everywhere.
 func InstallYazi(
 	ctx context.Context,
 	transport *Transport,
 	report Report,
 	progress io.Writer,
 ) error {
-	install := report.YaziInstallCommand()
-	if install == "" {
+	target, ok := report.Target()
+	if !ok {
 		return fmt.Errorf(
-			"%s has no package manager Stormlight recognises; install yazi there yourself, "+
-				"or use Enter a path instead of browsing", report.Host)
+			"%s reports %q, which is not a platform yazi publishes for — "+
+				"use Enter a path instead of browsing", report.Host, report.Platform)
 	}
-	fmt.Fprintf(progress, "running on %s: %s\n", report.Host, install)
-	// A login shell, because the package manager is usually on the PATH
-	// a profile sets rather than the one ssh hands a bare command.
-	command := transport.ShellCommand(ctx, `"$SHELL" -lc `+shellQuote([]string{install})+"\n")
-	command.Stdout = progress
-	command.Stderr = progress
-	return command.Run()
+	fmt.Fprintf(progress, "fetching yazi's %s build\n", target)
+	binaries, err := YaziBinaries(ctx, target, report.Musl)
+	if err != nil {
+		return err
+	}
+
+	directory := pathDir(report.InstallPath())
+	prepare := transport.ShellCommand(ctx, fmt.Sprintf("set -e\nmkdir -p %q\n", directory))
+	prepare.Stdout, prepare.Stderr = progress, progress
+	if err := prepare.Run(); err != nil {
+		return fmt.Errorf("prepare %s on %s: %w", directory, report.Host, err)
+	}
+
+	// yazi is the browser; ya is what its plugins are managed with, and
+	// costs one more copy to have rather than to explain the absence of.
+	for _, name := range []string{"yazi", "ya"} {
+		payload := binaries[name]
+		if len(payload) == 0 {
+			continue
+		}
+		destination := directory + "/" + name
+		fmt.Fprintf(progress, "installing to %s:%s\n", report.Host, destination)
+		copyIn := transport.PipeCommand(ctx, bytes.NewReader(payload), "tee", destination+".new")
+		copyIn.Stdout, copyIn.Stderr = io.Discard, progress
+		if err := copyIn.Run(); err != nil {
+			return fmt.Errorf("copy %s to %s: %w", name, report.Host, err)
+		}
+		finish := transport.ShellCommand(ctx, fmt.Sprintf(
+			"set -e\nchmod 0755 %[1]q.new\nmv %[1]q.new %[1]q\n", destination))
+		finish.Stdout, finish.Stderr = progress, progress
+		if err := finish.Run(); err != nil {
+			return fmt.Errorf("install %s on %s: %w", name, report.Host, err)
+		}
+	}
+	return nil
 }
 
 // localPlatform is this machine's `uname -sm`, asked the same way the

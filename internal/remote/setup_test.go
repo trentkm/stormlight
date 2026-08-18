@@ -44,8 +44,10 @@ printf 'package_manager=apt-get\n'`)
 	if !report.Ready() {
 		t.Fatal("a host with stormlight can hold agents, yazi or not")
 	}
-	if got := report.YaziInstallCommand(); !strings.Contains(got, "apt-get") {
-		t.Fatalf("install command = %q", got)
+	// apt is not one of the package managers Yazi is reliably in, and
+	// Stormlight installs it from Yazi's own release regardless.
+	if got := report.YaziInstallCommand(); got != "" {
+		t.Fatalf("install command = %q, want none suggested", got)
 	}
 	if got := report.InstallPath(); got != "/home/trent/.local/bin/stormlight" {
 		t.Fatalf("install path = %q", got)
@@ -156,26 +158,53 @@ func TestAChecksumMismatchRefuses(t *testing.T) {
 	}
 }
 
-// TestYaziIsOnlyOfferedWhereItCanBeInstalled: package management belongs
-// to the machine's owner. Offering the one command its own package
-// manager would use is help; inventing one is damage.
-func TestYaziIsOnlyOfferedWhereItCanBeInstalled(t *testing.T) {
+// TestYaziIsOnlySuggestedWhereItIsPackaged: naming a command that does
+// not exist is worse than naming none. Yazi is in Homebrew and Arch's
+// repositories; it is not in Fedora's, which is where
+// `No match for argument: yazi` came from.
+func TestYaziIsOnlySuggestedWhereItIsPackaged(t *testing.T) {
 	for manager, want := range map[string]string{
 		"brew":    "brew install yazi",
 		"pacman":  "pacman -S",
+		"dnf":     "",
+		"apt-get": "",
+		"apk":     "",
 		"unknown": "",
 	} {
 		got := (Report{PackageManager: manager}).YaziInstallCommand()
 		if want == "" && got != "" {
-			t.Fatalf("%s: offered %q", manager, got)
+			t.Fatalf("%s: suggested %q, which may not exist there", manager, got)
 		}
 		if want != "" && !strings.Contains(got, want) {
 			t.Fatalf("%s: got %q", manager, got)
 		}
 	}
-	err := InstallYazi(context.Background(), nil, Report{Host: "devbox"}, nil)
+
+	// A platform Yazi does not publish for says what still works.
+	err := InstallYazi(
+		context.Background(), nil, Report{Host: "devbox", Platform: "Plan9 386"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "Enter a path") {
 		t.Fatalf("it should say what still works instead: %v", err)
+	}
+}
+
+// TestYaziTriplesMatchWhatItPublishes: Rust names platforms a third way,
+// and musl is a different binary rather than a slower one.
+func TestYaziTriplesMatchWhatItPublishes(t *testing.T) {
+	for _, test := range []struct {
+		target Target
+		musl   bool
+		want   string
+	}{
+		{Target{"linux", "arm64"}, false, "aarch64-unknown-linux-gnu"},
+		{Target{"linux", "amd64"}, false, "x86_64-unknown-linux-gnu"},
+		{Target{"linux", "amd64"}, true, "x86_64-unknown-linux-musl"},
+		{Target{"darwin", "arm64"}, false, "aarch64-apple-darwin"},
+	} {
+		got, ok := yaziTriple(test.target, test.musl)
+		if !ok || got != test.want {
+			t.Fatalf("%v musl=%v → %q, want %q", test.target, test.musl, got, test.want)
+		}
 	}
 }
 

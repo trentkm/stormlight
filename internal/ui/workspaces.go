@@ -114,6 +114,12 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.showingMachines() {
 			m.openMachine()
+			if m.machineState.running {
+				// The spinner rides the same tick the working glow does,
+				// which only runs while something is moving.
+				return m, tea.Batch(
+					m.checkMachineCmd(m.machineState.host), m.startShimmer())
+			}
 			return m, nil
 		}
 		selected, ok := m.selectedDirectory()

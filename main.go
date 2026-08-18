@@ -508,6 +508,20 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 		// here. Naming one is what makes it usable, so this list is
 		// suggestions rather than permission.
 		Hosts: dashboardHosts(cfg),
+		// Asking a machine what it has, so the modal can say "not set up
+		// yet" rather than offering a browse that will hang and fail.
+		CheckHost: func(ctx context.Context, host string) (ui.HostStatus, error) {
+			transport := remote.NewTransport(remoteHostFrom(host, cfg.Hosts[host]))
+			report, err := remote.Probe(ctx, transport)
+			if err != nil {
+				return ui.HostStatus{}, err
+			}
+			return ui.HostStatus{
+				Ready:  report.Ready(),
+				Yazi:   report.Yazi.Present(),
+				Detail: report.Platform,
+			}, nil
+		},
 	}
 	if openPath != "" {
 		value, err := service.AddWorkspace(context.Background(), "", openPath)

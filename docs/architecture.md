@@ -240,8 +240,19 @@ published archive and says so instead of guessing at a version. The
 installed path is recorded as that host's `bin`, because a
 non-interactive SSH shell frequently has no `~/.local/bin` on its PATH
 and would not find what was just put there.
-Yazi is offered only through the host's own package manager, and
-described rather than guessed at when there is none. Members exist at start-up for the machines the
+Yazi comes from its own published build for that platform, put beside
+Stormlight in the same directory. Not through the host's package
+manager: it is absent from some distributions' repositories entirely, and
+a package install wants a password that a popup is a poor place to ask
+for. A user-local binary needs no privileges and is the same everywhere.
+
+Opening a machine asks it what it has before offering to browse it, so
+the answer can be "this one has no Stormlight yet" with the row that
+fixes that already under the cursor, rather than a picker that hangs and
+then fails. Reaching it shows a spinner, because SSH takes as long as it
+takes and a modal showing nothing is one nobody can tell from a broken
+one. Silence is never read as a verdict: a machine still being asked, or
+one there is no way to ask, keeps every row it would otherwise have. Members exist at start-up for the machines the
 catalog says hold a workspace — listing names no host, so without that a
 machine's agents would be invisible until something mentioned one — and
 any other joins the moment it is first named. `[hosts.<name>]` is where a

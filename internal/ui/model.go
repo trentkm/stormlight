@@ -110,6 +110,41 @@ const (
 	tabRemote
 )
 
+// machineCheck is the state of asking a machine whether it can host
+// agents at all.
+//
+// Reaching another machine takes as long as SSH takes, which is not
+// instant and is sometimes forever. Asking when a machine is opened —
+// rather than when someone finally presses Browse — is what lets the
+// answer be "this machine is not set up yet" instead of a picker that
+// hangs and then fails.
+type machineCheck struct {
+	host    string
+	running bool
+	// err is why the machine could not be reached or read.
+	err error
+	// ready says Stormlight is installed there; without it nothing else
+	// on that machine can work.
+	ready bool
+	// yazi says it can be browsed. Its absence costs browsing and
+	// nothing else, so it is a note rather than a refusal.
+	yazi   bool
+	detail string
+}
+
+// HostStatus is what a machine reported about itself.
+type HostStatus struct {
+	Ready  bool
+	Yazi   bool
+	Detail string
+}
+
+type machineCheckedMsg struct {
+	host   string
+	status HostStatus
+	err    error
+}
+
 // machineChoice is one row of the Remote tab: a machine from the user's
 // SSH configuration, or the row for naming one it does not list.
 type machineChoice struct {
@@ -167,6 +202,9 @@ type Model struct {
 	catalogWorkspaces []workspace.Context
 	workspaceRoots    []workspace.Context
 	groups            []workspaceGroup
+	// machineState is what the machine being opened said about itself,
+	// and whether it has said anything yet.
+	machineState machineCheck
 	// The Add Workspace modal: which tab is showing, which machine the
 	// Remote tab has been opened on, and the machines it can offer.
 	addWorkspaceTab  addWorkspaceTab
@@ -174,6 +212,7 @@ type Model struct {
 	machines         []machineChoice
 	machineIndex     int
 	hostInput        lineInput
+	checkHost        func(context.Context, string) (HostStatus, error)
 	// dispatchHost is the machine the open dispatch form is aimed at. It
 	// travels with the directory rather than being asked for separately:
 	// a path only means anything alongside the machine it is on.
@@ -364,6 +403,9 @@ type Options struct {
 	Columns ColumnPrefs
 	// Keys rebinds the seam chords; empty lists keep the defaults.
 	Keys KeyBindings
+	// CheckHost asks a machine what it has. It is what the Add Workspace
+	// modal waits on before offering to browse one.
+	CheckHost func(context.Context, string) (HostStatus, error)
 	// Hosts are the machines to offer when adding a workspace, in the
 	// order they should appear — read from the user's SSH configuration.
 	// This machine is not among them; it has its own tab.
@@ -428,6 +470,7 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		ptyManager:         ptyview.NewManager(backend),
 		keys:               fillKeyDefaults(options.Keys),
 		machines:           machineChoices(options.Hosts),
+		checkHost:          options.CheckHost,
 		hostInput:          newLineInput("user@host"),
 	}
 	for index, info := range model.providers {
@@ -509,8 +552,24 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
 
+	case machineCheckedMsg:
+		// A late answer for a machine nobody is looking at any more is
+		// not an answer to anything.
+		if m.machineState.host != msg.host {
+			return m, nil
+		}
+		m.machineState = machineCheck{
+			host:   msg.host,
+			err:    msg.err,
+			ready:  msg.status.Ready,
+			yazi:   msg.status.Yazi,
+			detail: msg.status.Detail,
+		}
+		m.setAddWorkspaceChoices()
+		return m, nil
+
 	case shimmerTickMsg:
-		if !m.anyAgentsActive() {
+		if !m.anyAgentsActive() && !m.machineState.running {
 			m.shimmerRunning = false
 			m.shimmerPhase = 0
 			return m, nil
@@ -1130,6 +1189,17 @@ func (m Model) anyAgentsActive() bool {
 
 // shimmerPhaseOrRest returns the sweep phase while the shimmer is running
 // and the resting (uniform base shade) phase otherwise.
+// startShimmer begins the animation tick if it is not already running.
+// It drives the working glow and the machine-check spinner both, so
+// whichever starts first carries the other.
+func (m *Model) startShimmer() tea.Cmd {
+	if m.shimmerRunning {
+		return nil
+	}
+	m.shimmerRunning = true
+	return shimmerTickCmd()
+}
+
 func (m Model) shimmerPhaseOrRest() int {
 	if m.shimmerRunning {
 		return m.shimmerPhase

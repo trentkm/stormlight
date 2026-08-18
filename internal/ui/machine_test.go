@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -234,5 +236,136 @@ func TestNoLocalYaziStillBrowsesAnotherMachineFromTheAgentForm(t *testing.T) {
 
 	if _, cmd := model.openYazi(); cmd == nil {
 		t.Fatalf("a remote browse should not need a local yazi: %v", model.err)
+	}
+}
+
+func checkedFixture(t *testing.T, status HostStatus, err error) Model {
+	t.Helper()
+	model := addWorkspaceFixture(t, "devbox")
+	model.checkHost = func(context.Context, string) (HostStatus, error) {
+		return status, err
+	}
+	model.switchAddWorkspaceTab(tabRemote)
+	model.openMachine()
+	// What the command would have delivered.
+	updated, _ := model.Update(machineCheckedMsg{
+		host: "devbox", status: status, err: err})
+	return updated.(Model)
+}
+
+// TestReachingAMachineSaysSo: SSH takes as long as it takes, and a modal
+// that shows nothing while it happens is one nobody can tell from a
+// broken one.
+func TestReachingAMachineSaysSo(t *testing.T) {
+	model := addWorkspaceFixture(t, "devbox")
+	model.checkHost = func(context.Context, string) (HostStatus, error) {
+		return HostStatus{Ready: true, Yazi: true}, nil
+	}
+	model.switchAddWorkspaceTab(tabRemote)
+	model.openMachine()
+
+	if !model.machineState.running {
+		t.Fatal("opening a machine should start reaching it")
+	}
+	status := model.renderMachineStatus(70)
+	if !strings.Contains(status, "Reaching devbox") {
+		t.Fatalf("status = %q", status)
+	}
+	// A frame of the spinner, whichever it is on.
+	if !strings.ContainsAny(status, "∙●") {
+		t.Fatalf("no spinner in %q", status)
+	}
+	// While it is unknown, browsing is still offered — silence is not a
+	// verdict.
+	if model.directories[0].kind != directoryYazi {
+		t.Fatalf("choices = %#v", model.directories)
+	}
+}
+
+// TestAMachineWithNoStormlightOffersToFixItself: the case that started
+// this — a host that cannot be reached at all should say so and point at
+// the row that fixes it, not offer a browse that will fail.
+func TestAMachineWithNoStormlightOffersToFixItself(t *testing.T) {
+	model := checkedFixture(t, HostStatus{Ready: false}, nil)
+
+	status := model.renderMachineStatus(70)
+	if !strings.Contains(status, "no Stormlight") {
+		t.Fatalf("status = %q", status)
+	}
+	for _, choice := range model.directories {
+		if choice.kind == directoryYazi {
+			t.Fatal("browsing must not be offered on a machine that cannot do it")
+		}
+	}
+	selected, ok := model.selectedDirectory()
+	if !ok || selected.kind != directorySetup {
+		t.Fatalf("it should open on the row that fixes this: %#v", selected)
+	}
+}
+
+// TestAnUnreachableMachineSaysWhy: the error belongs on screen, not in a
+// log — it is usually a host key or a name that does not resolve, and
+// both have obvious fixes once seen.
+func TestAnUnreachableMachineSaysWhy(t *testing.T) {
+	model := checkedFixture(t, HostStatus{},
+		fmt.Errorf("devbox: ssh: Could not resolve hostname devbox"))
+
+	status := model.renderMachineStatus(70)
+	if !strings.Contains(status, "Cannot reach devbox") ||
+		!strings.Contains(status, "resolve hostname") {
+		t.Fatalf("status = %q", status)
+	}
+	selected, ok := model.selectedDirectory()
+	if !ok || selected.kind != directorySetup {
+		t.Fatalf("selected = %#v", selected)
+	}
+}
+
+// TestAMachineWithoutYaziKeepsTypedPaths: yazi's absence costs browsing
+// and nothing else.
+func TestAMachineWithoutYaziKeepsTypedPaths(t *testing.T) {
+	model := checkedFixture(t, HostStatus{Ready: true, Yazi: false}, nil)
+
+	if !strings.Contains(model.renderMachineStatus(70), "no yazi") {
+		t.Fatalf("status = %q", model.renderMachineStatus(70))
+	}
+	var typed bool
+	for _, choice := range model.directories {
+		if choice.kind == directoryYazi {
+			t.Fatal("a machine without yazi cannot be browsed")
+		}
+		if choice.kind == directoryCustom {
+			typed = true
+		}
+	}
+	if !typed {
+		t.Fatal("typing a path still works")
+	}
+}
+
+// TestAReadyMachineJustWorks: the common case stays quiet — a line
+// naming the machine, and the rows as they were.
+func TestAReadyMachineJustWorks(t *testing.T) {
+	model := checkedFixture(t,
+		HostStatus{Ready: true, Yazi: true, Detail: "Linux aarch64"}, nil)
+
+	if !strings.Contains(model.renderMachineStatus(70), "Linux aarch64") {
+		t.Fatalf("status = %q", model.renderMachineStatus(70))
+	}
+	if model.directories[0].kind != directoryYazi {
+		t.Fatalf("choices = %#v", model.directories)
+	}
+}
+
+// TestALateAnswerForAnotherMachineIsIgnored: someone who moved on before
+// a slow machine replied should not have the modal change under them.
+func TestALateAnswerForAnotherMachineIsIgnored(t *testing.T) {
+	model := checkedFixture(t, HostStatus{Ready: true, Yazi: true}, nil)
+	before := model.renderMachineStatus(70)
+
+	updated, _ := model.Update(machineCheckedMsg{
+		host: "somewhere-else", status: HostStatus{Ready: false}})
+	if got := updated.(Model).renderMachineStatus(70); got != before {
+		t.Fatalf("a late answer for another machine changed this one: %q", got)
 	}
 }
