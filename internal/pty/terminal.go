@@ -4,6 +4,7 @@ package pty
 import (
 	"context"
 	"io"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -130,7 +131,9 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 	// vt writes query responses to its input pipe. The real terminal owns
 	// those responses, so drain this end to keep a query from blocking paint.
 	go func() { _, _ = io.Copy(io.Discard, s.emu) }()
-	seed := transport.Seed()
+	// A windrunner snapshot has already passed through x/vt once. Normalize
+	// its reversed OSC 8 fields before replaying it through this second x/vt.
+	seed := []byte(repairVTHyperlinks(string(transport.Seed())))
 	s.observeModes(seed)
 	s.emu.Write(seed)
 	model := Model{id: lastID.Add(1), state: s}
@@ -164,6 +167,9 @@ func (m Model) setTerminalSize(cols, rows int) {
 
 func (s *state) pump() {
 	for chunk := range s.transport.Output() {
+		// Most output is raw PTY data and needs no change. Resize repaints
+		// come from windrunner's x/vt and carry its reversed OSC 8 fields.
+		chunk = []byte(repairVTHyperlinks(string(chunk)))
 		s.observeModes(chunk)
 		s.mu.Lock()
 		s.emu.Write(chunk)
@@ -344,7 +350,7 @@ func (m Model) View() string {
 	}
 	var lines []string
 	if s.scroll == 0 || s.emu.IsAltScreen() {
-		lines = strings.Split(s.emu.Render(), "\n")
+		lines = strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
 		if len(lines) > s.rows {
 			bottom := len(lines)
 			if cursor := s.emu.CursorPosition().Y; cursor < bottom-s.rows {
@@ -357,10 +363,10 @@ func (m Model) View() string {
 		top := max(0, back.Len()+s.termRows-s.rows-s.scroll)
 		bottom := min(back.Len()+s.termRows, top+s.rows)
 		for i := top; i < min(bottom, back.Len()); i++ {
-			lines = append(lines, back.Line(i).Render())
+			lines = append(lines, repairVTHyperlinks(back.Line(i).Render()))
 		}
 		if bottom > back.Len() {
-			live := strings.Split(s.emu.Render(), "\n")
+			live := strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
 			for i := max(0, top-back.Len()); i < min(len(live), bottom-back.Len()); i++ {
 				lines = append(lines, live[i])
 			}
@@ -369,6 +375,50 @@ func (m Model) View() string {
 	s.view = fit(lines, s.cols, s.rows)
 	s.viewDirty = false
 	return s.view
+}
+
+// x/vt stores OSC 8's params and URI in each other's fields
+// (https://github.com/charmbracelet/x/pull/868), so its renderer emits
+// OSC 8 ; URI ; params instead of OSC 8 ; params ; URI. Raw PTY output is
+// already correct and starts with an empty params field; serialized snapshots
+// and repaints have a URI in that field. Repair only the latter form at each
+// emulator boundary until the upstream fix lands.
+func repairVTHyperlinks(value string) string {
+	const prefix = "\x1b]8;"
+	if !strings.Contains(value, prefix) {
+		return value
+	}
+
+	var repaired strings.Builder
+	repaired.Grow(len(value))
+	for {
+		start := strings.Index(value, prefix)
+		if start < 0 {
+			repaired.WriteString(value)
+			return repaired.String()
+		}
+		repaired.WriteString(value[:start])
+		value = value[start:]
+
+		end := strings.IndexByte(value, '\a')
+		if end < 0 {
+			repaired.WriteString(value)
+			return repaired.String()
+		}
+		sequence := value[:end+1]
+		uri, params, found := strings.Cut(value[len(prefix):end], ";")
+		parsed, parseErr := url.Parse(uri)
+		if !found || parseErr != nil || parsed.Scheme == "" {
+			repaired.WriteString(sequence)
+		} else {
+			repaired.WriteString(prefix)
+			repaired.WriteString(params)
+			repaired.WriteByte(';')
+			repaired.WriteString(uri)
+			repaired.WriteByte('\a')
+		}
+		value = value[end+1:]
+	}
 }
 
 // Cursor reports a visible cursor relative to this terminal's box.

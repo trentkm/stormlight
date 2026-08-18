@@ -92,6 +92,51 @@ func TestViewIsCachedUntilTheTerminalChanges(t *testing.T) {
 	}
 }
 
+func TestTerminalPreservesHyperlinks(t *testing.T) {
+	const url = "https://example.com/docs"
+	correct := []string{
+		"\x1b]8;;" + url + "\aempty params\x1b]8;;\a",
+		"\x1b]8;id=docs;" + url + "\apopulated params\x1b]8;;\a",
+	}
+	for _, testCase := range []struct {
+		name, seed string
+	}{
+		{"raw PTY output", strings.Join(correct, " ")},
+		{"windrunner snapshot",
+			"\x1b]8;" + url + ";\aempty params\x1b]8;;\a " +
+				"\x1b]8;" + url + ";id=docs\apopulated params\x1b]8;;\a"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			transport := newFakeTransport(testCase.seed)
+			terminal := New(transport, NewGate(), 50, 2)
+			defer terminal.Close()
+
+			view := terminal.View()
+			for _, want := range correct {
+				if !strings.Contains(view, want) {
+					t.Errorf("terminal dropped hyperlink %q from %q", want, view)
+				}
+			}
+		})
+	}
+}
+
+func TestTerminalRepairsHyperlinksInWindrunnerRepaints(t *testing.T) {
+	const url = "https://example.com/docs"
+	transport := newFakeTransport("")
+	terminal := New(transport, NewGate(), 50, 2)
+	defer terminal.Close()
+	terminal.SetVisible(true)
+
+	transport.output <- []byte("\x1b]8;" + url + ";\arepaint\x1b]8;;\a")
+	<-terminal.state.gate.frames
+	if view := terminal.View(); !strings.Contains(
+		view, "\x1b]8;;"+url+"\arepaint\x1b]8;;\a",
+	) {
+		t.Errorf("terminal dropped repaint hyperlink from %q", view)
+	}
+}
+
 func TestOnlyVisibleTerminalsKnockOnTheGate(t *testing.T) {
 	gate := NewGate()
 	transport := newFakeTransport("quiet")
