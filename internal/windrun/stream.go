@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/trentkm/windrunner/client"
+	"github.com/trentkm/windrunner/wire"
 
 	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/session"
@@ -67,10 +68,17 @@ func newStream(
 	return stream
 }
 
-// usableSize reports whether a geometry is one a terminal can be. The
-// daemon rejects anything smaller than 2x2, so a size below it is a
-// malformed claim rather than a small terminal.
-func usableSize(cols, rows int) bool { return cols >= 2 && rows >= 2 }
+// snapshotSize is the geometry a snapshot says it was rendered at, or nil
+// when it names one no terminal can be. The daemon rejects anything below
+// 2x2, so a smaller number is a malformed claim rather than a small
+// terminal — and passing it on would have consumers clamp it into a real
+// 2x2 reflow of a terminal every viewer shares.
+func snapshotSize(snapshot *wire.SnapshotPayload) *pty.Size {
+	if snapshot.Cols < 2 || snapshot.Rows < 2 {
+		return nil
+	}
+	return &pty.Size{Cols: snapshot.Cols, Rows: snapshot.Rows}
+}
 
 type terminalStream struct {
 	attachment *client.Attachment
@@ -91,17 +99,7 @@ func (t *terminalStream) Seed() []byte {
 // would be free to reorder them, and the ordering is the contract.
 func (t *terminalStream) relay(source <-chan client.Message) {
 	defer close(t.output)
-	for {
-		var message client.Message
-		var ok bool
-		select {
-		case <-t.done:
-			return
-		case message, ok = <-source:
-			if !ok {
-				return
-			}
-		}
+	for message := range source {
 		var translated pty.Message
 		switch {
 		case message.Resync != nil:
@@ -111,16 +109,9 @@ func (t *terminalStream) relay(source <-chan client.Message) {
 			// can tell it the terminal moved. Dropping these two fields
 			// leaves a replica repainting a wide screen into a narrow
 			// emulator, wrapped and wrong, until someone resizes again.
-			translated = pty.Message{Resync: message.Resync.ANSI}
-			// The snapshot names the size it was rendered at, and the
-			// daemon fills it — but a size a terminal cannot be must not
-			// travel just because it arrived. Passing a zero on would
-			// have consumers clamp it to a legal 2x2 and reflow to it.
-			if usableSize(message.Resync.Cols, message.Resync.Rows) {
-				translated.Resize = &pty.Size{
-					Cols: message.Resync.Cols,
-					Rows: message.Resync.Rows,
-				}
+			translated = pty.Message{
+				Resync: message.Resync.ANSI,
+				Resize: snapshotSize(message.Resync),
 			}
 		case message.Resize != nil:
 			translated = pty.Message{Resize: &pty.Size{
@@ -159,9 +150,15 @@ func (t *terminalStream) Resize(ctx context.Context, cols, rows int) error {
 }
 
 func (t *terminalStream) Close() {
-	// Release the relay first: closing only the attachment leaves it
-	// parked on a channel nobody drains, holding the client's read loop
-	// behind it.
-	t.closeOnce.Do(func() { close(t.done) })
+	// Release the relay first, then end the attachment. The order is the
+	// contract: released, the relay stops queueing and starts draining,
+	// so closing the attachment can finish rather than stalling on a
+	// read loop with nowhere to put what it has.
+	t.release()
 	t.attachment.Close()
+}
+
+// release lets the relay stop queueing for a consumer that has gone.
+func (t *terminalStream) release() {
+	t.closeOnce.Do(func() { close(t.done) })
 }

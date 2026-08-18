@@ -101,13 +101,7 @@ type state struct {
 	// sizeGeneration counts changes to the terminal's size. A resync
 	// parses its state off-lock, which takes long enough for a resize to
 	// land in the middle; the counter is how the swap notices.
-	sizeGeneration int
-	// sizeRequested marks a size this widget asked the daemon for and has
-	// not been confirmed on. It decides who wins when a resync disagrees:
-	// the snapshot describes the terminal as it was when it was taken,
-	// while a request the daemon has already accepted describes it as it
-	// is now. Cleared by a resize notice, which is the daemon answering.
-	sizeRequested         bool
+	sizeGeneration        int
 	scroll, scrollDelta   int
 	scrollPending, closed bool
 	// visible marks the terminal as on screen: only visible terminals
@@ -158,13 +152,14 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 
 	s.mu.Lock()
 	cols, rows := s.termCols, s.termRows
-	generation, requested := s.sizeGeneration, s.sizeRequested
+	generation := s.sizeGeneration
 	s.mu.Unlock()
-	if size != nil && !requested {
-		// The snapshot's size is the terminal as of when it was taken. It
-		// loses to a size this widget has asked the daemon for, because
-		// that request has already moved the terminal and a viewer in
-		// resync debt receives no notice confirming it.
+	if size != nil {
+		// The snapshot's bytes were rendered at this size, and the two
+		// are one thing: replaying them at any other width wraps them
+		// wrongly on purpose. An older size corrects itself, because
+		// every snapshot carries the daemon's live one and a viewer in
+		// debt receives one every interval until it catches up.
 		cols, rows = max(2, size.Cols), max(2, size.Rows)
 	}
 
@@ -239,8 +234,6 @@ func (m Model) setTerminalSize(cols, rows int) {
 		s.sizeGeneration++
 		s.viewDirty = true
 	}
-	// The daemon has spoken about the size, so nothing local is pending.
-	s.sizeRequested = false
 	s.mu.Unlock()
 	if s.visible.Load() {
 		s.gate.Notify()
@@ -349,7 +342,6 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 		s.emu.Resize(cols, rows)
 		s.cols, s.rows, s.termCols, s.termRows = cols, rows, cols, rows
 		s.sizeGeneration++
-		s.sizeRequested = true
 		s.viewDirty = true
 	}
 	s.mu.Unlock()

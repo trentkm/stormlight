@@ -18,7 +18,7 @@ import (
 func newRelay(t *testing.T, source <-chan client.Message, buffer int) *terminalStream {
 	t.Helper()
 	stream := newStream(nil, source, buffer)
-	t.Cleanup(func() { stream.closeOnce.Do(func() { close(stream.done) }) })
+	t.Cleanup(stream.release)
 	return stream
 }
 
@@ -87,7 +87,7 @@ func TestReleasedRelayKeepsDrainingItsSource(t *testing.T) {
 
 	source <- client.Message{Bytes: []byte("fills the buffer")}
 	source <- client.Message{Bytes: []byte("relay now blocked sending this")}
-	stream.closeOnce.Do(func() { close(stream.done) })
+	stream.release()
 
 	// A released relay keeps taking from its source, so this lands rather
 	// than parking the way a real client's read loop would.

@@ -87,7 +87,6 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	// hands over whole chunks already, and holding one back to merge it
 	// with the next would trade the responsiveness this plane exists for
 	// against nothing.
-	announced := pty.Size{Cols: cols, Rows: rows}
 	for {
 		select {
 		case <-ctx.Done():
@@ -105,10 +104,13 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				// about to fill — while a viewer is in debt the daemon
 				// sends nothing else, so this is the only place it can
 				// learn the terminal moved.
-				// Only when it actually moved: a resync carries the size
-				// every time, and a viewer in debt gets one every tenth
-				// of a second. The control channel is meant to be quiet.
-				if message.Resize != nil && *message.Resize != announced {
+				// Sent every time rather than only on a change. Tracking
+				// what the client last heard means tracking three things
+				// that move it — this branch, the resize branch, and the
+				// client resizing itself — and getting that wrong
+				// suppresses a size the browser actually needed. A few
+				// extra control frames cost nothing next to that.
+				if message.Resize != nil {
 					if err := writeControl(ctx, conn, controlMessage{
 						Type: controlResize,
 						Cols: message.Resize.Cols,
@@ -116,7 +118,6 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					}); err != nil {
 						return
 					}
-					announced = *message.Resize
 				}
 				if err := writeSeed(ctx, conn, message.Resync); err != nil {
 					return

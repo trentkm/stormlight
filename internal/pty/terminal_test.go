@@ -359,14 +359,49 @@ func TestResizeDuringAResyncIsNotLost(t *testing.T) {
 	terminal := New(transport, NewGate(), 80, 24)
 	defer terminal.Close()
 
-	// Move the terminal, then apply state that predates the move.
+	// Big enough that the parse is measurably long, which is the window
+	// this is about.
+	var seed strings.Builder
+	for i := 0; i < 4000; i++ {
+		seed.WriteString("a line of terminal output that has to be parsed\r\n")
+	}
+
+	parsed := make(chan struct{})
+	go func() {
+		defer close(parsed)
+		terminal.state.replaceReplica([]byte(seed.String()), &Size{Cols: 80, Rows: 24})
+	}()
+	// Land the resize inside the parse.
+	time.Sleep(5 * time.Millisecond)
 	terminal.SetSize(200, 50)
-	terminal.state.replaceReplica([]byte("state from before the resize"),
-		&Size{Cols: 80, Rows: 24})
+	<-parsed
 
 	if cols, rows := terminal.TerminalSize(); cols != 200 || rows != 50 {
 		t.Fatalf("emulator is %dx%d after a resize during a resync, want 200x50",
 			cols, rows)
+	}
+}
+
+// A snapshot may carry queries — a cursor-position report, device
+// attributes — and the emulator answers them on an unbuffered pipe. With
+// nothing draining that pipe, the write replaying the snapshot blocks
+// forever and takes the terminal's whole pump with it.
+func TestSeedFullOfQueriesDoesNotWedge(t *testing.T) {
+	var seed strings.Builder
+	for i := 0; i < 64; i++ {
+		seed.WriteString("\x1b[6n")
+	}
+	seeded := make(chan struct{})
+	go func() {
+		defer close(seeded)
+		transport := newFakeTransport(seed.String())
+		terminal := New(transport, NewGate(), 40, 6)
+		terminal.Close()
+	}()
+	select {
+	case <-seeded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a seed full of queries wedged the terminal")
 	}
 }
 
@@ -403,7 +438,10 @@ func goroutinesAtRest() int {
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 		time.Sleep(20 * time.Millisecond)
 		current := runtime.NumGoroutine()
-		if current >= previous {
+		if current == previous {
+			// Equal, not merely non-decreasing: a count still climbing
+			// would otherwise read as settled and inflate the baseline,
+			// hiding the very leak this is measuring.
 			if settled++; settled >= 3 {
 				return current
 			}
