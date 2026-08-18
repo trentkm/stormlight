@@ -277,8 +277,20 @@ runtime-owned session (`session.OverlayHost`, a runtime capability beside
 `TerminalStreamer`), and the dashboard renders its terminal through the
 same widget as the Spanreed, composited into a modal frame. The keyboard
 belongs to the floating program while it is up — `Ctrl-q` cancels, which
-destroys the session — and results return through permission-restricted
-temporary handoff files when the program exits. Overlay sessions carry no
+destroys the session.
+
+Results come back through the session, not through a file. The directory
+picker runs on the machine whose directories are being chosen, and Yazi
+answers through files it writes beside itself — paths that are neither
+readable nor meaningful anywhere else. So `stormlight _pick` runs Yazi
+where it belongs, reads those files where they are, and writes the answer
+into its own session's metadata; the dashboard reads it before `Close`
+takes the session with it. The session is the one thing both ends already
+hold, so the same path works local and remote, and an overlay asking for
+Stormlight by an empty program path gets whichever machine's copy it
+lands on. The task editor stays file-based: it is seeded with the task as
+it stands, so it needs a file written before it opens, and it only ever
+edits text this dashboard already holds. Overlay sessions carry no
 agent document, so the roster never sees them, and Close always removes
 them from the daemon: an overlay resurrected from persistence would be a
 ghost with nothing waiting on its exit.

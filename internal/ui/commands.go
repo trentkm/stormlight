@@ -115,14 +115,13 @@ func actionCmd(label string, action func(context.Context) error) tea.Cmd {
 	}
 }
 
-// addWorkspaceCmd adds a directory the human picked. The picker runs on
-// this machine, so the path is on this machine; adding one from another
-// host waits on the picker learning to run there (#127).
-func addWorkspaceCmd(backend Backend, path string) tea.Cmd {
+// addWorkspaceCmd adds a directory the human picked, on the machine they
+// picked it from.
+func addWorkspaceCmd(backend Backend, host, path string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		value, err := backend.AddWorkspace(ctx, "", path)
+		value, err := backend.AddWorkspace(ctx, host, path)
 		return workspaceAddedMsg{value: value, err: err}
 	}
 }

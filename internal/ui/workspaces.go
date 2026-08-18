@@ -432,5 +432,8 @@ func (m Model) submitAddWorkspace(path string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.blurForm()
-	return m, addWorkspaceCmd(m.backend, path)
+	// A typed path is this machine's until the modal grows a host
+	// selector (#138); one browsed with the picker already carries the
+	// machine it was browsed on.
+	return m, addWorkspaceCmd(m.backend, "", path)
 }

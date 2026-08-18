@@ -247,3 +247,108 @@ func waitForScreen(t *testing.T, runtime *Runtime, id, want string) string {
 		time.Sleep(25 * time.Millisecond)
 	}
 }
+
+// TestARemoteOverlayCanReachTheDaemonHoldingIt: an overlay program leaves
+// its answer in its own session, which means finding the daemon on the
+// machine it is running on. WINDRUNNER_SESSION names the session; without
+// WINDRUNNER_DIR there is nothing to say it to.
+func TestARemoteOverlayCanReachTheDaemonHoldingIt(t *testing.T) {
+	runtime := remoteRuntime(t)
+	overlay, err := runtime.StartOverlay(context.Background(), session.OverlayRequest{
+		Path: "/bin/sh",
+		Args: []string{"-c", `printf 'dir=%s\nsession=%s\nend\n' ` +
+			`"$WINDRUNNER_DIR" "$WINDRUNNER_SESSION"; sleep 60`},
+		Cols: 80,
+		Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("StartOverlay: %v", err)
+	}
+	defer overlay.Close()
+
+	screen := drainOverlay(t, overlay, "end")
+	if !strings.Contains(screen, "dir="+helperSocketDir) {
+		t.Fatalf("the overlay was not told which daemon holds it:\n%s", screen)
+	}
+	if !strings.Contains(screen, "session=") ||
+		strings.Contains(screen, "session=\n") {
+		t.Fatalf("the overlay was not told its own session:\n%s", screen)
+	}
+}
+
+// TestAnOverlayAnswersThroughItsSession: the channel the picker uses. The
+// program writes into the session's metadata on its own machine, and the
+// dashboard reads it from wherever it is.
+func TestAnOverlayAnswersThroughItsSession(t *testing.T) {
+	runtime := remoteRuntime(t)
+	overlay, err := runtime.StartOverlay(context.Background(), session.OverlayRequest{
+		Path: "/bin/sh",
+		Args: []string{"-c", "sleep 60"},
+		Cols: 80,
+		Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("StartOverlay: %v", err)
+	}
+	defer overlay.Close()
+
+	if answer, err := overlay.Result(context.Background()); err != nil || answer != "" {
+		t.Fatalf("an overlay that has answered nothing = %q, %v", answer, err)
+	}
+
+	// Stand in for the program: write the answer into its session, the
+	// way `stormlight _pick` does from inside.
+	answerTheOverlay(t, runtime, "/srv/api")
+
+	answer, err := overlay.Result(context.Background())
+	if err != nil {
+		t.Fatalf("Result: %v", err)
+	}
+	if answer != "/srv/api" {
+		t.Fatalf("answer = %q", answer)
+	}
+}
+
+// answerTheOverlay finds the overlay session and writes a result into it,
+// which is what the program inside does through the daemon on its own
+// machine.
+func answerTheOverlay(t *testing.T, runtime *Runtime, answer string) {
+	t.Helper()
+	sessions, err := runtime.client.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, info := range sessions {
+		if _, ours := info.Metadata[overlayMetadataKey]; !ours {
+			continue
+		}
+		metadata := info.Metadata
+		if metadata == nil {
+			metadata = map[string]string{}
+		}
+		metadata[OverlayResultKey] = answer
+		if err := runtime.client.SetMetadata(info.ID, metadata); err != nil {
+			t.Fatalf("SetMetadata: %v", err)
+		}
+		return
+	}
+	t.Fatal("no overlay session to answer")
+}
+
+func drainOverlay(t *testing.T, overlay session.Overlay, want string) string {
+	t.Helper()
+	collected := string(overlay.Seed())
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(collected, want) {
+		select {
+		case chunk, ok := <-overlay.Output():
+			if !ok {
+				t.Fatalf("overlay stream closed before %q; got:\n%s", want, collected)
+			}
+			collected += string(chunk)
+		case <-deadline:
+			t.Fatalf("timed out waiting for %q; got:\n%s", want, collected)
+		}
+	}
+	return collected
+}
