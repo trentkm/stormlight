@@ -65,7 +65,14 @@ func (r *Runtime) StartOverlay(ctx context.Context, request session.OverlayReque
 	if err != nil {
 		return nil, fmt.Errorf("spawn overlay %s: %w", command, err)
 	}
-	attachment, err := r.client.Attach(info.ID, 256)
+	// Resync for the same reason agent terminals do: a picker listing a
+	// large directory outruns the buffer, and being dropped leaves a
+	// popup frozen with its process still alive — no exit to notice, and
+	// nothing but the escape hatch to close it.
+	attachment, err := r.client.AttachWith(info.ID, client.AttachOptions{
+		Buffer: 256,
+		Resync: true,
+	})
 	if err != nil {
 		_ = r.client.Remove(info.ID)
 		return nil, fmt.Errorf("attach overlay %s: %w", request.Path, err)

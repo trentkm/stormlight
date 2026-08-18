@@ -678,6 +678,78 @@ func TestTerminalRelayCarriesBytesBothWays(t *testing.T) {
 	}
 }
 
+// TestResyncReachesTheBrowserAsState: a viewer that falls behind is sent
+// the terminal as it now stands instead of the bytes it missed, and the
+// browser has to be told to replace its replica rather than append. It is
+// the same seed notice the attach sends, preceded by the size the state
+// was rendered at — the daemon sends a viewer in debt nothing else, so
+// that is the only place it learns the terminal moved.
+func TestResyncReachesTheBrowserAsState(t *testing.T) {
+	server, runtime := startAPI(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/agents/agent-one/terminal?token=" + testToken
+	conn, _, err := websocket.Dial(ctx, address, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	drainSeed(t, ctx, conn)
+
+	runtime.stream.output <- pty.Message{
+		Resync: []byte("exact state after falling behind"),
+		Resize: &pty.Size{Cols: 132, Rows: 43},
+	}
+
+	if notice := readControl(t, ctx, conn); notice.Type != controlResize ||
+		notice.Cols != 132 || notice.Rows != 43 {
+		t.Fatalf("first message = %#v, want a 132x43 resize", notice)
+	}
+	if notice := readControl(t, ctx, conn); notice.Type != controlSeed {
+		t.Fatalf("second message = %#v, want a seed notice", notice)
+	}
+	kind, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if kind != websocket.MessageBinary ||
+		string(payload) != "exact state after falling behind" {
+		t.Fatalf("state = %v %q", kind, payload)
+	}
+
+	// And the stream carries on from there.
+	runtime.stream.output <- pty.Message{Bytes: []byte("and onward")}
+	kind, payload, err = conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if kind != websocket.MessageBinary || string(payload) != "and onward" {
+		t.Fatalf("output after resync = %v %q", kind, payload)
+	}
+}
+
+func readControl(
+	t *testing.T,
+	ctx context.Context,
+	conn *websocket.Conn,
+) controlMessage {
+	t.Helper()
+	kind, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read control: %v", err)
+	}
+	if kind != websocket.MessageText {
+		t.Fatalf("expected a control message, got %v %q", kind, payload)
+	}
+	var message controlMessage
+	if err := json.Unmarshal(payload, &message); err != nil {
+		t.Fatalf("decode control: %v", err)
+	}
+	return message
+}
+
 // TestEventStreamPushesTheRoster: a client should never poll. It gets the
 // roster on connect, without waiting for something to change.
 func TestEventStreamPushesTheRoster(t *testing.T) {

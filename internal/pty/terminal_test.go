@@ -108,7 +108,14 @@ func TestResyncReplacesTheReplicaRatherThanAppending(t *testing.T) {
 	transport.output <- Message{Bytes: []byte("\r\nsecond line")}
 	<-terminal.state.gate.frames
 
-	transport.output <- Message{Resync: []byte("only what is true now")}
+	// With a size, the way every real one arrives — the daemon sends
+	// nothing else to a viewer in debt, so state and size travel
+	// together. A consumer that checks the size first swallows the state
+	// and never notices.
+	transport.output <- Message{
+		Resync: []byte("only what is true now"),
+		Resize: &Size{Cols: 40, Rows: 6},
+	}
 	<-terminal.state.gate.frames
 
 	view := terminal.View()
