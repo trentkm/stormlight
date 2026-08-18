@@ -82,23 +82,77 @@ exit 255`)
 	}
 }
 
-// TestAForeignPlatformIsNotCopiedTo: a Darwin arm64 binary on a Linux box
-// is not a slow path, it is a file that will not execute.
-func TestAForeignPlatformIsNotCopiedTo(t *testing.T) {
+// TestAForeignPlatformGetsItsOwnBuild: a Darwin arm64 binary on a Linux
+// box is not a slow path, it is a file that will not execute — so the
+// host's own published build is fetched instead. macOS preparing a Linux
+// machine is the ordinary case, not the exotic one.
+func TestAForeignPlatformGetsItsOwnBuild(t *testing.T) {
 	local, err := localPlatform()
 	if err != nil {
 		t.Skip("cannot read this machine's platform")
 	}
-	if (Report{Platform: local}).CanCopyBinary() != true {
+	if !(Report{Platform: local}).CanCopyBinary() {
 		t.Fatal("the same platform should be copyable")
 	}
-	foreign := Report{Host: "devbox", Platform: "Plan9 386"}
+	foreign := Report{Host: "devbox", Platform: "Linux aarch64"}
 	if foreign.CanCopyBinary() {
 		t.Fatal("a different platform must not be copied to")
 	}
-	err = InstallStormlight(context.Background(), nil, foreign, "", nil)
-	if err == nil || !strings.Contains(err.Error(), "releases") {
-		t.Fatalf("it should point at the releases instead: %v", err)
+	target, ok := foreign.Target()
+	if !ok || target.OS != "linux" || target.Arch != "arm64" {
+		t.Fatalf("target = %+v, ok = %v", target, ok)
+	}
+}
+
+// TestPlatformNamesAreTranslated: uname and Go name the same machines
+// differently, and picking the wrong one downloads a binary that will not
+// run.
+func TestPlatformNamesAreTranslated(t *testing.T) {
+	for platform, want := range map[string]Target{
+		"Linux aarch64": {OS: "linux", Arch: "arm64"},
+		"Linux x86_64":  {OS: "linux", Arch: "amd64"},
+		"Darwin arm64":  {OS: "darwin", Arch: "arm64"},
+		"Darwin x86_64": {OS: "darwin", Arch: "amd64"},
+	} {
+		got, ok := TargetFor(platform)
+		if !ok || got != want {
+			t.Fatalf("%s → %+v (%v), want %+v", platform, got, ok, want)
+		}
+	}
+	for _, unknown := range []string{"Plan9 386", "Linux", "", "FreeBSD amd64"} {
+		if _, ok := TargetFor(unknown); ok {
+			t.Fatalf("%q is not a platform Stormlight publishes for", unknown)
+		}
+	}
+}
+
+// TestADevelopmentBuildSaysSoRatherThanGuessing: there is no published
+// archive for a build that was never published, and inventing a version
+// to download would install something other than what is running here.
+func TestADevelopmentBuildSaysSoRatherThanGuessing(t *testing.T) {
+	_, err := releaseBinary(
+		context.Background(), "dev", Target{OS: "linux", Arch: "arm64"})
+	if err == nil {
+		t.Fatal("a development build has no release to install from")
+	}
+	for _, want := range []string{"development build", "bin ="} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("it should say what to do instead: %v", err)
+		}
+	}
+}
+
+// TestAChecksumMismatchRefuses: the machine being prepared is the one
+// that cannot check anything yet, which is why this side checks.
+func TestAChecksumMismatchRefuses(t *testing.T) {
+	sums := []byte("abc123  stormlight_1.0.0_linux_arm64.tar.gz\n" +
+		"def456  stormlight_1.0.0_darwin_arm64.tar.gz\n")
+	got, ok := checksumFor(sums, "stormlight_1.0.0_linux_arm64.tar.gz")
+	if !ok || got != "abc123" {
+		t.Fatalf("checksum = %q, %v", got, ok)
+	}
+	if _, ok := checksumFor(sums, "stormlight_1.0.0_windows_arm64.tar.gz"); ok {
+		t.Fatal("a file the release never published has no checksum")
 	}
 }
 

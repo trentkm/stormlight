@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net"
 	"os"
@@ -876,42 +878,16 @@ func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
 			transport := remote.NewTransport(host)
 			out := cmd.OutOrStdout()
 
-			report, err := remote.Probe(cmd.Context(), transport)
+			// Every failure from here is one the person who asked has to
+			// read, and in a popup this process is the only thing holding
+			// the window open. So it reports, waits, and only then
+			// returns the error.
+			err := setUpHost(cmd.Context(), transport, args[0], out, install, withYazi)
 			if err != nil {
-				return err
+				fmt.Fprintf(out, "\n%v\n", err)
 			}
-			writeRemoteReport(out, report)
-			if !install {
-				if !report.Ready() || !report.Yazi.Present() {
-					fmt.Fprintf(out, "\nRun with --install to fix this.\n")
-				}
-				holdOpen(out, wait)
-				return nil
-			}
-
-			if !report.Stormlight.Present() {
-				binary, err := selfpath.Resolve()
-				if err != nil {
-					return err
-				}
-				if err := remote.InstallStormlight(
-					cmd.Context(), transport, report, binary, out); err != nil {
-					return err
-				}
-			}
-			if withYazi && !report.Yazi.Present() {
-				if err := remote.InstallYazi(cmd.Context(), transport, report, out); err != nil {
-					return err
-				}
-			}
-			fresh, err := remote.Probe(cmd.Context(), transport)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(out)
-			writeRemoteReport(out, fresh)
 			holdOpen(out, wait)
-			return nil
+			return err
 		},
 	}
 	command.Flags().BoolVar(&install, "install", false,
@@ -921,6 +897,101 @@ func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
 	command.Flags().BoolVar(&wait, "wait", false,
 		"hold the terminal open at the end, for a popup nobody else closes")
 	return command
+}
+
+// setUpHost reports what a machine has and, when asked, gives it what it
+// is missing.
+func setUpHost(
+	ctx context.Context,
+	transport *remote.Transport,
+	host string,
+	out io.Writer,
+	install, withYazi bool,
+) error {
+	report, err := remote.Probe(ctx, transport)
+	if err != nil {
+		return err
+	}
+	writeRemoteReport(out, report)
+	if !install {
+		if !report.Ready() || !report.Yazi.Present() {
+			fmt.Fprintf(out, "\nRun with --install to fix this.\n")
+		}
+		return nil
+	}
+
+	if !report.Stormlight.Present() {
+		binary, err := selfpath.Resolve()
+		if err != nil {
+			return err
+		}
+		installed, err := remote.InstallStormlight(ctx, transport, report, binary, out)
+		if err != nil {
+			return err
+		}
+		// A non-interactive SSH shell often has no ~/.local/bin on its
+		// PATH, so the bridge would look for a binary by name and not
+		// find the one just put there. Naming it outright is what
+		// [hosts.*] is for.
+		recordHostBinary(out, host, installed)
+	}
+	if withYazi && !report.Yazi.Present() {
+		if err := remote.InstallYazi(ctx, transport, report, out); err != nil {
+			return err
+		}
+	}
+	fresh, err := remote.Probe(ctx, transport)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out)
+	writeRemoteReport(out, fresh)
+	return nil
+}
+
+// recordHostBinary writes the installed path into the host's
+// configuration, so the next connection finds it whatever that machine's
+// non-interactive PATH happens to hold.
+//
+// It only appends a section that is not there. Rewriting the file would
+// mean parsing and re-emitting it, which costs the comments and the
+// ordering someone put there by hand — so an existing entry is left alone
+// and the line to change is printed instead.
+func recordHostBinary(out io.Writer, host, installed string) {
+	path := config.Path()
+	if path == "" {
+		return
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintf(out, "\nSet bin = %q in [hosts.%s]: %v\n", installed, host, err)
+		return
+	}
+	section := fmt.Sprintf("[hosts.%s]", host)
+	if strings.Contains(string(existing), section) {
+		fmt.Fprintf(out, "\n%s already exists — set bin = %q in it if the bridge "+
+			"cannot find stormlight.\n", section, installed)
+		return
+	}
+	entry := fmt.Sprintf("\n%s\nbin = %q\n", section, installed)
+	if err := appendConfig(path, entry); err != nil {
+		fmt.Fprintf(out, "\nAdd this to %s:\n%s\n", path, entry)
+		return
+	}
+	fmt.Fprintf(out, "\nRecorded bin = %q in %s\n", installed, path)
+}
+
+func appendConfig(path, entry string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.WriteString(entry)
+	return err
 }
 
 // holdOpen keeps a popup up long enough to be read. The overlay closes

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -132,6 +131,9 @@ func (r Report) CanCopyBinary() bool {
 	return r.Platform != "" && r.Platform == local
 }
 
+// Target is the host's platform in the naming published builds use.
+func (r Report) Target() (Target, bool) { return TargetFor(r.Platform) }
+
 // YaziInstallCommand is how this host would install Yazi, or empty when
 // Stormlight has no business guessing. Package management belongs to the
 // machine's owner; offering to run the one command its own package
@@ -153,35 +155,32 @@ func (r Report) YaziInstallCommand() string {
 	}
 }
 
-// InstallStormlight copies this machine's binary to the host and puts it
-// on the path the bridge will look for.
+// InstallStormlight puts a Stormlight the host can run at the path the
+// bridge will look for, and reports where it went.
 //
-// Copying rather than downloading is deliberate where the platforms
-// match: it is the build the dashboard is already running, so the two
-// ends cannot disagree about the protocol between them — which is the one
-// failure this whole exercise exists to avoid.
+// Where the platforms match it copies this machine's own binary, which is
+// deliberate: it is the build the dashboard is already running, so the
+// two ends cannot disagree about the protocol between them — the one
+// failure this whole exercise exists to avoid. Where they do not — a Mac
+// preparing a Linux box, which is the ordinary case rather than the
+// exotic one — it fetches that platform's published archive, checks it
+// against the release's own checksums here, and sends the binary from
+// inside it.
 func InstallStormlight(
 	ctx context.Context,
 	transport *Transport,
 	report Report,
 	binary string,
 	progress io.Writer,
-) error {
-	if !report.CanCopyBinary() {
-		return fmt.Errorf(
-			"%s is %s and this machine is not; install Stormlight there from its own "+
-				"release (https://github.com/trentkm/stormlight/releases) and set "+
-				"bin = in [hosts.%s]",
-			report.Host, report.Platform, report.Host)
-	}
-	file, err := os.Open(binary)
+) (string, error) {
+	payload, err := binaryFor(ctx, report, binary, progress)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer file.Close()
+	file := bytes.NewReader(payload)
 
 	target := report.InstallPath()
-	fmt.Fprintf(progress, "copying this machine's stormlight to %s:%s\n", report.Host, target)
+	fmt.Fprintf(progress, "installing to %s:%s\n", report.Host, target)
 
 	// Three steps rather than one script, because the middle one needs
 	// stdin for the binary and a script needs stdin for itself.
@@ -189,7 +188,7 @@ func InstallStormlight(
 		"set -e\nmkdir -p %q\n", pathDir(target)))
 	prepare.Stdout, prepare.Stderr = progress, progress
 	if err := prepare.Run(); err != nil {
-		return fmt.Errorf("prepare %s on %s: %w", pathDir(target), report.Host, err)
+		return "", fmt.Errorf("prepare %s on %s: %w", pathDir(target), report.Host, err)
 	}
 
 	// Written beside the target and moved into place, so a half-copied
@@ -197,16 +196,40 @@ func InstallStormlight(
 	copyIn := transport.PipeCommand(ctx, file, "tee", target+".new")
 	copyIn.Stdout, copyIn.Stderr = io.Discard, progress
 	if err := copyIn.Run(); err != nil {
-		return fmt.Errorf("copy stormlight to %s: %w", report.Host, err)
+		return "", fmt.Errorf("copy stormlight to %s: %w", report.Host, err)
 	}
 
 	finish := transport.ShellCommand(ctx, fmt.Sprintf(
 		"set -e\nchmod 0755 %[1]q.new\nmv %[1]q.new %[1]q\n%[1]q --version\n", target))
 	finish.Stdout, finish.Stderr = progress, progress
 	if err := finish.Run(); err != nil {
-		return fmt.Errorf("install stormlight on %s: %w", report.Host, err)
+		return "", fmt.Errorf("install stormlight on %s: %w", report.Host, err)
 	}
-	return nil
+	return target, nil
+}
+
+// binaryFor is the executable to send: this machine's when the host runs
+// the same platform, and that platform's published build otherwise.
+func binaryFor(
+	ctx context.Context,
+	report Report,
+	binary string,
+	progress io.Writer,
+) ([]byte, error) {
+	if report.CanCopyBinary() {
+		fmt.Fprintf(progress, "%s runs %s, same as here — sending this build\n",
+			report.Host, report.Platform)
+		return localBinary(binary)
+	}
+	target, ok := report.Target()
+	if !ok {
+		return nil, fmt.Errorf(
+			"%s reports %q, which is not a platform Stormlight publishes for",
+			report.Host, report.Platform)
+	}
+	fmt.Fprintf(progress, "%s runs %s — fetching the %s build of %s\n",
+		report.Host, report.Platform, target, localVersion)
+	return releaseBinary(ctx, localVersion, target)
 }
 
 // pathDir is filepath.Dir for a path on another machine, which is always

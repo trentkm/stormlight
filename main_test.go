@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trentkm/stormlight/internal/agent"
@@ -181,4 +184,58 @@ func TestResolveCommandReportsEveryCheckout(t *testing.T) {
 	if len(values) == 0 {
 		t.Fatal("a workspace always has at least the checkout it was resolved from")
 	}
+}
+
+// TestTheInstalledPathIsRecorded: a non-interactive SSH shell often has
+// no ~/.local/bin on its PATH, so the bridge would look for stormlight by
+// name and miss the one just installed. Naming it outright is what
+// [hosts.*] is for.
+func TestTheInstalledPathIsRecorded(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", directory)
+	path := filepath.Join(directory, "stormlight", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[defaults]\nprovider = \"claude\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	recordHostBinary(&out, "devbox", "/home/trent/.local/bin/stormlight")
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "[hosts.devbox]") ||
+		!strings.Contains(string(content), "/home/trent/.local/bin/stormlight") {
+		t.Fatalf("config = %s", content)
+	}
+	// What was already there is untouched: appending costs nothing, and
+	// re-emitting the file would cost the comments and ordering someone
+	// put there by hand.
+	if !strings.Contains(string(content), "[defaults]") {
+		t.Fatalf("existing configuration was lost: %s", content)
+	}
+
+	// A host already configured is left alone and the change is described
+	// instead, because appending a second [hosts.devbox] is not valid TOML.
+	out.Reset()
+	recordHostBinary(&out, "devbox", "/elsewhere/stormlight")
+	if strings.Count(string(mustRead(t, path)), "[hosts.devbox]") != 1 {
+		t.Fatalf("config = %s", mustRead(t, path))
+	}
+	if !strings.Contains(out.String(), "already exists") {
+		t.Fatalf("it should say what to change: %q", out.String())
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
 }
