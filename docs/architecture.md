@@ -205,8 +205,17 @@ agent's host is discovered by asking rather than remembered, so ownership
 is rebuilt from every listing and never persisted anywhere.
 
 Dispatch follows the workspace it resolved: the context already names the
-machine, because resolution happened there. Hosts are configured under
-`[hosts.<name>]`, and the name is what qualifies workspace IDs.
+machine, because resolution happened there. The name is also what
+qualifies workspace IDs.
+
+A host is known because something names it, not because it was
+configured: a workspace on it, a dispatch aimed at it, a name picked out
+of `~/.ssh/config`. Members exist at start-up for the machines the
+catalog says hold a workspace — listing names no host, so without that a
+machine's agents would be invisible until something mentioned one — and
+any other joins the moment it is first named. `[hosts.<name>]` is where a
+machine differs from its name: a different destination, a binary a
+non-interactive shell will not find, extra ssh flags.
 
 #### The terminal seam
 

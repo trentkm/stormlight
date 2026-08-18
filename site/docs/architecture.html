@@ -228,8 +228,14 @@
     And an agent's host is discovered by asking rather than remembered, so ownership is
     rebuilt from every listing and never persisted anywhere.</p>
     <p>Dispatch follows the workspace it resolved: the context already names the machine,
-    because resolution happened there. Hosts are configured under
-    <code>[hosts.&lt;name&gt;]</code>, and the name is what qualifies workspace IDs.</p>
+    because resolution happened there. The name is also what qualifies workspace IDs.</p>
+    <p>A host is known because something names it, not because it was configured: a
+    workspace on it, a dispatch aimed at it, a name picked out of <code>~/.ssh/config</code>.
+    Members exist at start-up for the machines the catalog says hold a workspace — listing
+    names no host, so without that a machine's agents would be invisible until something
+    mentioned one — and any other joins the moment it is first named.
+    <code>[hosts.&lt;name&gt;]</code> is where a machine differs from its name: a different
+    destination, a binary a non-interactive shell will not find, extra ssh flags.</p>
 
     <h4 id="terminal-seam">The terminal seam</h4>
     <p>Live terminals reach the dashboard through one narrow seam, declared as an optional

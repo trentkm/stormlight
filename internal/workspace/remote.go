@@ -61,13 +61,31 @@ func (r *Registry) ResolveOn(ctx context.Context, host, path string) (Context, e
 	return hosted.Resolve(ctx, path)
 }
 
+// forHost is the registry that answers about one machine, made on first
+// use. A host does not have to be configured to exist: naming it is
+// enough, and AddHost only supplies the details that differ from what ssh
+// would do with the name on its own.
 func (r *Registry) forHost(host string) (*Registry, error) {
 	r.mu.RLock()
 	hosted, ok := r.hosts[host]
 	r.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("no host named %q is configured", host)
+	if ok {
+		return hosted, nil
 	}
+	if strings.TrimSpace(host) == "" {
+		return nil, fmt.Errorf("no host named")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if hosted, ok := r.hosts[host]; ok {
+		return hosted, nil
+	}
+	if r.hosts == nil {
+		r.hosts = make(map[string]*Registry)
+	}
+	hosted = NewRegistryForHost(remote.Host{Name: host})
+	r.hosts[host] = hosted
 	return hosted, nil
 }
 

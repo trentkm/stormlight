@@ -104,9 +104,12 @@ provider = "claude"
 # [providers.aider.mode_args]
 # auto = ["--yes-always"]
 
-# Other machines this dashboard works. Each runs its own daemon and its
-# own agents, reached over SSH; the key is the name Stormlight calls it,
-# and what qualifies the workspace IDs of everything running there.
+# How a machine differs from its name. A host does not have to appear
+# here to be used — naming one is enough, and ssh already knows what a
+# name means. This is where a host needs something other than the
+# default: a different destination, a binary somewhere unusual, extra
+# ssh flags. Names come from ~/.ssh/config, from the workspaces you have
+# on them, or from you typing one.
 [hosts.devbox]
 # destination  = "trent@10.0.0.4"  # defaults to the key; an ssh_config
 #                                  # alias or a tailnet name works too

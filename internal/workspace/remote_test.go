@@ -155,3 +155,41 @@ func TestLocalRegistryIsUnchangedByHosts(t *testing.T) {
 		t.Fatalf("a local id is never qualified: %q", value.ID)
 	}
 }
+
+// TestAnUnconfiguredHostStillResolves: a machine picked out of
+// ~/.ssh/config was never written into Stormlight's config, and a
+// workspace on it has to resolve anyway. Configuration is how a host
+// differs from its name, not the list of which hosts there are.
+func TestAnUnconfiguredHostStillResolves(t *testing.T) {
+	registry := NewRegistry()
+	// Nothing was added for "devbox"; the name is all there is.
+	_, err := registry.ResolveOn(context.Background(), "devbox", "/srv/api")
+	if err == nil {
+		t.Skip("this machine can actually reach a host called devbox")
+	}
+	// It failed by trying, not by refusing: the error is ssh's, not a
+	// complaint that the host was never configured.
+	if strings.Contains(err.Error(), "configured") {
+		t.Fatalf("an unconfigured host should still be attempted: %v", err)
+	}
+	if !strings.Contains(err.Error(), "devbox") {
+		t.Fatalf("the error should name the host: %v", err)
+	}
+}
+
+// TestAConfiguredHostKeepsItsSettings: AddHost is how a host differs from
+// its bare name — a different destination, an explicit binary — and that
+// has to survive the on-demand path.
+func TestAConfiguredHostKeepsItsSettings(t *testing.T) {
+	registry := NewRegistry()
+	host := fakeHost(t, "devbox", `printf '%s\n' '`+remoteAnswer+`'`)
+	registry.AddHost(host)
+
+	value, err := registry.ResolveOn(context.Background(), "devbox", "/srv/api")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if value.Host != "devbox" || value.Name != "api" {
+		t.Fatalf("the configured host was not used: %+v", value)
+	}
+}
