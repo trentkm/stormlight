@@ -695,6 +695,11 @@ func (m Model) renderDirectoryRow(
 ) string {
 	kind := strings.ToUpper(choice.workspaceKind)
 	detail := shortPath(choice.path)
+	if choice.host != "" {
+		// scp's own shorthand, and unambiguous: a bare path here would
+		// read as this machine's.
+		detail = choice.host + ":" + detail
+	}
 	switch choice.kind {
 	case directoryYazi:
 		kind = "YAZI"
@@ -702,6 +707,12 @@ func (m Model) renderDirectoryRow(
 	case directoryCustom:
 		kind = "PATH"
 		detail = "Enter a directory"
+		// A typed path inherits the machine the form is aimed at, so the
+		// row says which one rather than leaving it to be discovered
+		// after the agent starts somewhere else.
+		if m.dispatchHost != "" {
+			detail = m.dispatchHost + ": " + detail
+		}
 	}
 	if kind == "" {
 		kind = "DIRECTORY"
@@ -919,16 +930,16 @@ func (m *Model) blurForm() {
 	m.taskInput.Blur()
 }
 
-func (m *Model) prepareDirectoryChoices(preferred string) {
+func (m *Model) prepareDirectoryChoices(host, preferred string) {
 	m.pickerStart = preferred
 	choices := make([]directoryChoice, 0)
 	indexes := make(map[string]int)
-	addPath := func(path, label, workspaceKind string) int {
+	addPath := func(host, path, label, workspaceKind string) int {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			return -1
 		}
-		key := directoryKey(path)
+		key := choiceKey(host, path)
 		if index, ok := indexes[key]; ok {
 			return index
 		}
@@ -936,6 +947,7 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 		indexes[key] = index
 		choices = append(choices, directoryChoice{
 			kind:          directoryPath,
+			host:          host,
 			label:         label,
 			path:          filepath.Clean(path),
 			workspaceKind: workspaceKind,
@@ -952,7 +964,7 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 		} else if directoryKey(value.ExecutionRoot) != directoryKey(value.Root) {
 			label += " / " + filepath.Base(value.ExecutionRoot)
 		}
-		addPath(value.ExecutionRoot, label, value.Kind)
+		addPath(value.Host, value.ExecutionRoot, label, value.Kind)
 	}
 
 	for _, group := range m.groups {
@@ -960,7 +972,7 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 		if groupRoot == "" {
 			groupRoot = group.context.Root
 		}
-		addPath(groupRoot, group.context.Name, group.context.Kind)
+		addPath(group.context.Host, groupRoot, group.context.Name, group.context.Kind)
 		for _, managedAgent := range group.agents {
 			value := effectiveWorkspace(managedAgent)
 			executionRoot := value.ExecutionRoot
@@ -975,7 +987,7 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 			} else if directoryKey(executionRoot) != directoryKey(groupRoot) {
 				label += " / " + filepath.Base(executionRoot)
 			}
-			addPath(executionRoot, label, value.Kind)
+			addPath(value.Host, executionRoot, label, value.Kind)
 			if value.ComponentRoot != "" &&
 				directoryKey(value.ComponentRoot) != directoryKey(executionRoot) {
 				component := value.ComponentName
@@ -983,6 +995,7 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 					component = filepath.Base(value.ComponentRoot)
 				}
 				addPath(
+					value.Host,
 					value.ComponentRoot,
 					value.Name+" / "+component,
 					value.Kind,
@@ -992,6 +1005,7 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 				directoryKey(managedAgent.Cwd) != directoryKey(executionRoot) &&
 				directoryKey(managedAgent.Cwd) != directoryKey(value.ComponentRoot) {
 				addPath(
+					managedAgent.Host,
 					managedAgent.Cwd,
 					value.Name+" / "+filepath.Base(managedAgent.Cwd),
 					value.Kind,
@@ -1000,7 +1014,9 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 		}
 	}
 
+	// The directory the dashboard was started in is always this machine's.
 	currentIndex := addPath(
+		"",
 		m.initialCwd,
 		filepath.Base(filepath.Clean(m.initialCwd))+" (current)",
 		workspace.KindDirectory,
@@ -1011,17 +1027,17 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 		choices[currentIndex].label += " (current)"
 	}
 
-	preferredKey := directoryKey(preferred)
-	preferredIndex, ok := indexes[preferredKey]
+	preferredIndex, ok := indexes[choiceKey(host, preferred)]
 	if !ok {
 		preferredIndex = addPath(
+			host,
 			preferred,
 			"Selected / "+filepath.Base(filepath.Clean(preferred)),
 			workspace.KindDirectory,
 		)
 	}
 	if len(choices) == 0 {
-		preferredIndex = addPath(m.initialCwd, "Current", workspace.KindDirectory)
+		preferredIndex = addPath("", m.initialCwd, "Current", workspace.KindDirectory)
 	}
 	if m.yaziPath != "" {
 		choices = append(choices, directoryChoice{
@@ -1036,10 +1052,20 @@ func (m *Model) prepareDirectoryChoices(preferred string) {
 
 	m.directories = choices
 	m.directoryIndex = clamp(preferredIndex, 0, max(0, len(choices)-1))
-	if selected, ok := m.selectedDirectory(); ok && selected.kind == directoryPath {
-		m.cwdInput.SetValue(selected.path)
-		m.pickerStart = selected.path
+	m.adoptSelectedDirectory()
+}
+
+// adoptSelectedDirectory moves the highlighted choice into the form. The
+// host moves with it: a path and the machine it is on are one answer, and
+// carrying half of it is how an agent lands on the wrong box.
+func (m *Model) adoptSelectedDirectory() {
+	selected, ok := m.selectedDirectory()
+	if !ok || selected.kind != directoryPath {
+		return
 	}
+	m.cwdInput.SetValue(selected.path)
+	m.pickerStart = selected.path
+	m.dispatchHost = selected.host
 }
 
 func (m *Model) prepareAddWorkspaceChoices(start string) {
@@ -1077,10 +1103,7 @@ func (m *Model) selectDirectoryIndex(index int) {
 		return
 	}
 	m.directoryIndex = clamp(index, 0, len(m.directories)-1)
-	if selected, ok := m.selectedDirectory(); ok && selected.kind == directoryPath {
-		m.cwdInput.SetValue(selected.path)
-		m.pickerStart = selected.path
-	}
+	m.adoptSelectedDirectory()
 }
 
 func (m *Model) editSelectedDirectory() {
@@ -1169,12 +1192,17 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 		Cwd:      strings.TrimSpace(m.cwdInput.Value()),
 		Task:     strings.TrimSpace(m.taskInput.Value()),
 		Mode:     m.dispatchMode,
+		Host:     m.dispatchHost,
 	}
 	if request.Task == "" {
 		m.err = fmt.Errorf("task cannot be empty")
 		return m, nil
 	}
-	if !isDirectory(request.Cwd) {
+	// Only this machine's directories can be checked here. On another
+	// machine the answer would be about the wrong filesystem — and a
+	// path that happens to exist here too would pass for the wrong
+	// reason. That host resolves it, and says so if it cannot.
+	if request.Host == "" && !isDirectory(request.Cwd) {
 		m.err = fmt.Errorf("working directory is unavailable: %s", request.Cwd)
 		return m, nil
 	}
@@ -1194,9 +1222,13 @@ func (m Model) selectedDirectory() (directoryChoice, bool) {
 
 func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	directory := m.initialCwd
+	// The form opens on the machine whatever it opened from is on: the
+	// selected workspace, the selected agent, or failing both, this one.
+	host := ""
 	selectedWorkspace, hasWorkspace := m.selectedWorkspace()
 	if hasWorkspace {
 		selected := selectedWorkspace
+		host = selected.Host
 		directory = selected.ExecutionRoot
 		if directory == "" {
 			directory = selected.Root
@@ -1207,17 +1239,19 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	}
 	if selected, ok := m.selectedAgent(); ok &&
 		(chooseDirectory || m.activePane == paneInteraction) {
+		host = selected.Host
 		directory = selected.Cwd
 	}
+	m.dispatchHost = host
 	m.chooseDispatchDirectory = chooseDirectory
 	if chooseDirectory {
-		m.prepareDirectoryChoices(directory)
+		m.prepareDirectoryChoices(host, directory)
 		m.formFocus = dispatchDirectory
 	} else {
 		m.cwdInput.SetValue(directory)
 		m.formFocus = dispatchProvider
 	}
-	m.applyDispatchOverrides(directory)
+	m.applyDispatchOverrides(host, directory)
 	m.mode = modeDispatch
 	m.dispatchPrefix = ""
 	m.focusForm()
@@ -1229,7 +1263,14 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 // applyDispatchOverrides applies per-workspace config defaults for the
 // directory the form opens in. The user's in-form choices still win — this
 // only presets the fields.
-func (m *Model) applyDispatchOverrides(directory string) {
+//
+// They are keyed by directories in this machine's config, so they say
+// nothing about a path on another machine — where the same string is a
+// different repository.
+func (m *Model) applyDispatchOverrides(host, directory string) {
+	if host != "" {
+		return
+	}
 	if m.modeForDir != nil {
 		if mode, ok := m.modeForDir(directory); ok {
 			m.dispatchMode = mode

@@ -110,7 +110,10 @@ const (
 )
 
 type directoryChoice struct {
-	kind          directoryChoiceKind
+	kind directoryChoiceKind
+	// host is the machine the path is on; empty is this one. Two
+	// machines can offer the same path, and they are different choices.
+	host          string
 	label         string
 	path          string
 	workspaceKind string
@@ -133,14 +136,18 @@ type Model struct {
 	catalogWorkspaces []workspace.Context
 	workspaceRoots    []workspace.Context
 	groups            []workspaceGroup
-	workspaceCursor   int
-	agentCursor       int
-	activePane        pane
-	rowsExpanded      bool
-	interaction       viewport.Model
-	width             int
-	height            int
-	ready             bool
+	// dispatchHost is the machine the open dispatch form is aimed at. It
+	// travels with the directory rather than being asked for separately:
+	// a path only means anything alongside the machine it is on.
+	dispatchHost    string
+	workspaceCursor int
+	agentCursor     int
+	activePane      pane
+	rowsExpanded    bool
+	interaction     viewport.Model
+	width           int
+	height          int
+	ready           bool
 
 	mode                    mode
 	formFocus               dispatchFocus
@@ -347,7 +354,7 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 			break
 		}
 	}
-	model.prepareDirectoryChoices(cwd)
+	model.prepareDirectoryChoices("", cwd)
 	return model
 }
 
@@ -569,7 +576,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.cwdInput.SetValue(msg.path)
 			return m, addWorkspaceCmd(m.backend, msg.path)
 		}
-		m.prepareDirectoryChoices(msg.path)
+		// The picker runs on this machine, so what it returns is here.
+		m.prepareDirectoryChoices("", msg.path)
 		m.cwdInput.SetValue(msg.path)
 		m.formFocus = dispatchTask
 		m.focusForm()

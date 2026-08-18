@@ -95,7 +95,7 @@ func (m *member) resolve() (session.Runtime, error) {
 	if m.runtime != nil {
 		return m.runtime, nil
 	}
-	if m.failure != nil && time.Since(m.failedAt) < retryAfter {
+	if m.failure != nil && time.Since(m.failedAt) < m.retryWindow() {
 		return nil, m.failure
 	}
 	runtime, err := m.connect()
@@ -107,6 +107,22 @@ func (m *member) resolve() (session.Runtime, error) {
 	m.runtime = runtime
 	m.failure = nil
 	return runtime, nil
+}
+
+// retryWindow is how long this member waits before trying again.
+//
+// The window exists because dialling costs something, and for a remote
+// host it costs an SSH handshake — a sleeping laptop must not be dialled
+// on every refresh. The local daemon costs a unix connect, and the
+// runtime that connects to it will start one if none is listening, so
+// there is nothing to protect against and everything to lose: a daemon
+// that died would otherwise leave the dashboard dark for half a minute
+// after it could have been back.
+func (m *member) retryWindow() time.Duration {
+	if m.host == "" {
+		return 0
+	}
+	return retryAfter
 }
 
 // drop forgets a connection so the next call rebuilds it. A tunnel dies
