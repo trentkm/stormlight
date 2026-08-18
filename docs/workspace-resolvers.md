@@ -87,3 +87,30 @@ process. Root enumeration runs only on the resolver that claimed the workspace,
 has a one-second deadline, and caches successful, unsupported, and failed
 outcomes for five seconds. A failed or timed-out inventory never blocks
 dashboard refresh; it logs the failure and exposes the resolved primary root.
+
+## Resolution on another machine
+
+Resolution is filesystem work: `git rev-parse`, a directory that has to
+exist, an executable resolver in a host's own configuration directory. So
+for a workspace on another machine it runs on that machine, through
+`stormlight _resolve <path>` over SSH — the same chain, that host's
+resolvers, its answer. `--roots` asks the same question about every
+runnable checkout.
+
+Two rules follow from the asymmetry:
+
+- **Paths are not canonicalized here.** `EvalSymlinks` and `Stat` describe
+  the wrong filesystem. A path can exist on both machines and mean
+  different repositories, so a local answer about a remote path looks
+  entirely correct and quietly merges two workspaces into one.
+- **An unreachable host is an error, not a directory.** Local resolution
+  falls back to a plain directory context, which asserts that the directory
+  is there. Nothing on this side can assert that about another machine, so
+  a host that cannot answer resolves to a failure rather than to a
+  workspace that looks perfectly ordinary and describes nothing.
+
+The host is stamped by the side that asked, because a resolver answers
+about its own machine and has no name for it. Stamping also qualifies the
+workspace ID — `devbox:git:/srv/api/.git` — so the same path on two
+machines stays two workspace groups. Paths themselves are never rewritten;
+they belong to the host.

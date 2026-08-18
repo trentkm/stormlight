@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -119,6 +120,13 @@ func (t *Transport) Dial() (net.Conn, error) {
 // left to whatever that host's shell happens to set.
 func (t *Transport) Command(env []string, args ...string) *exec.Cmd {
 	return exec.Command(t.host.sshProgram(), t.sshArgs(false, env, args)...)
+}
+
+// CommandContext is Command bound to a context, for the calls a caller
+// gives up on: workspace resolution runs on the dashboard's refresh path,
+// where an unreachable host must not hold the frame.
+func (t *Transport) CommandContext(ctx context.Context, env []string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, t.host.sshProgram(), t.sshArgs(false, env, args)...)
 }
 
 // TTYCommand is Command for a program that needs a terminal on the far

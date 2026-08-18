@@ -122,6 +122,7 @@ func newRootCommand() *cobra.Command {
 		newWindrunnerDaemonCommand(),
 		newWindrunnerAttachCommand(),
 		newWindrunnerBridgeCommand(),
+		newResolveCommand(),
 		newBenchCommand(),
 	)
 	return root
@@ -187,6 +188,40 @@ func newWindrunnerBridgeCommand() *cobra.Command {
 			}, os.Stdin, os.Stdout)
 		},
 	}
+}
+
+// newResolveCommand answers what a directory belongs to, on this machine.
+// A dashboard on another machine runs it over SSH, because resolution is
+// filesystem work — `git rev-parse`, a directory that has to exist, an
+// executable resolver in this host's own config — and none of that can be
+// answered from somewhere else. The reply is the workspace context as
+// JSON, with --roots for every runnable checkout in the same workspace.
+func newResolveCommand() *cobra.Command {
+	var roots bool
+	command := &cobra.Command{
+		Use:    "_resolve <path>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			registry := workspace.NewRegistry()
+			value, err := registry.Resolve(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			if !roots {
+				return encoder.Encode(value)
+			}
+			values, err := registry.ExecutionRoots(cmd.Context(), value)
+			if err != nil {
+				return err
+			}
+			return encoder.Encode(values)
+		},
+	}
+	command.Flags().BoolVar(&roots, "roots", false,
+		"report every runnable checkout in the workspace")
+	return command
 }
 
 // newWindrunnerAttachCommand is the F key's other half: a full-terminal

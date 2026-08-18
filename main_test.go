@@ -137,3 +137,48 @@ func TestTruncatePlainCollapsesWhitespaceAndCountsRunes(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveCommandAnswersAsJSON: a dashboard on another machine runs
+// this over SSH and parses what comes back, so the contract is the shape
+// of stdout.
+func TestResolveCommandAnswersAsJSON(t *testing.T) {
+	directory := t.TempDir()
+	command := newResolveCommand()
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetArgs([]string{directory})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var value workspace.Context
+	if err := json.Unmarshal(out.Bytes(), &value); err != nil {
+		t.Fatalf("stdout must be one JSON object: %v (%q)", err, out.String())
+	}
+	if value.Root == "" || value.Kind == "" || value.ID == "" {
+		t.Fatalf("incomplete context: %+v", value)
+	}
+	// The answer describes this machine; naming the host is the asking
+	// side's job, because a host does not know what a remote dashboard
+	// calls it.
+	if value.Host != "" {
+		t.Fatalf("a resolver must not name its own host: %+v", value)
+	}
+}
+
+func TestResolveCommandReportsEveryCheckout(t *testing.T) {
+	command := newResolveCommand()
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetArgs([]string{"--roots", t.TempDir()})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var values []workspace.Context
+	if err := json.Unmarshal(out.Bytes(), &values); err != nil {
+		t.Fatalf("--roots must answer with a JSON array: %v (%q)", err, out.String())
+	}
+	if len(values) == 0 {
+		t.Fatal("a workspace always has at least the checkout it was resolved from")
+	}
+}
