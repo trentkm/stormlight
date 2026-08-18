@@ -232,7 +232,14 @@ absence, not the dashboard's responsiveness.
 `stormlight remote setup <host>` reports what a machine is missing and
 can install it. Stormlight itself is copied from this machine when the
 platforms match — the same build, so the two ends cannot disagree about
-the protocol between them — and pointed at the releases when they do not.
+the protocol between them — and otherwise fetched as that platform's
+published archive, checked against the release's own checksums here
+rather than there: the machine being prepared is precisely the one with
+no Stormlight to check anything with. A development build has no
+published archive and says so instead of guessing at a version. The
+installed path is recorded as that host's `bin`, because a
+non-interactive SSH shell frequently has no `~/.local/bin` on its PATH
+and would not find what was just put there.
 Yazi is offered only through the host's own package manager, and
 described rather than guessed at when there is none. Members exist at start-up for the machines the
 catalog says hold a workspace — listing names no host, so without that a

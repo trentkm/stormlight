@@ -246,7 +246,12 @@
     <p><code>stormlight remote setup &lt;host&gt;</code> reports what a machine is missing
     and can install it. Stormlight itself is copied from this machine when the platforms
     match — the same build, so the two ends cannot disagree about the protocol between them —
-    and pointed at the releases when they do not. Yazi is offered only through the host's own
+    and otherwise fetched as that platform's published archive, checked against the release's
+    own checksums here rather than there: the machine being prepared is precisely the one
+    with no Stormlight to check anything with. A development build has no published archive
+    and says so instead of guessing at a version. The installed path is recorded as that
+    host's <code>bin</code>, because a non-interactive SSH shell frequently has no
+    <code>~/.local/bin</code> on its PATH and would not find what was just put there. Yazi is offered only through the host's own
     package manager, and described rather than guessed at when there is none.
     Members exist at start-up for the machines the catalog says hold a workspace — listing
     names no host, so without that a machine's agents would be invisible until something
