@@ -83,8 +83,8 @@ func TestComposeCtrlVInsertsPastedImagePath(t *testing.T) {
 	if !strings.HasSuffix(value, " ") {
 		t.Fatalf("no trailing space after pasted path: %q", value)
 	}
-	if model.err != nil {
-		t.Fatalf("unexpected error: %v", model.err)
+	if model.alert.err != nil {
+		t.Fatalf("unexpected error: %v", model.alert.err)
 	}
 	os.Remove(path)
 }
@@ -101,8 +101,8 @@ func TestComposeCtrlVReportsMissingImage(t *testing.T) {
 	updated, _ = model.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
 	model = updated.(Model)
 
-	if model.err == nil || model.err.Error() != "clipboard has no image" {
-		t.Fatalf("got err %v, want clipboard has no image", model.err)
+	if model.alert.err == nil || model.alert.message() != "clipboard has no image" {
+		t.Fatalf("got err %v, want clipboard has no image", model.alert.err)
 	}
 	if got := model.sendInput.Value(); got != "before" {
 		t.Fatalf("composer changed on failed paste: %q", got)

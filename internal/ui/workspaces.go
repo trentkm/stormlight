@@ -515,7 +515,7 @@ func (m Model) beginAddWorkspace() (tea.Model, tea.Cmd) {
 	m.formFocus = dispatchDirectory
 	m.dispatchPrefix = ""
 	m.focusForm()
-	m.err = nil
+	m.dismissAlert()
 	return m, nil
 }
 
@@ -525,11 +525,11 @@ func (m Model) submitAddWorkspace(path string) (tea.Model, tea.Cmd) {
 	// Only this machine's directories can be checked here; that host
 	// resolves its own, and says so if the path is not there.
 	if host == "" && !isDirectory(path) {
-		m.err = fmt.Errorf("workspace directory is unavailable: %s", path)
+		m.raise(fmt.Errorf("workspace directory is unavailable: %s", path))
 		return m, nil
 	}
 	if host != "" && !filepath.IsAbs(path) {
-		m.err = fmt.Errorf("a path on %s must be absolute: %s", host, path)
+		m.raise(fmt.Errorf("a path on %s must be absolute: %s", host, path))
 		return m, nil
 	}
 	m.blurForm()

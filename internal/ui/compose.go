@@ -36,10 +36,10 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// (Text paste still arrives through the terminal's own paste.)
 		path, err := pasteClipboardImage()
 		if err != nil {
-			m.err = err
+			m.raise(err)
 			return m, nil
 		}
-		m.err = nil
+		m.dismissAlert()
 		m.insertComposerToken(path)
 		m.syncComposerSize()
 		return m, nil
@@ -53,13 +53,13 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// The agent is showing a prompt or picker; a pasted message
 			// would type into it and Enter would pick whatever is
 			// highlighted. Answer where the prompt lives.
-			m.err = fmt.Errorf(
-				"agent is showing a prompt — Esc, then Enter opens its terminal")
+			m.raise(fmt.Errorf(
+				"agent is showing a prompt — Esc, then Enter opens its terminal"))
 			return m, nil
 		}
 		text := strings.TrimSpace(m.sendInput.Value())
 		if text == "" {
-			m.err = fmt.Errorf("message cannot be empty")
+			m.raise(fmt.Errorf("message cannot be empty"))
 			return m, nil
 		}
 		// The composer stays open for the next message; one i enters the

@@ -73,14 +73,18 @@ func (m Model) renderBody() string {
 		// The floating program draws over everything, the mode's own
 		// modal included — Yazi opened from the dispatch form floats
 		// above the form it will answer.
-		return overlayCentered(
+		body = overlayCentered(
 			body,
 			m.renderOverlayPopup(),
 			width,
 			contentHeight,
 		)
 	}
-	return body
+	// The failure card sits above even that: whatever is on screen, a
+	// thing that just went wrong is the most important thing on it.
+	return overlayBottomLeft(
+		body, m.renderAlertCard(width, contentHeight), width, contentHeight, 1,
+	)
 }
 
 func (m Model) renderModeBody(width, contentHeight int) string {
@@ -132,6 +136,13 @@ func (m Model) renderModeBody(width, contentHeight int) string {
 		return overlayCentered(
 			dashboard,
 			m.renderHistoryModal(width, contentHeight),
+			width,
+			contentHeight,
+		)
+	case modeAlert:
+		return overlayCentered(
+			dashboard,
+			m.renderAlertModal(width, contentHeight),
 			width,
 			contentHeight,
 		)
@@ -454,6 +465,36 @@ func renderModal(content string, width, height int) string {
 }
 
 func overlayCentered(background, foreground string, width, height int) string {
+	return overlayComposite(background, foreground, width, height,
+		func(foregroundWidth, foregroundHeight int) (int, int) {
+			return max(0, (width-foregroundWidth)/2),
+				max(0, (height-foregroundHeight)/2)
+		})
+}
+
+// overlayBottomLeft floats a block against the foot of the body, indented
+// from the left edge — where a message about what just happened belongs,
+// near the footer that answers for it, and out of the way of the rows the
+// cursor is working in.
+func overlayBottomLeft(
+	background, foreground string,
+	width, height, indent int,
+) string {
+	return overlayComposite(background, foreground, width, height,
+		func(foregroundWidth, foregroundHeight int) (int, int) {
+			return clamp(indent, 0, max(0, width-foregroundWidth)),
+				max(0, height-foregroundHeight)
+		})
+}
+
+// overlayComposite paints foreground over background at the position the
+// placer picks for its measured size. Nothing reflows: the background keeps
+// its dimensions and the block covers what it covers.
+func overlayComposite(
+	background, foreground string,
+	width, height int,
+	place func(foregroundWidth, foregroundHeight int) (int, int),
+) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -471,8 +512,7 @@ func overlayCentered(background, foreground string, width, height int) string {
 		return strings.Join(backgroundLines, "\n")
 	}
 
-	left := max(0, (width-foregroundWidth)/2)
-	top := max(0, (height-len(foregroundLines))/2)
+	left, top := place(foregroundWidth, len(foregroundLines))
 	for index, foregroundLine := range foregroundLines {
 		row := top + index
 		if row >= len(backgroundLines) {

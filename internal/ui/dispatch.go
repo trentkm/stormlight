@@ -1039,20 +1039,20 @@ func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 	case "enter":
 		if attempted, ok := m.pathNav.jump(); attempted {
 			if !ok {
-				m.err = fmt.Errorf(
+				m.raise(fmt.Errorf(
 					"no such directory: %s",
 					strings.TrimSpace(m.pathNav.filter.Value()),
-				)
+				))
 			} else {
-				m.err = nil
+				m.dismissAlert()
 			}
 			return false
 		}
 		if m.pathNav.chosen() == "" {
-			m.err = fmt.Errorf("no matching directory")
+			m.raise(fmt.Errorf("no matching directory"))
 			return false
 		}
-		m.err = nil
+		m.dismissAlert()
 		return true
 	}
 	m.pathNav.update(msg)
@@ -1496,7 +1496,7 @@ func (m *Model) moveDispatchFocus(delta int) {
 
 func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	if len(m.providers) == 0 {
-		m.err = fmt.Errorf("no providers configured")
+		m.raise(fmt.Errorf("no providers configured"))
 		return m, nil
 	}
 	request := app.DispatchRequest{
@@ -1508,7 +1508,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 		Host:     m.dispatchHost,
 	}
 	if request.Task == "" {
-		m.err = fmt.Errorf("task cannot be empty")
+		m.raise(fmt.Errorf("task cannot be empty"))
 		return m, nil
 	}
 	// Only this machine's directories can be checked here. On another
@@ -1516,7 +1516,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	// path that happens to exist here too would pass for the wrong
 	// reason. That host resolves it, and says so if it cannot.
 	if request.Host == "" && !isDirectory(request.Cwd) {
-		m.err = fmt.Errorf("working directory is unavailable: %s", request.Cwd)
+		m.raise(fmt.Errorf("working directory is unavailable: %s", request.Cwd))
 		return m, nil
 	}
 	m.mode = modeNormal
@@ -1569,7 +1569,7 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	m.dispatchPrefix = ""
 	m.focusForm()
 	m.syncTaskComposerSize()
-	m.err = nil
+	m.dismissAlert()
 	return m, nil
 }
 

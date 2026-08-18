@@ -146,7 +146,7 @@ func TestAMissingLocalYaziDoesNotHideARemoteOne(t *testing.T) {
 		t.Fatalf("browsing another machine should still be offered: %#v", model.directories)
 	}
 	if _, cmd := model.openYazi(); cmd == nil {
-		t.Fatalf("opening the remote picker was refused: %v", model.err)
+		t.Fatalf("opening the remote picker was refused: %v", model.alert.err)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestATypedRemotePathIsNotCheckedHere(t *testing.T) {
 
 	updated, cmd := model.submitAddWorkspace("/srv/api")
 	if cmd == nil {
-		t.Fatalf("a remote path was refused: %v", updated.(Model).err)
+		t.Fatalf("a remote path was refused: %v", updated.(Model).alert.err)
 	}
 	message, ok := cmd().(workspaceAddedMsg)
 	if !ok || message.err != nil {
@@ -176,7 +176,7 @@ func TestATypedRemotePathIsNotCheckedHere(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("a relative remote path must be refused")
 	}
-	if next.(Model).err == nil {
+	if next.(Model).alert.err == nil {
 		t.Fatal("refusing it should say why")
 	}
 }
@@ -211,7 +211,7 @@ func TestTheNewAgentPickerBrowsesTheFormsMachine(t *testing.T) {
 	model.cwdInput.SetValue("/srv/api")
 
 	if _, cmd := model.openYazi(); cmd == nil {
-		t.Fatalf("browsing was refused: %v", model.err)
+		t.Fatalf("browsing was refused: %v", model.alert.err)
 	}
 	spec := yaziPickerSpec(model.dispatchHost, "", model.yaziPath)
 	if spec.host != "devbox" {
@@ -222,7 +222,7 @@ func TestTheNewAgentPickerBrowsesTheFormsMachine(t *testing.T) {
 	// is pointing.
 	model.dispatchHost = ""
 	if _, cmd := model.openYazi(); cmd == nil {
-		t.Fatalf("local browsing was refused: %v", model.err)
+		t.Fatalf("local browsing was refused: %v", model.alert.err)
 	}
 }
 
@@ -235,7 +235,7 @@ func TestNoLocalYaziStillBrowsesAnotherMachineFromTheAgentForm(t *testing.T) {
 	model.dispatchHost = "devbox"
 
 	if _, cmd := model.openYazi(); cmd == nil {
-		t.Fatalf("a remote browse should not need a local yazi: %v", model.err)
+		t.Fatalf("a remote browse should not need a local yazi: %v", model.alert.err)
 	}
 }
 

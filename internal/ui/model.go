@@ -64,6 +64,7 @@ const (
 	modeInfo
 	modeHelp
 	modeHistory
+	modeAlert
 )
 
 // sortMode orders workspaces and agents. Sorting is always an explicit
@@ -265,9 +266,12 @@ type Model struct {
 
 	interactionID       string
 	interactionLoadedAt time.Time
-	err                 error
-	shimmerPhase        int
-	shimmerRunning      bool
+	// The failure surface: the card standing over the body, and the
+	// snapshot the detail view reads from. See alert.go.
+	alert          alert
+	alertDetail    alertDetail
+	shimmerPhase   int
+	shimmerRunning bool
 
 	normalPrefix   string
 	sortMode       sortMode
@@ -550,6 +554,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.loadInteractionCmd(), m.ensurePTYCmd())
 
 	case tickMsg:
+		m.ageAlert(time.Time(msg))
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
 
 	case machineCheckedMsg:
@@ -587,7 +592,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		agentID := m.selectedAgentID()
 		previous, _ := m.selectedAgent()
 		if msg.err != nil {
-			m.err = msg.err
+			m.raise(msg.err)
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
 		} else {
 			m.agents = msg.agents
@@ -625,7 +630,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case historyMsg:
 		m.historyLoading = false
 		if msg.err != nil {
-			m.err = msg.err
+			m.raise(msg.err)
 			return m, nil
 		}
 		m.historyRecords = msg.records
@@ -670,7 +675,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case attachMsg:
 		if msg.err != nil {
-			m.err = msg.err
+			m.raise(msg.err)
 			diagnostic.Logger().Error("dashboard open failed",
 				"agent", msg.name,
 				"error", msg.err,
@@ -688,17 +693,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return attachReturnedMsg{name: msg.name, err: err}
 			})
 		}
-		m.err = nil
+		m.dismissAlert()
 		return m, nil
 
 	case attachReturnedMsg:
-		m.err = msg.err
+		m.raise(msg.err)
 		// The attached client owned the window sizes while it looked;
 		// reassert the herd's 1:1 grid now that the dashboard is back.
 		return m, tea.Batch(m.refreshCmd(), resizeAllPTYCmd(m.ptyManager))
 
 	case actionMsg:
-		m.err = msg.err
+		m.raise(msg.err)
 		if msg.err != nil {
 			diagnostic.Logger().Error("dashboard action failed", "error", msg.err)
 		}
@@ -706,7 +711,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case directoryPickedMsg:
 		if msg.err != nil {
-			m.err = msg.err
+			m.raise(msg.err)
 			diagnostic.Logger().Error("directory picker failed", "error", msg.err)
 			return m, nil
 		}
@@ -726,13 +731,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case machinePreparedMsg:
 		if msg.err != nil {
-			m.err = fmt.Errorf("set up %s: %w", msg.host, msg.err)
+			m.raise(fmt.Errorf("set up %s: %w", msg.host, msg.err))
 		}
 		return m, nil
 
 	case taskEditedMsg:
 		if msg.err != nil {
-			m.err = msg.err
+			m.raise(msg.err)
 			diagnostic.Logger().Error("task editor failed", "error", msg.err)
 			return m, nil
 		}
@@ -740,12 +745,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.syncTaskComposerSize()
-		m.err = nil
+		m.dismissAlert()
 		return m, nil
 
 	case workspaceAddedMsg:
 		if msg.err != nil {
-			m.err = msg.err
+			m.raise(msg.err)
 			diagnostic.Logger().Error("add workspace failed", "error", msg.err)
 			return m, nil
 		}
@@ -791,61 +796,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePaste(msg)
 
 	case tea.KeyPressMsg:
-		m.err = nil
-		if m.overlay != nil {
-			// The floating program owns the keyboard while it is up;
-			// ctrl+q cancels it.
-			return m.updateOverlayKey(msg)
+		// A failure card is not swept away by the next keystroke — it is
+		// read, dismissed, or replaced. What a keystroke does end is the
+		// mode the card was raised in: a form's complaint has nothing
+		// left to say once the form is gone.
+		standing, mode := m.alert.err, m.mode
+		updated, cmd := m.updateKey(msg)
+		if model, ok := updated.(Model); ok &&
+			model.mode != mode && model.alert.err == standing {
+			model.dismissAlert()
+			return model, cmd
 		}
-		if m.ptyEnabled && m.mode == modeNormal &&
-			m.activePane == paneInteraction {
-			// The Spanreed is not a preview: while it holds focus, the
-			// keyboard belongs to the agent's terminal, exactly like a
-			// focused terminal tab. ctrl+q is the one key that stays ours.
-			return m.updateTerminalKey(msg)
-		}
-		switch m.mode {
-		case modeDispatch:
-			return m.updateDispatch(msg)
-		case modeCompose:
-			return m.updateCompose(msg)
-		case modeSearch:
-			return m.updateSearch(msg)
-		case modeDelete:
-			return m.updateDelete(msg)
-		case modeAddWorkspace:
-			return m.updateAddWorkspace(msg)
-		case modeRename:
-			return m.updateRename(msg)
-		case modeMark:
-			return m.updateMark(msg)
-		case modeHistory:
-			return m.updateHistory(msg)
-		case modeInfo, modeHelp:
-			// Any key dismisses an informational overlay.
-			m.mode = modeNormal
-			return m, nil
-		default:
-			// Reading the result is the presence proof: if an unseen result
-			// is on screen right now (selected, transcript loaded) and the
-			// human engages with it, it has been seen.
-			seenID := ""
-			if selected, ok := m.selectedAgent(); ok &&
-				selected.ProcessLive &&
-				(selected.Attention == agent.AttentionWaiting ||
-					selected.EffectiveMark() == agent.MarkAttention) &&
-				m.interactionID == selected.ID &&
-				marksResultSeen(msg.String(), m.activePane) {
-				seenID = selected.ID
-			}
-			updated, cmd := m.updateNormal(msg)
-			model, isModel := updated.(Model)
-			if seenID == "" || !isModel {
-				return updated, cmd
-			}
-			model.markAttentionSeen(seenID)
-			return model, tea.Batch(cmd, clearAttentionCmd(model.backend, seenID))
-		}
+		return updated, cmd
 	}
 
 	if m.ptyEnabled && m.ready {
@@ -860,6 +822,67 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// updateKey routes one keypress to whatever owns the keyboard: a floating
+// program, the portal, the mode's own handler, or the dashboard itself.
+func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.overlay != nil {
+		// The floating program owns the keyboard while it is up;
+		// ctrl+q cancels it.
+		return m.updateOverlayKey(msg)
+	}
+	if m.ptyEnabled && m.mode == modeNormal &&
+		m.activePane == paneInteraction {
+		// The Spanreed is not a preview: while it holds focus, the
+		// keyboard belongs to the agent's terminal, exactly like a
+		// focused terminal tab. ctrl+q is the one key that stays ours.
+		return m.updateTerminalKey(msg)
+	}
+	switch m.mode {
+	case modeDispatch:
+		return m.updateDispatch(msg)
+	case modeCompose:
+		return m.updateCompose(msg)
+	case modeSearch:
+		return m.updateSearch(msg)
+	case modeDelete:
+		return m.updateDelete(msg)
+	case modeAddWorkspace:
+		return m.updateAddWorkspace(msg)
+	case modeRename:
+		return m.updateRename(msg)
+	case modeMark:
+		return m.updateMark(msg)
+	case modeHistory:
+		return m.updateHistory(msg)
+	case modeAlert:
+		return m.updateAlertDetail(msg)
+	case modeInfo, modeHelp:
+		// Any key dismisses an informational overlay.
+		m.mode = modeNormal
+		return m, nil
+	default:
+		// Reading the result is the presence proof: if an unseen result
+		// is on screen right now (selected, transcript loaded) and the
+		// human engages with it, it has been seen.
+		seenID := ""
+		if selected, ok := m.selectedAgent(); ok &&
+			selected.ProcessLive &&
+			(selected.Attention == agent.AttentionWaiting ||
+				selected.EffectiveMark() == agent.MarkAttention) &&
+			m.interactionID == selected.ID &&
+			marksResultSeen(msg.String(), m.activePane) {
+			seenID = selected.ID
+		}
+		updated, cmd := m.updateNormal(msg)
+		model, isModel := updated.(Model)
+		if seenID == "" || !isModel {
+			return updated, cmd
+		}
+		model.markAttentionSeen(seenID)
+		return model, tea.Batch(cmd, clearAttentionCmd(model.backend, seenID))
+	}
 }
 
 // View draws the dashboard and, with it, declares the terminal state the
@@ -1063,6 +1086,11 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "esc", "ctrl+[":
+		if m.alert.active() {
+			// The card waited to be read; Esc is the reader saying so.
+			m.dismissAlert()
+			return m, nil
+		}
 		if m.selectionActive {
 			m.selectionActive = false
 			return m, nil
@@ -1086,8 +1114,8 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if selected.ProcessLive && selected.Attention.TerminalOwned() {
 				// An active prompt owns the agent's input; composing here
 				// would type into it. The band already says where to go.
-				m.err = fmt.Errorf(
-					"agent is waiting on a prompt — Enter opens its terminal")
+				m.raise(fmt.Errorf(
+					"agent is waiting on a prompt — Enter opens its terminal"))
 				return m, nil
 			}
 			m.activePane = paneInteraction
@@ -1097,7 +1125,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// again picks it back up rather than discarding it.
 			m.syncComposerSize()
 			m.sendInput.Focus()
-			m.err = nil
+			m.dismissAlert()
 			return m, nil
 		}
 	case "x":
@@ -1114,12 +1142,12 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.mode = modeDelete
-			m.err = nil
+			m.dismissAlert()
 			return m, nil
 		}
 		if _, ok := m.selectedAgent(); ok {
 			m.mode = modeDelete
-			m.err = nil
+			m.dismissAlert()
 			return m, nil
 		}
 	case "r", "ctrl+l":
@@ -1139,6 +1167,10 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "H":
 		return m.beginHistory()
+	case "e":
+		if m.alert.active() {
+			return m.openAlertDetail()
+		}
 	case "?":
 		m.mode = modeHelp
 		return m, nil

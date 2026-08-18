@@ -76,7 +76,7 @@ func TestDispatchCarriesTheChosenMachine(t *testing.T) {
 	model.taskInput.SetValue("fix the flaky test")
 
 	if _, cmd := model.submitDispatch(); cmd == nil {
-		t.Fatalf("dispatch was refused: %v", model.err)
+		t.Fatalf("dispatch was refused: %v", model.alert.err)
 	} else {
 		cmd()
 	}
@@ -100,7 +100,7 @@ func TestARemotePathIsNotCheckedAgainstThisFilesystem(t *testing.T) {
 
 	_, cmd := model.submitDispatch()
 	if cmd == nil {
-		t.Fatalf("a remote path must not be refused for being absent here: %v", model.err)
+		t.Fatalf("a remote path must not be refused for being absent here: %v", model.alert.err)
 	}
 	cmd()
 	if backend.request.Cwd != "/nowhere/near/this/machine" {
@@ -113,7 +113,7 @@ func TestARemotePathIsNotCheckedAgainstThisFilesystem(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("a local path that does not exist should be refused")
 	}
-	if next.(Model).err == nil {
+	if next.(Model).alert.err == nil {
 		t.Fatal("refusing a missing local directory should say so")
 	}
 }

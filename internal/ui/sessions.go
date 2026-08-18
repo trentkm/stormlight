@@ -23,7 +23,7 @@ import (
 
 func (m Model) beginHistory() (tea.Model, tea.Cmd) {
 	m.mode = modeHistory
-	m.err = nil
+	m.dismissAlert()
 	m.historyCursor = 0
 	m.historyRecords = nil
 	m.historyLoading = true
