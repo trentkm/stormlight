@@ -341,11 +341,16 @@ func drainOverlay(t *testing.T, overlay session.Overlay, want string) string {
 	deadline := time.After(10 * time.Second)
 	for !strings.Contains(collected, want) {
 		select {
-		case chunk, ok := <-overlay.Output():
+		case message, ok := <-overlay.Output():
 			if !ok {
 				t.Fatalf("overlay stream closed before %q; got:\n%s", want, collected)
 			}
-			collected += string(chunk)
+			if message.Resync != nil {
+				// State replaces the replica, here as everywhere.
+				collected = string(message.Resync)
+				continue
+			}
+			collected += string(message.Bytes)
 		case <-deadline:
 			t.Fatalf("timed out waiting for %q; got:\n%s", want, collected)
 		}
