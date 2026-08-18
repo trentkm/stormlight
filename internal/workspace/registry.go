@@ -3,9 +3,11 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +24,11 @@ type executionRootResolver interface {
 }
 
 type Registry struct {
+	// host is the machine this registry answers about; empty is this one.
+	// Everything below changes shape when it is set: paths are not
+	// canonicalized here, contexts are not checked against this
+	// filesystem, and every ID is qualified with the host.
+	host      string
 	resolvers []Resolver
 	mu        sync.RWMutex
 	cache     map[string]Context
@@ -59,7 +66,7 @@ func NewRegistryWithResolvers(resolvers ...Resolver) *Registry {
 }
 
 func (r *Registry) Resolve(ctx context.Context, path string) (Context, error) {
-	canonical, err := canonicalDirectory(path)
+	canonical, err := r.canonicalize(path)
 	if err != nil {
 		return Context{}, err
 	}
@@ -71,9 +78,13 @@ func (r *Registry) Resolve(ctx context.Context, path string) (Context, error) {
 		return cached, nil
 	}
 
+	// A resolver that fails is logged and passed over — except on a
+	// remote host, where its failure is the only answer available.
+	var failure error
 	for index, resolver := range r.resolvers {
 		value, matched, resolveErr := resolver.Resolve(ctx, canonical)
 		if resolveErr != nil {
+			failure = resolveErr
 			if errors.Is(resolveErr, context.Canceled) ||
 				errors.Is(resolveErr, context.DeadlineExceeded) ||
 				ctx.Err() != nil {
@@ -89,7 +100,7 @@ func (r *Registry) Resolve(ctx context.Context, path string) (Context, error) {
 		if !matched {
 			continue
 		}
-		value, err = normalizeContext(value)
+		value, err = r.normalize(value)
 		if err != nil {
 			diagnostic.Logger().Warn("workspace resolver returned invalid context",
 				"resolver", resolver.Name(),
@@ -102,9 +113,52 @@ func (r *Registry) Resolve(ctx context.Context, path string) (Context, error) {
 		return value, nil
 	}
 
+	// The canonical-directory fallback says "this is a plain directory,
+	// and I know it is there" — which is true here and unknowable about
+	// another machine. Inventing one for an unreachable host would
+	// replace an error with a workspace that looks perfectly ordinary
+	// and describes nothing.
+	if r.host != "" {
+		if failure != nil {
+			return Context{}, failure
+		}
+		return Context{}, fmt.Errorf("%s did not resolve %s", r.host, canonical)
+	}
 	value := DirectoryContext(canonical)
 	r.store(canonical, value, noResolver)
 	return value, nil
+}
+
+// canonicalize resolves a path against the filesystem that owns it. For
+// another machine that is not this one, so the path is taken as given —
+// the resolver over there canonicalizes for real, and a local
+// EvalSymlinks would answer about a path that merely shares a name.
+func (r *Registry) canonicalize(path string) (string, error) {
+	if r.host == "" {
+		return canonicalDirectory(path)
+	}
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("a path on %s must be given in full", r.host)
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("path %q on %s is not absolute", trimmed, r.host)
+	}
+	return filepath.Clean(trimmed), nil
+}
+
+// normalize applies the identity rules, and stamps the host onto whatever
+// a resolver returned: a remote resolver answers about its own machine
+// and has no name for it.
+func (r *Registry) normalize(value Context) (Context, error) {
+	if r.host == "" {
+		return normalizeContext(value)
+	}
+	value, err := normalizeRemoteContext(value)
+	if err != nil {
+		return Context{}, err
+	}
+	return value.OnHost(r.host), nil
 }
 
 // ExecutionRoots returns every runnable checkout currently belonging to a
@@ -156,7 +210,7 @@ func (r *Registry) ExecutionRoots(ctx context.Context, value Context) ([]Context
 	normalized := make([]Context, 0, len(values))
 	seen := make(map[string]bool, len(values))
 	for _, candidate := range values {
-		candidate, err = normalizeContext(candidate)
+		candidate, err = r.normalize(candidate)
 		if err != nil {
 			diagnostic.Logger().Warn("workspace resolver returned invalid execution root",
 				"resolver", resolver.Name(),

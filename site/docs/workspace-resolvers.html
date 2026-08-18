@@ -37,6 +37,7 @@
     <li class="current"><a href="workspace-resolvers.html">Workspace resolvers</a><ul class="sections">
     <li><a href="#resolution-order">Resolution order</a></li>
     <li><a href="#executable-protocol">Executable protocol</a></li>
+    <li><a href="#remote-resolution">Resolution on another machine</a></li>
     </ul></li>
     <li><a href="configuration.html">Configuration</a></li>
   </ul>
@@ -111,6 +112,30 @@
     deadline, and caches successful, unsupported, and failed outcomes for five seconds. A
     failed or timed-out inventory never blocks dashboard refresh; it logs the failure and
     exposes the resolved primary root.</p>
+
+    <h2 id="remote-resolution">Resolution on another machine</h2>
+    <p>Resolution is filesystem work: <code>git rev-parse</code>, a directory that has to
+    exist, an executable resolver in a host's own configuration directory. So for a
+    workspace on another machine it runs on that machine, through
+    <code>stormlight _resolve &lt;path&gt;</code> over SSH — the same chain, that host's
+    resolvers, its answer. <code>--roots</code> asks the same question about every runnable
+    checkout.</p>
+    <p>Two rules follow from the asymmetry:</p>
+    <ul>
+      <li><strong>Paths are not canonicalized here.</strong> <code>EvalSymlinks</code> and
+      <code>Stat</code> describe the wrong filesystem. A path can exist on both machines and
+      mean different repositories, so a local answer about a remote path looks entirely
+      correct and quietly merges two workspaces into one.</li>
+      <li><strong>An unreachable host is an error, not a directory.</strong> Local
+      resolution falls back to a plain directory context, which asserts that the directory
+      is there. Nothing on this side can assert that about another machine, so a host that
+      cannot answer resolves to a failure rather than to a workspace that looks perfectly
+      ordinary and describes nothing.</li>
+    </ul>
+    <p>The host is stamped by the side that asked, because a resolver answers about its own
+    machine and has no name for it. Stamping also qualifies the workspace ID —
+    <code>devbox:git:/srv/api/.git</code> — so the same path on two machines stays two
+    workspace groups. Paths themselves are never rewritten; they belong to the host.</p>
   </article>
 
   <nav class="doc-pager"><a href="architecture.html">← Architecture</a><a href="configuration.html">Configuration →</a></nav>
