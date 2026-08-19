@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeSSH stands in for the ssh client: whatever the script prints is
@@ -264,5 +265,21 @@ func TestPresenceMeansItRuns(t *testing.T) {
 	}
 	if report.Stormlight.Present() {
 		t.Fatal("a binary that will not start is not an installed program")
+	}
+}
+
+// TestAnArchiveGetsLongerThanAQuestion: asking a release what it
+// published is kilobytes, and slow means broken. Pulling the archive is
+// tens of megabytes over whatever connection the dashboard is on, and a
+// minute was optimistic enough that an ordinary home network failed a
+// download that was working.
+func TestAnArchiveGetsLongerThanAQuestion(t *testing.T) {
+	if archiveTimeout <= metadataTimeout {
+		t.Fatalf("an archive should get more patience than a question: %v vs %v",
+			archiveTimeout, metadataTimeout)
+	}
+	if archiveTimeout < 5*time.Minute {
+		t.Fatalf("archiveTimeout = %v; a slow link should be waited out, not failed",
+			archiveTimeout)
 	}
 }

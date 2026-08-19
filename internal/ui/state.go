@@ -178,7 +178,66 @@ func buildWorkspaceGroups(
 		index := position - 1
 		groups[index].agents = append(groups[index].agents, managedAgent)
 	}
-	return groups
+	return labelWorkspaceGroups(groups)
+}
+
+// labelWorkspaceGroups gives each group a name that tells it from the
+// others on screen.
+//
+// Two workspaces can share a basename and be entirely different places: a
+// catalogued parent directory and a Git repository nested inside it both
+// end in MetaRepo-PFS, and the pane showed two rows spelled the same way
+// with the agents apparently on the wrong one. They are genuinely
+// different workspaces — the identities are right — so the fix is to say
+// which is which rather than to merge them.
+//
+// A colliding name grows leftward along its own path until it is unique:
+// workplace/MetaRepo-PFS against src/MetaRepo-PFS. Leftward because the
+// pane truncates from the right, so the part that distinguishes them has
+// to arrive first.
+func labelWorkspaceGroups(groups []workspaceGroup) []workspaceGroup {
+	for index := range groups {
+		groups[index].label = groups[index].context.Name
+	}
+	for {
+		counts := make(map[string]int, len(groups))
+		for _, group := range groups {
+			counts[group.label]++
+		}
+		grew := false
+		for index := range groups {
+			if counts[groups[index].label] < 2 {
+				continue
+			}
+			if longer, ok := growLabel(
+				groups[index].label, groups[index].context.Root,
+			); ok {
+				groups[index].label = longer
+				grew = true
+			}
+		}
+		// Names that cannot grow any further stay as they are: two rows
+		// spelled alike beats a row spelled wrong.
+		if !grew {
+			return groups
+		}
+	}
+}
+
+// growLabel prepends the next path segment to the left of what the label
+// already shows.
+func growLabel(label, root string) (string, bool) {
+	root = strings.TrimSuffix(filepath.Clean(root), "/")
+	if !strings.HasSuffix(root, label) {
+		// The label is not a tail of this path — a renamed workspace —
+		// so there is no next segment to reach for.
+		return "", false
+	}
+	remainder := strings.TrimSuffix(strings.TrimSuffix(root, label), "/")
+	if remainder == "" || remainder == "/" {
+		return "", false
+	}
+	return filepath.Base(remainder) + "/" + label, true
 }
 
 func appendWorkspace(values []workspace.Context, value workspace.Context) []workspace.Context {

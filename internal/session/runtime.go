@@ -115,8 +115,17 @@ type DispatchRequest struct {
 }
 
 type Launch struct {
-	Path string   `json:"path"`
-	Args []string `json:"args"`
+	// Path is the provider resolved on this machine.
+	Path string `json:"path"`
+	// Program is the name it was resolved from — `codex`, `claude`, or
+	// whatever a custom provider spec names.
+	//
+	// Path answers "where is it here", which is the wrong question for a
+	// machine that is not here: /Users/someone/.toolbox/bin/codex is a
+	// macOS path, and a Linux daemon handed it can only report that no
+	// such file exists. The name is the part that travels.
+	Program string   `json:"program,omitempty"`
+	Args    []string `json:"args"`
 }
 
 type Update struct {

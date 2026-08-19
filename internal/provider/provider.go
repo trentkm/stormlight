@@ -110,7 +110,7 @@ func (a commandAdapter) launch(
 	if err != nil {
 		return Launch{}, err
 	}
-	return Launch{Path: path, Args: a.withExtra(args)}, nil
+	return Launch{Path: path, Program: a.binary, Args: a.withExtra(args)}, nil
 }
 
 // withExtra slots the user's extra args in just before the final argument.

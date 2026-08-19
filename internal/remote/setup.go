@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -350,4 +351,49 @@ func localPlatform() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// LookPath finds a program on the host, the way a person would.
+//
+// A command run over ssh gets a non-interactive shell whose PATH is
+// often the bare system one, so the login shell is asked too — the
+// difference between finding a provider a machine plainly has and
+// reporting it absent. The binary is started once, because a name that
+// resolves to something that cannot run is not an answer.
+func LookPath(ctx context.Context, transport *Transport, program string) (string, error) {
+	if strings.TrimSpace(program) == "" {
+		return "", fmt.Errorf("no program to look for")
+	}
+	host := transport.Host().Name
+	// Ends with a plain exit 0: not finding the program is an answer,
+	// not a failure of the asking, and a script whose last command is a
+	// test would exit non-zero and be read as one.
+	script := "program=" + shellQuote([]string{program}) + `
+found=$(command -v "$program" 2>/dev/null)
+if [ -z "$found" ] && [ -n "$SHELL" ]; then
+  found=$("$SHELL" -lc "command -v $program" 2>/dev/null)
+fi
+if [ -n "$found" ]; then printf '%s\n' "$found"; fi
+exit 0
+`
+	command := transport.ShellCommand(ctx, script)
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if message := strings.TrimSpace(stderr.String()); message != "" {
+			return "", errors.New(Explain(host, message))
+		}
+		return "", fmt.Errorf("%s: %w", host, err)
+	}
+	found := strings.TrimSpace(stdout.String())
+	if found == "" {
+		return "", fmt.Errorf(
+			"%s is not installed on %s, or not on the PATH its login shell sets",
+			program, host)
+	}
+	return found, nil
 }

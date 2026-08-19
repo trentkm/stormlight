@@ -274,8 +274,16 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		// so the machinery is switched off rather than chased.
 		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
 	}
+	// The provider is resolved where it will run. Launch.Path answers
+	// "where is it here", which for another machine is a path that
+	// machine has never had — a macOS toolbox path handed to a Linux
+	// daemon can only come back as no such file.
+	program, err := r.providerPath(ctx, request.Launch)
+	if err != nil {
+		return agent.Agent{}, err
+	}
 	spawn := wire.Request{
-		Command: request.Launch.Path,
+		Command: program,
 		Args:    request.Launch.Args,
 		Dir:     request.Cwd,
 		// Peer input is how the dashboard and CLI speak to an agent
@@ -307,6 +315,25 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	managedAgent.PaneID = info.ID
 	managedAgent.WindowID = info.ID
 	return managedAgent, nil
+}
+
+// providerPath is the provider as the machine running it will find it.
+//
+// Locally that is the path already resolved. Remotely it is resolved
+// there, so a provider the host does not have is reported as missing
+// from that host by name, rather than as a path from this one that it
+// was never going to have.
+func (r *Runtime) providerPath(ctx context.Context, launch session.Launch) (string, error) {
+	if r.transport == nil {
+		return launch.Path, nil
+	}
+	program := launch.Program
+	if program == "" {
+		// A launch with no name to resolve — a custom spec from an older
+		// record — leaves nothing better than the path it carries.
+		program = launch.Path
+	}
+	return remote.LookPath(ctx, r.transport, program)
 }
 
 // sessionIDFor maps an agent id to the daemon's session id.

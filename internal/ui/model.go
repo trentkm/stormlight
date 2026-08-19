@@ -130,6 +130,10 @@ const (
 type workspaceGroup struct {
 	context workspace.Context
 	agents  []agent.Agent
+	// label is the name as the pane shows it: the workspace's own name,
+	// grown leftward along its path when another group would otherwise
+	// be spelled the same way.
+	label string
 }
 
 // addWorkspaceTab is which half of the Add Workspace modal is showing.
