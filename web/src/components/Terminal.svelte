@@ -73,13 +73,28 @@
     };
   });
 
-  // Focus follows the walked-in state rather than the mouse: clicking a
-  // terminal you have not walked into would otherwise hand it the
-  // keyboard behind the dispatcher's back.
+  // Focus follows the walked-in state rather than the mouse.
   $effect(() => {
     if (!term) return;
     if (focused) term.focus();
     else term.blur();
+  });
+
+  /**
+   * xterm focuses itself on mousedown, unconditionally and from its own
+   * listener. Reacting to the `focused` prop cannot undo that — the
+   * prop did not change — so a click on a terminal nobody walked into
+   * left it holding the keyboard, and every key the page does not claim
+   * went down the socket to a live agent. Watching focusin is what
+   * actually catches it.
+   */
+  $effect(() => {
+    if (!host) return;
+    const stolen = () => {
+      if (!focused) term?.blur();
+    };
+    host.addEventListener("focusin", stolen);
+    return () => host.removeEventListener("focusin", stolen);
   });
 </script>
 

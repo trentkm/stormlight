@@ -9,7 +9,23 @@ import {
   type Focus,
 } from "./keys";
 
-/** A key event as the browser would deliver it. */
+/**
+ * A key event as a real browser delivers it.
+ *
+ * The detail that matters: on macOS, holding Option composes the
+ * character, so Option+J arrives as key "∆" with code "KeyJ". A double
+ * that reports key "j" for an alt chord describes a browser that does
+ * not exist, and hides every bug in code that reads `key`.
+ */
+const composed: Record<string, string> = {
+  j: "∆",
+  k: "˚",
+  n: "˜",
+  p: "π",
+  z: "Ω",
+  t: "†",
+};
+
 function press(
   key: string,
   modifiers: {
@@ -19,10 +35,11 @@ function press(
     code?: string;
   } = {},
 ): KeyboardEvent {
+  const alt = modifiers.alt ?? false;
   return {
-    key,
+    key: alt ? (composed[key] ?? key) : key,
     code: modifiers.code ?? `Key${key.toUpperCase()}`,
-    altKey: modifiers.alt ?? false,
+    altKey: alt,
     ctrlKey: modifiers.ctrl ?? false,
     metaKey: modifiers.meta ?? false,
   } as KeyboardEvent;
@@ -49,7 +66,6 @@ describe("the roster's keyboard", () => {
     expect(meaning("i")).toBe("message");
     expect(meaning("x")).toBe("interrupt");
     expect(meaning("M")).toBe("seen");
-    expect(meaning("H")).toBe("history");
     expect(meaning("?")).toBe("help");
   });
 
@@ -92,10 +108,21 @@ describe("a walked-in terminal", () => {
     }
   });
 
-  test("still lets the way out through", () => {
+  test("the seam key is a toggle, as in the TUI", () => {
     expect(meaning(" ", "terminal", { ctrl: true, code: "Space" })).toBe(
       "walk-out",
     );
+    expect(meaning(" ", "roster", { ctrl: true, code: "Space" })).toBe(
+      "walk-in",
+    );
+  });
+
+  // Ctrl-K is readline's kill-to-end-of-line. The agent has first claim
+  // on it; only ⌘K is the page's from inside a terminal.
+  test("Ctrl-K belongs to the agent, ⌘K to the page", () => {
+    expect(meaning("k", "terminal", { ctrl: true })).toBeUndefined();
+    expect(meaning("k", "terminal", { meta: true })).toBe("palette");
+    expect(meaning("k", "roster", { ctrl: true })).toBe("palette");
   });
 
   test("still lets the alt chords through", () => {
@@ -104,13 +131,42 @@ describe("a walked-in terminal", () => {
     expect(meaning("n", "terminal", { alt: true })).toBe("queue-next");
     expect(meaning("p", "terminal", { alt: true })).toBe("queue-previous");
     expect(meaning("z", "terminal", { alt: true })).toBe("zoom");
-    expect(meaning("t", "terminal", { alt: true })).toBe("pane-transcript");
   });
 
-  test("every binding that fires while walked in is an alt chord or the way out", () => {
+  // The old version of this test compared strings in the table against
+  // other strings in the table, so it could not see a chord that fired
+  // while walked in without being declared — which is exactly what ⌘K
+  // was doing. This one asks match() what actually gets through.
+  test("nothing reaches the page from a terminal but the declared chords", () => {
+    const declared = new Set(
+      bindings.filter((binding) => binding.whileWalkedIn).map((b) => b.id),
+    );
+    const escapes: string[] = [];
+    const letters = "abcdefghijklmnopqrstuvwxyz".split("");
+    const others = ["Enter", "Escape", "Tab", "Backspace", "/", "?", "1"];
+    for (const key of [...letters, ...others]) {
+      for (const modifiers of [
+        {},
+        { alt: true },
+        { ctrl: true },
+        { meta: true },
+        { ctrl: true, alt: true },
+      ]) {
+        const found = match(press(key, modifiers), "terminal", "");
+        if (!found || found.id === "") continue;
+        if (!declared.has(found.id)) {
+          escapes.push(`${JSON.stringify(modifiers)}+${key} → ${found.id}`);
+        }
+      }
+    }
+    expect(escapes).toEqual([]);
+  });
+
+  test("every declared chord is one a full-screen TUI leaves alone", () => {
     for (const binding of bindings.filter((b) => b.whileWalkedIn)) {
       const chord = binding.keys;
-      const survivable = chord.startsWith("alt+") || chord === "Ctrl-space";
+      const survivable =
+        chord.startsWith("alt+") || chord === "Ctrl-space" || chord === "⌘K";
       expect(
         survivable,
         `${binding.id} claims to work while walked in with "${chord}", ` +
@@ -134,6 +190,9 @@ describe("what belongs to the browser", () => {
     // And from inside a terminal, since that is where you are when you
     // want to go somewhere else.
     expect(meaning("k", "terminal", { meta: true })).toBe("palette");
+    // The alt chords are matched by physical key, so a composed macOS
+    // character still reaches the right command.
+    expect(meaning("j", "terminal", { alt: true })).toBe("agents-next");
   });
 
   test("a text field keeps its own keys", () => {
@@ -170,8 +229,11 @@ describe("the table as documentation", () => {
         const alt = binding.keys.startsWith("alt+");
         const key = alt ? binding.keys.slice(4) : binding.keys;
         if (key === "Ctrl-space") {
+          // The seam key is a toggle: from the roster it walks in, from
+          // a terminal it walks out. Both are the same binding.
           return (
-            meaning(" ", "roster", { ctrl: true, code: "Space" }) !== binding.id
+            meaning(" ", "terminal", { ctrl: true, code: "Space" }) !==
+            binding.id
           );
         }
         if (key.length > 1 && key !== "Enter") return false;

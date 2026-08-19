@@ -28,7 +28,7 @@ vi.mock("./api", () => ({
 }));
 
 import { bindings } from "./keys";
-import { known, run, ui } from "./commands.svelte";
+import { run, ui } from "./commands.svelte";
 import { fleet } from "./state.svelte";
 import type { Agent } from "./types";
 
@@ -65,7 +65,7 @@ beforeEach(() => {
   ui.palette = false;
   ui.keys = false;
   ui.dispatching = false;
-  ui.history = false;
+  ui.confirmDelete = "";
   ui.composing = false;
   ui.pending = "";
 });
@@ -163,11 +163,36 @@ describe("walking in and out", () => {
 });
 
 describe("agent actions", () => {
-  test("interrupt, seen, and delete reach the API for the selected agent", () => {
+  test("interrupt and seen reach the API for the selected agent", () => {
     run("interrupt");
     run("seen");
+    expect(calls).toEqual(["interrupt:a", "seen:a"]);
+  });
+
+  // The TUI shows a confirmation naming its victim. A browser that
+  // deleted an agent on an invisible two-key sequence would be worse
+  // than the TUI, not terser than it.
+  test("delete asks before it deletes", () => {
     run("delete");
-    expect(calls).toEqual(["interrupt:a", "seen:a", "remove:a"]);
+    expect(calls).toEqual([]);
+    expect(ui.confirmDelete).toBe("a");
+
+    run("delete-confirmed");
+    expect(calls).toEqual(["remove:a"]);
+    expect(ui.confirmDelete).toBe("");
+  });
+
+  test("a confirmation that is cancelled deletes nothing", () => {
+    run("delete");
+    ui.confirmDelete = "";
+    expect(calls).toEqual([]);
+  });
+
+  test("the confirmation deletes what it named, not what is selected now", () => {
+    run("delete");
+    fleet.selectedID = "c";
+    run("delete-confirmed");
+    expect(calls).toEqual(["remove:a"]);
   });
 
   test("with nothing selected they do nothing at all", () => {
@@ -176,6 +201,7 @@ describe("agent actions", () => {
     run("seen");
     run("delete");
     expect(calls).toEqual([]);
+    expect(ui.confirmDelete).toBe("");
   });
 });
 
@@ -213,6 +239,39 @@ describe("the palette's destinations", () => {
   });
 });
 
+describe("the view keys", () => {
+  test("each shows what it names", () => {
+    run("view-wall");
+    expect(ui.view).toBe("wall");
+    run("view-canvas");
+    expect(ui.view).toBe("canvas");
+    run("view-roster");
+    expect(ui.view).toBe("roster");
+  });
+
+  test("zoom toggles, and something can read it", () => {
+    run("zoom");
+    expect(ui.zoomed).toBe(true);
+    run("zoom");
+    expect(ui.zoomed).toBe(false);
+  });
+
+  test("the overlays open", () => {
+    run("palette");
+    expect(ui.palette).toBe(true);
+    run("help");
+    expect(ui.keys).toBe(true);
+    run("dispatch");
+    expect(ui.dispatching).toBe(true);
+  });
+
+  test("i asks for the composer", () => {
+    run("message");
+    expect(ui.composing).toBe(true);
+    expect(ui.walkedIn).toBe(false);
+  });
+});
+
 describe("marking", () => {
   test("each mark key sends the mark it names", () => {
     run("mark-working");
@@ -222,22 +281,68 @@ describe("marking", () => {
   });
 });
 
-// The contract between the two tables: every key the keymap can produce
-// has to name a command the dispatcher runs. A binding that dispatches
-// nothing is a key advertised in `?` that does nothing when pressed.
-describe("the keymap and the dispatcher agree", () => {
-  test("every binding dispatches something", () => {
-    const dangling = bindings
-      .map((binding) => binding.id)
-      .filter((id) => !known(id));
-    expect(dangling).toEqual([]);
-  });
+/**
+ * The contract between the tables, asserted by consequence.
+ *
+ * The first version of this compared binding ids against a hand-written
+ * list of ids the dispatcher "knows" — two lists agreeing with each
+ * other, which proved nothing about whether anything ran. Six commands
+ * could be gutted with the suite green, and two of them were in fact
+ * dead in the shipped code. So: press every binding, and require that
+ * something observable moves.
+ */
+describe("every binding actually does something", () => {
+  /** A snapshot of everything a command could move. */
+  function world() {
+    return JSON.stringify({
+      ui: { ...ui },
+      selected: fleet.selectedID,
+      workspace: fleet.workspaceID,
+      calls: [...calls],
+    });
+  }
 
-  test("nothing the palette offers is unbuilt", () => {
-    const offered = bindings
-      .filter((binding) => binding.palette)
-      .map((binding) => binding.id)
-      .filter((id) => !known(id));
-    expect(offered).toEqual([]);
+  /**
+   * Two worlds, because half these commands are direction-dependent:
+   * `h` does nothing when you are already left, `walk-out` nothing when
+   * you are already out. A command that moves nothing from *either*
+   * side is dead; one that moves nothing from one side is just a
+   * command with somewhere to be.
+   */
+  function settle(where: "cold" | "hot") {
+    calls.length = 0;
+    fleet.agents = [
+      agent("a"),
+      agent("b", { attention: "question", attention_at: "2026-08-19T08:00:00Z" }),
+      agent("c"),
+    ];
+    fleet.selectedID = where === "cold" ? "a" : "c";
+    fleet.workspaceID = "";
+    Object.assign(ui, {
+      view: where === "cold" ? "roster" : "canvas",
+      pane: where === "cold" ? "terminal" : "diff",
+      walkedIn: where === "hot",
+      zoomed: where === "hot",
+      palette: false,
+      keys: false,
+      dispatching: false,
+      confirmDelete: "",
+      composing: false,
+      pending: "",
+    });
+  }
+
+  test("no binding is inert", () => {
+    const inert: string[] = [];
+    for (const binding of bindings) {
+      const moved = (["cold", "hot"] as const).some((where) => {
+        settle(where);
+        const before = world();
+        run(binding.id);
+        return world() !== before;
+      });
+      if (!moved) inert.push(`${binding.id} (${binding.keys})`);
+    }
+    expect(inert).toEqual([]);
   });
 });

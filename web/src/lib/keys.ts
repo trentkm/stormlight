@@ -2,12 +2,19 @@
  * The keymap, as one table.
  *
  * The dashboard's keys are its interface, so the browser client binds
- * what the TUI binds — `internal/ui/modals.go`'s help modal is the
- * canonical list, and these entries mirror it key for key. Three
- * consumers read this table and nothing else: the dispatcher that runs
- * the keys, the ⌘K palette that names them, and `?` that lists them. A
- * key that exists in one and not the others is the drift this table
- * exists to prevent.
+ * what the TUI binds where it can. `internal/ui/model.go` is the real
+ * canon — the help modal in `modals.go` is a summary and omits several
+ * live bindings — and this table follows the code, not the summary.
+ *
+ * It is not a mirror. Some keys the browser cannot have, some the TUI
+ * has that this client has not built, and three (`1`/`2`/`3`, `d`) are
+ * for views the TUI does not have at all. Each of those is written
+ * down: `unavailable` for impossible, `notYet` for absent.
+ *
+ * Three consumers read this table and nothing else: the dispatcher that
+ * runs the keys, the ⌘K palette that names them, and `?` that lists
+ * them. A key that exists in one and not the others is the drift this
+ * table exists to prevent.
  */
 
 /** What the keyboard belongs to at this moment. */
@@ -73,7 +80,7 @@ export const bindings: Binding[] = [
   {
     id: "walk-out",
     keys: "Ctrl-space",
-    what: "leave the terminal",
+    what: "leave the terminal (and walk in, from outside)",
     group: "Navigate",
     whileWalkedIn: true,
   },
@@ -174,13 +181,6 @@ export const bindings: Binding[] = [
     needsAgent: true,
     palette: "Mark this agent seen",
   },
-  {
-    id: "history",
-    keys: "H",
-    what: "session history; Enter resumes one",
-    group: "Act",
-    palette: "Session history",
-  },
 
   // View
   {
@@ -214,11 +214,10 @@ export const bindings: Binding[] = [
   },
   {
     id: "pane-transcript",
-    keys: "alt+t",
+    keys: "T",
     what: "the transcript tab",
     group: "Panes",
     needsAgent: true,
-    whileWalkedIn: true,
     palette: "Show the transcript",
   },
   {
@@ -242,6 +241,7 @@ export const bindings: Binding[] = [
     keys: "⌘K",
     what: "the command palette",
     group: "View",
+    whileWalkedIn: true,
     palette: undefined,
   },
   { id: "help", keys: "?", what: "this list", group: "View" },
@@ -277,10 +277,13 @@ export const unavailable: Array<{ keys: string; why: string }> = [
  */
 export const notYet: Array<{ keys: string; what: string }> = [
   { keys: "R", what: "rename an agent or workspace" },
-  { keys: "a", what: "add a workspace" },
+  { keys: "n on workspaces", what: "add a workspace" },
+  { keys: "H", what: "session history, and resuming from it" },
   { keys: "/ then n/N", what: "search the transcript" },
   { keys: ", then a/n/c", what: "sort the roster" },
   { keys: "K", what: "workspace info" },
+  { keys: "o", what: "new agent with a directory picker" },
+  { keys: "< / >", what: "resize the focused pane" },
 ];
 
 /**
@@ -318,7 +321,7 @@ function browserOwned(event: KeyboardEvent): boolean {
   if (!event.metaKey && !event.ctrlKey) return false;
   if (event.metaKey) return true;
   if (event.code === "Space") return false;
-  if (event.key === "x") return false;
+  if (event.code === "KeyX") return false;
   return true;
 }
 
@@ -337,26 +340,41 @@ export function match(
   // The palette answers first and from anywhere — including a text
   // field, since needing to leave the box you are typing in to reach
   // the thing that takes you elsewhere is the wrong way round.
-  if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
+  //
+  // ⌘K always; Ctrl-K only when the agent is not listening. Ctrl-K is
+  // readline's kill-to-end-of-line, bound by every shell and by the
+  // dashboard's own composer, and a walked-in terminal has first claim
+  // on it.
+  if (event.code === "KeyK" && event.metaKey) return { id: "palette" };
+  if (event.code === "KeyK" && event.ctrlKey && focus !== "terminal") {
     return { id: "palette" };
   }
   if (focus === "field") return undefined;
   if (browserOwned(event)) return undefined;
 
-  // Walking out has to work from inside a full-screen TUI, so it is
-  // checked before anything else and regardless of focus.
-  if (event.ctrlKey && event.code === "Space") return { id: "walk-out" };
+  // The seam key, symmetric the way the TUI's is: out from inside, in
+  // from outside. Checked before anything else, because from inside a
+  // full-screen TUI it is the only way back.
+  if (event.ctrlKey && event.code === "Space") {
+    return { id: focus === "terminal" ? "walk-out" : "walk-in" };
+  }
 
   if (event.altKey) {
+    // Keyed on physical position, not on the character produced.
+    // macOS composes Option chords — Option+J is "∆", Option+N a dead
+    // key — so matching event.key leaves every one of these inert on
+    // the platform this is written on, and types the glyph into the
+    // agent instead.
     const alt: Record<string, string> = {
-      j: "agents-next",
-      k: "agents-previous",
-      n: "queue-next",
-      p: "queue-previous",
-      z: "zoom",
-      t: "pane-transcript",
+      KeyJ: "agents-next",
+      ArrowDown: "agents-next",
+      KeyK: "agents-previous",
+      ArrowUp: "agents-previous",
+      KeyN: "queue-next",
+      KeyP: "queue-previous",
+      KeyZ: "zoom",
     };
-    const id = alt[event.key.toLowerCase()];
+    const id = alt[event.code];
     return id ? { id } : undefined;
   }
 
@@ -406,8 +424,6 @@ export function match(
       return { id: "", pending: "m" };
     case "M":
       return { id: "seen" };
-    case "H":
-      return { id: "history" };
     case "1":
       return { id: "view-roster" };
     case "2":
@@ -416,6 +432,8 @@ export function match(
       return { id: "view-canvas" };
     case "t":
       return { id: "pane-terminal" };
+    case "T":
+      return { id: "pane-transcript" };
     case "d":
       return { id: "pane-diff" };
     case "?":

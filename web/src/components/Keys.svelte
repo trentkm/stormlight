@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { bindings, unavailable } from "../lib/keys";
+  import { bindings, notYet, unavailable } from "../lib/keys";
 
   /**
    * `?`. What this client actually binds, read from the same table the
@@ -13,7 +13,14 @@
   const groups = ["Navigate", "Act", "Panes", "View"] as const;
 
   const key = (event: KeyboardEvent) => {
-    // Any key closes, the way the TUI's help modal does.
+    // "Any key closes", the way the TUI's help modal does — but a
+    // terminal never delivers a lone Shift, and a browser chord is the
+    // browser's. Swallowing either would make this overlay close when
+    // nobody pressed anything, and eat ⌘R on the way.
+    if (["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(event.key)) {
+      return;
+    }
+    if (event.metaKey || event.ctrlKey) return;
     event.preventDefault();
     onclose();
   };
@@ -53,7 +60,16 @@
       {/if}
     {/each}
     <section class="gone">
-      <h3>Not available here</h3>
+      <h3>Not here yet</h3>
+      {#each notYet as entry (entry.keys)}
+        <p class="row">
+          <kbd>{entry.keys}</kbd>
+          <span class="what">{entry.what}</span>
+        </p>
+      {/each}
+    </section>
+    <section class="gone">
+      <h3>Not available in a browser</h3>
       {#each unavailable as entry (entry.keys)}
         <p class="row">
           <kbd>{entry.keys}</kbd>

@@ -24,7 +24,10 @@ export const ui = $state({
   palette: false,
   keys: false,
   dispatching: false,
-  history: false,
+  /** The agent Ctrl-x then x is asking to delete, or "". The TUI shows
+   *  a confirmation naming its victim; a browser that deleted an agent
+   *  on an invisible two-key sequence would be worse, not terser. */
+  confirmDelete: "",
   /** Focus the message box on next render. */
   composing: false,
   /** A two-key sequence in progress: "g" or "ctrl-x". */
@@ -164,9 +167,6 @@ export function run(id: string, argument?: string): void {
     case "dispatch":
       ui.dispatching = true;
       return;
-    case "history":
-      ui.history = true;
-      return;
     case "message":
       if (fleet.selectedID === "") return;
       ui.view = "roster";
@@ -183,12 +183,18 @@ export function run(id: string, argument?: string): void {
       if (fleet.selectedID === "") return;
       void act(() => api.clearAttention(fleet.selectedID));
       return;
-    case "delete": {
+    case "delete":
+      // Asks; the confirmation does the deleting.
       if (fleet.selectedID === "") return;
-      const id = fleet.selectedID;
+      ui.confirmDelete = fleet.selectedID;
+      return;
+    case "delete-confirmed": {
+      const id = ui.confirmDelete || fleet.selectedID;
+      ui.confirmDelete = "";
+      if (id === "") return;
       void act(async () => {
         await api.remove(id);
-        fleet.selectedID = "";
+        if (fleet.selectedID === id) fleet.selectedID = "";
       });
       return;
     }
@@ -203,6 +209,7 @@ export function run(id: string, argument?: string): void {
     case "select-workspace":
       if (argument !== undefined) {
         fleet.workspaceID = argument;
+        ui.view = "roster";
         // A workspace with agents selects its first, so the pane beside
         // the roster is not left showing an agent from somewhere else.
         const list = visible();
@@ -225,23 +232,6 @@ export function run(id: string, argument?: string): void {
     default:
       return;
   }
-}
-
-/** Whether an id is something run() actually does, for the tests and
- *  for the palette's own filtering. */
-export function known(id: string): boolean {
-  return [
-    "down", "up", "first", "last",
-    "agents-next", "agents-previous", "queue-next", "queue-previous",
-    "pane-left", "pane-right",
-    "walk-in", "walk-out", "zoom",
-    "view-roster", "view-wall", "view-canvas",
-    "pane-terminal", "pane-transcript", "pane-diff",
-    "palette", "help", "dispatch", "history", "message",
-    "interrupt", "seen", "delete",
-    "mark-working", "mark-attention", "mark-clear",
-    "select-agent", "select-workspace",
-  ].includes(id);
 }
 
 /** The workspaces the palette lists — re-exported so the palette does

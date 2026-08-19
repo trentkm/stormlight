@@ -6,6 +6,7 @@
   import { isUrgent } from "./lib/types";
   import Canvas from "./components/Canvas.svelte";
   import Dispatch from "./components/Dispatch.svelte";
+  import Confirm from "./components/Confirm.svelte";
   import Keys from "./components/Keys.svelte";
   import Palette from "./components/Palette.svelte";
   import Wall from "./components/Wall.svelte";
@@ -30,9 +31,36 @@
    * going to reach, which is how a walked-in terminal keeps its
    * keystrokes and the browser keeps its chords.
    */
+  /** Anything with its own keyboard: while one is open the page's keys
+   *  wait, including inside the dispatch form, whose selects and
+   *  buttons are not text fields and would otherwise be typing
+   *  commands at the roster behind the modal. */
+  const overlaid = $derived(
+    ui.palette || ui.keys || ui.dispatching || ui.confirmDelete !== "",
+  );
+
+  /**
+   * Walking in is a claim about where the keyboard is, and the DOM can
+   * disagree: click a roster row while walked in and focus leaves the
+   * terminal, but the page still thinks the agent is listening — so
+   * ordinary keys reach neither. Focus moving out of the terminal ends
+   * the walk, which is what the click meant anyway.
+   */
+  function focusMoved(event: FocusEvent) {
+    if (!ui.walkedIn) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest(".terminal")) return;
+    ui.walkedIn = false;
+  }
+
   function key(event: KeyboardEvent) {
-    // Overlays run their own keyboards; the page's keys wait.
-    if (ui.palette || ui.keys) return;
+    if (overlaid) {
+      // A half-typed sequence does not survive an overlay: coming back
+      // to a roster that has moved and finishing "m" on whatever is
+      // selected now is how the wrong agent gets marked.
+      ui.pending = "";
+      return;
+    }
     const found = match(
       event,
       focusOf(document.activeElement, ui.walkedIn),
@@ -48,13 +76,18 @@
     if (found.id !== "") run(found.id);
   }
 
+  const agentName = (id: string) => {
+    const found = fleet.agents.find((agent) => agent.id === id);
+    return found ? found.name || found.task || id.slice(0, 8) : "this agent";
+  };
+
   const urgent = $derived(fleet.agents.filter(isUrgent).length);
   const working = $derived(
     fleet.agents.filter((a) => a.process_live && !isUrgent(a)).length,
   );
 </script>
 
-<svelte:window onkeydowncapture={key} />
+<svelte:window onkeydowncapture={key} onfocusin={focusMoved} />
 
 {#if !authorized || fleet.lost}
   <main class="gate">
@@ -101,7 +134,7 @@
       <span class="tally working">● {working} working</span>
     </header>
 
-    <div class="body">
+    <div class="body" class:zoomed={ui.zoomed}>
       <WorkspaceRail />
       {#if ui.view === "wall"}
         <Wall onopen={() => run("view-roster")} />
@@ -132,6 +165,14 @@
   {/if}
   {#if ui.keys}
     <Keys onclose={() => (ui.keys = false)} />
+  {/if}
+  {#if ui.confirmDelete}
+    <Confirm
+      what="Delete {agentName(ui.confirmDelete)}?"
+      detail="The agent's process stops and its session is removed."
+      onconfirm={() => run("delete-confirmed")}
+      oncancel={() => (ui.confirmDelete = "")}
+    />
   {/if}
 {/if}
 
@@ -205,6 +246,12 @@
     display: flex;
     flex: 1 1 auto;
     min-height: 0;
+  }
+  /* alt+z: the terminal takes the body, the way the TUI's zoom drops
+     the roster and rail to give the agent the room. */
+  .body.zoomed :global(.rail),
+  .body.zoomed :global(.roster) {
+    display: none;
   }
   .error {
     display: flex;

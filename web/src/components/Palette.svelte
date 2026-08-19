@@ -88,6 +88,11 @@
    * to go somewhere far more often than to do something, and a fuzzy
    * query sorts by how well it matched regardless.
    */
+  /** How many rows are drawn — and therefore how far the cursor goes.
+   *  A cursor past the last rendered row is an invisible selection that
+   *  Enter would act on. */
+  const shownLimit = 40;
+
   const entries = $derived.by(() => {
     const all: Entry[] = [
       ...agentEntries,
@@ -108,11 +113,13 @@
       .map((scored) => scored.entry);
   });
 
+  const shown = $derived(entries.slice(0, shownLimit));
+
   // A query that reshuffles the list must not leave the cursor pointing
   // past the end of it.
   $effect(() => {
-    void entries;
-    if (cursor >= entries.length) cursor = Math.max(0, entries.length - 1);
+    void shown;
+    if (cursor >= shown.length) cursor = Math.max(0, shown.length - 1);
   });
 
   $effect(() => {
@@ -125,7 +132,23 @@
     onclose();
   };
 
+  /**
+   * The palette's own keyboard, bound to the panel rather than the
+   * window.
+   *
+   * It used to be a window listener while the panel stopped
+   * propagation — which meant every keystroke died on the panel and
+   * Escape, Enter, and the arrows did nothing at all. Handling here is
+   * both the fix and the reason: the keys belong to the thing that
+   * owns them.
+   */
   const key = (event: KeyboardEvent) => {
+    // ⌘K closes what ⌘K opened.
+    if (event.code === "KeyK" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      onclose();
+      return;
+    }
     switch (event.key) {
       case "Escape":
         event.preventDefault();
@@ -133,11 +156,11 @@
         return;
       case "Enter":
         event.preventDefault();
-        run(entries[cursor]);
+        run(shown[cursor]);
         return;
       case "ArrowDown":
         event.preventDefault();
-        cursor = Math.min(cursor + 1, entries.length - 1);
+        cursor = Math.min(cursor + 1, shown.length - 1);
         return;
       case "ArrowUp":
         event.preventDefault();
@@ -148,7 +171,7 @@
     // whose hands are already on those keys.
     if (event.ctrlKey && (event.key === "n" || event.key === "j")) {
       event.preventDefault();
-      cursor = Math.min(cursor + 1, entries.length - 1);
+      cursor = Math.min(cursor + 1, shown.length - 1);
     }
     if (event.ctrlKey && (event.key === "p" || event.key === "k")) {
       event.preventDefault();
@@ -156,8 +179,6 @@
     }
   };
 </script>
-
-<svelte:window onkeydown={key} />
 
 <!-- The scrim closes on click; the panel stops the click reaching it. -->
 <div
@@ -176,7 +197,7 @@
     aria-label="Command palette"
     tabindex="-1"
     onclick={(event) => event.stopPropagation()}
-    onkeydown={(event) => event.stopPropagation()}
+    onkeydown={key}
   >
     <input
       bind:this={field}
@@ -187,11 +208,11 @@
       spellcheck="false"
       autocomplete="off"
     />
-    {#if entries.length === 0}
+    {#if shown.length === 0}
       <p class="nothing">Nothing matches.</p>
     {:else}
       <ul class="entries">
-        {#each entries.slice(0, 40) as entry, index (entry.kind + entry.id + (entry.argument ?? ""))}
+        {#each shown as entry, index (entry.kind + entry.id + (entry.argument ?? ""))}
           <li>
             <button
               class:on={index === cursor}
