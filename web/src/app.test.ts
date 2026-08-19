@@ -273,6 +273,20 @@ describe("moving between columns", () => {
     done();
   });
 
+  test("clicking the terminal walks in", () => {
+    const done = page();
+    expect(ui.walkedIn).toBe(false);
+
+    document
+      .querySelector("[data-walk-target]")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    flushSync();
+
+    expect(ui.walkedIn).toBe(true);
+    expect(document.body.textContent).toContain("typing to this agent");
+    done();
+  });
+
   // The message box exists only where there is no terminal to type in.
   // On the terminal tab the agent's own prompt is the input box.
   test("the message box appears only off the terminal tab", () => {

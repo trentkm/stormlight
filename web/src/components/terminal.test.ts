@@ -98,8 +98,13 @@ afterEach(() => {
   while (leaked.length) leaked.pop()!();
 });
 
+const entered: number[] = [];
+
 function show(props: { agentID: string; focused: boolean }) {
-  const reactiveProps = reactive(props);
+  const reactiveProps = reactive({
+    ...props,
+    onenter: () => entered.push(1),
+  });
   const target = document.createElement("div");
   document.body.append(target);
   const term = mount(Terminal, { target, props: reactiveProps });
@@ -131,6 +136,7 @@ function focusedElement() {
 
 beforeEach(() => {
   FakeTerminal.live = [];
+  entered.length = 0;
 });
 
 /**
@@ -198,15 +204,49 @@ describe("who holds the keyboard", () => {
   });
 
 
-  test("a terminal nobody walked into does not keep focus when clicked", () => {
+  // A click on a terminal means "I want to type here" — so it asks.
+  test("a click asks to walk in", () => {
     const { close } = show({ agentID: "a1", focused: false });
 
     click();
 
-    // This is the failure that reached a live agent: the click focuses
-    // xterm, and if nothing takes it back, the next keystroke is typed
-    // into someone's session.
+    expect(entered.length).toBe(1);
+    close();
+  });
+
+  test("a click the page does not grant leaves the keyboard alone", async () => {
+    // The page says no by leaving `focused` false. This is the failure
+    // that once reached a live agent: xterm focuses itself on
+    // mousedown, and if nothing takes it back, the next keystroke is
+    // typed into someone's session.
+    const { close } = show({ agentID: "a1", focused: false });
+
+    click();
+    flushSync();
     expect(focusedElement().inTerminal).toBe(false);
+
+    // And the claim does not outlive the click that made it: a focus
+    // arriving later — a stray click, a programmatic focus — is not
+    // covered by a request the page already refused.
+    await Promise.resolve();
+    FakeTerminal.live[0].focus();
+    document
+      .querySelector(".terminal")!
+      .dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+
+    expect(focusedElement().inTerminal).toBe(false);
+    close();
+  });
+
+  test("a click the page grants keeps it", () => {
+    const { props, close } = show({ agentID: "a1", focused: false });
+
+    click();
+    // What Spanreed does with the request.
+    props.focused = true;
+    flushSync();
+
+    expect(focusedElement().inTerminal).toBe(true);
     close();
   });
 

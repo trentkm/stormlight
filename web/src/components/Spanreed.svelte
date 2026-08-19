@@ -115,7 +115,11 @@
         class:hidden={ui.pane !== "terminal"}
         class:walked={ui.walkedIn}
       >
-        <Terminal agentID={agent.id} focused={ui.walkedIn} />
+        <Terminal
+          agentID={agent.id}
+          focused={ui.walkedIn}
+          onenter={() => run("walk-in")}
+        />
       </div>
       {#if ui.pane === "transcript"}
         <Transcript id={agent.id} />

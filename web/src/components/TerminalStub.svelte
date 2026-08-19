@@ -4,7 +4,10 @@
    * the class the focus rules key on and a focusable helper, and
    * nothing else. The real one is exercised by terminal.test.ts.
    */
-  let { focused = false }: { agentID: string; focused?: boolean } = $props();
+  let {
+    focused = false,
+    onenter,
+  }: { agentID: string; focused?: boolean; onenter?: () => void } = $props();
   let helper = $state<HTMLTextAreaElement>();
 
   $effect(() => {
@@ -16,7 +19,8 @@
 <!-- The viewport matters: xterm renders one, and j/k scroll it. A stub
      without it let a page-level test assert the fall-through while
      claiming to test the scroll. -->
-<div class="terminal" data-walk-target>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="terminal" data-walk-target onmousedown={() => onenter?.()}>
   <div class="xterm-viewport"></div>
   <textarea bind:this={helper} aria-label="terminal"></textarea>
 </div>
