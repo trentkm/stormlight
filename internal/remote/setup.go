@@ -58,6 +58,13 @@ look() {
   [ -n "$SHELL" ] && "$SHELL" -lc "command -v $1" 2>/dev/null && return 0
   return 1
 }
+# A file that will not start is not an installed program. A binary built
+# against a newer libc than this machine has exists, is executable, and
+# fails before main — reporting it present is how a host looks ready and
+# then cannot browse.
+runs() {
+  [ -n "$1" ] && "$1" --version >/dev/null 2>&1
+}
 printf 'platform=%s\n' "$(uname -sm)"
 printf 'home=%s\n' "$HOME"
 if [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ] || \
@@ -72,6 +79,7 @@ if [ -n "$STORMLIGHT_CONFIGURED_BIN" ]; then
 else
   sl=$(look stormlight)
 fi
+runs "$sl" || sl=""
 [ -n "$sl" ] && printf 'stormlight=%s\n' "$sl"
 [ -n "$sl" ] && printf 'stormlight_version=%s\n' "$("$sl" --version 2>/dev/null | head -1)"
 yz=$(look yazi)
@@ -81,6 +89,7 @@ yz=$(look yazi)
 if [ -z "$yz" ] && [ -n "$sl" ] && [ -x "$(dirname "$sl")/yazi" ]; then
   yz="$(dirname "$sl")/yazi"
 fi
+runs "$yz" || yz=""
 [ -n "$yz" ] && printf 'yazi=%s\n' "$yz"
 for manager in brew apt-get dnf pacman apk; do
   if command -v "$manager" >/dev/null 2>&1; then printf 'package_manager=%s\n' "$manager"; break; fi
@@ -317,11 +326,17 @@ func InstallYazi(
 		if err := copyIn.Run(); err != nil {
 			return fmt.Errorf("copy %s to %s: %w", name, report.Host, err)
 		}
+		// Started once before it is called installed: a binary the host
+		// cannot run is not an installation, and finding that out here
+		// beats finding it out inside a popup that has already closed.
 		finish := transport.ShellCommand(ctx, fmt.Sprintf(
-			"set -e\nchmod 0755 %[1]q.new\nmv %[1]q.new %[1]q\n", destination))
+			"set -e\nchmod 0755 %[1]q.new\nmv %[1]q.new %[1]q\n%[1]q --version\n",
+			destination))
 		finish.Stdout, finish.Stderr = progress, progress
 		if err := finish.Run(); err != nil {
-			return fmt.Errorf("install %s on %s: %w", name, report.Host, err)
+			return fmt.Errorf(
+				"%s cannot run the %s just installed at %s: %w",
+				report.Host, name, destination, err)
 		}
 	}
 	return nil

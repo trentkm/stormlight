@@ -188,23 +188,36 @@ func TestYaziIsOnlySuggestedWhereItIsPackaged(t *testing.T) {
 	}
 }
 
-// TestYaziTriplesMatchWhatItPublishes: Rust names platforms a third way,
-// and musl is a different binary rather than a slower one.
-func TestYaziTriplesMatchWhatItPublishes(t *testing.T) {
+// TestLinuxAlwaysGetsTheStaticBuild: the gnu archive is linked against
+// whatever glibc built it — 2.39 — and will not start on anything older.
+// Amazon Linux 2023 has 2.34, so the build that matched its libc was the
+// one that could not run. The musl archive is statically linked and has
+// no opinion about the machine it lands on, which is the only useful
+// property when that machine is not this one.
+func TestLinuxAlwaysGetsTheStaticBuild(t *testing.T) {
 	for _, test := range []struct {
 		target Target
 		musl   bool
 		want   string
 	}{
-		{Target{"linux", "arm64"}, false, "aarch64-unknown-linux-gnu"},
-		{Target{"linux", "amd64"}, false, "x86_64-unknown-linux-gnu"},
+		{Target{"linux", "arm64"}, false, "aarch64-unknown-linux-musl"},
+		{Target{"linux", "amd64"}, false, "x86_64-unknown-linux-musl"},
 		{Target{"linux", "amd64"}, true, "x86_64-unknown-linux-musl"},
 		{Target{"darwin", "arm64"}, false, "aarch64-apple-darwin"},
+		{Target{"darwin", "amd64"}, false, "x86_64-apple-darwin"},
 	} {
 		got, ok := yaziTriple(test.target, test.musl)
 		if !ok || got != test.want {
 			t.Fatalf("%v musl=%v → %q, want %q", test.target, test.musl, got, test.want)
 		}
+	}
+	// What the host reports about its libc no longer decides anything on
+	// Linux, which is the point: it was the deciding input that produced
+	// an unrunnable binary.
+	withMusl, _ := yaziTriple(Target{"linux", "arm64"}, true)
+	withGlibc, _ := yaziTriple(Target{"linux", "arm64"}, false)
+	if withMusl != withGlibc {
+		t.Fatalf("libc should not change the answer: %q vs %q", withMusl, withGlibc)
 	}
 }
 
@@ -225,5 +238,31 @@ func TestScriptsDoNotDependOnTheLoginShell(t *testing.T) {
 	}
 	if command.Stdin == nil {
 		t.Fatal("the script travels on stdin")
+	}
+}
+
+// TestPresenceMeansItRuns: a binary built against a newer libc than the
+// host has exists, is executable, and fails before main. Reporting it
+// present is how a machine looks ready and then cannot browse.
+func TestPresenceMeansItRuns(t *testing.T) {
+	directory := t.TempDir()
+	broken := filepath.Join(directory, "stormlight")
+	if err := os.WriteFile(broken, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	working := filepath.Join(directory, "yazi")
+	if err := os.WriteFile(working, []byte("#!/bin/sh\necho yazi 1.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The probe script, run the way the host runs it.
+	transport := fakeSSH(t, `exec /bin/sh -s`)
+	transport.host.Bin = broken
+	report, err := Probe(context.Background(), transport)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if report.Stormlight.Present() {
+		t.Fatal("a binary that will not start is not an installed program")
 	}
 }
