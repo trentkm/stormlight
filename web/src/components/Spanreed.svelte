@@ -3,8 +3,10 @@
   import { act, fleet, selected } from "../lib/state.svelte";
   import { statusVisual } from "../lib/theme";
   import Terminal from "./Terminal.svelte";
+  import Transcript from "./Transcript.svelte";
 
   let message = $state("");
+  let pane = $state<"terminal" | "transcript">("terminal");
 
   const agent = $derived(selected());
 
@@ -23,6 +25,20 @@
     <header>
       <span style:color={status.color}>{status.glyph}</span>
       <span class="title">{agent.name || agent.task}</span>
+      <nav class="panes">
+        <button
+          class:on={pane === "terminal"}
+          onclick={() => (pane = "terminal")}
+        >
+          terminal
+        </button>
+        <button
+          class:on={pane === "transcript"}
+          onclick={() => (pane = "transcript")}
+        >
+          transcript
+        </button>
+      </nav>
       <span class="spacer"></span>
       <button onclick={() => act(() => api.interrupt(agent.id))}>interrupt</button>
       {#if agent.attention}
@@ -40,9 +56,18 @@
     </header>
 
     <!-- Keyed on the agent so switching selection builds a new terminal
-         rather than re-pointing the old one at a different session. -->
+         rather than re-pointing the old one at a different session. The
+         terminal stays mounted (hidden) behind the transcript: its
+         attachment is how the daemon knows this pane's size, and
+         tearing it down on every tab switch would churn seed and
+         geometry for a keystroke's worth of reading. -->
     {#key agent.id}
-      <Terminal agentID={agent.id} />
+      <div class="stack" class:hidden={pane !== "terminal"}>
+        <Terminal agentID={agent.id} />
+      </div>
+      {#if pane === "transcript"}
+        <Transcript id={agent.id} />
+      {/if}
     {/key}
 
     <form onsubmit={send}>
@@ -91,6 +116,30 @@
   header button {
     padding: 3px 10px;
     font-size: 11px;
+  }
+  .panes {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+  }
+  .panes button {
+    padding: 1px 8px;
+    border: none;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .panes button.on {
+    background: var(--band);
+    color: var(--band-ink);
+  }
+  .stack {
+    display: contents;
+  }
+  .stack.hidden {
+    display: none;
   }
   .danger:hover {
     border-color: var(--failed);

@@ -3,6 +3,7 @@ package provider
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -129,5 +130,73 @@ func TestRenderClaudeTranscriptFallsBackWhenEmpty(t *testing.T) {
 	}
 	if _, ok := RenderClaudeTranscript(filepath.Join(t.TempDir(), "missing.jsonl")); ok {
 		t.Fatal("missing file reported ok")
+	}
+}
+
+func TestParseClaudeTranscriptEntries(t *testing.T) {
+	transcript := strings.Join([]string{
+		`{"type":"user","message":{"content":"do the thing"}}`,
+		`{"type":"assistant","message":{"content":[` +
+			`{"type":"text","text":"On it."},` +
+			`{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","content":"one\ntwo\nthree\nfour\nfive"}]}}`,
+		`{"type":"user","isMeta":true,"message":{"content":"skipped"}}`,
+	}, "\n")
+
+	entries, ok := ParseClaudeTranscriptFrom(strings.NewReader(transcript))
+	if !ok {
+		t.Fatal("expected a conversation")
+	}
+
+	want := []TranscriptEntry{
+		{Kind: "prompt", Text: "do the thing"},
+		{Kind: "reply", Text: "On it."},
+		{Kind: "tool", Tool: "Bash", Arg: "go test ./..."},
+		{Kind: "result", Text: "one\ntwo\nthree", Hidden: 2},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("got %d entries, want %d: %#v", len(entries), len(want), entries)
+	}
+	for i := range want {
+		if entries[i] != want[i] {
+			t.Errorf("entry %d: got %#v, want %#v", i, entries[i], want[i])
+		}
+	}
+}
+
+// The rendered skeleton, pinned as a literal. RenderClaudeTranscriptFrom
+// is itself parse-then-render now, so comparing the two would compare a
+// function with itself; what this guards is the *shape* the dashboard
+// has always shown — markers, indents, trims, the +N line — with the
+// ANSI styling stripped so the pin is about layout, not palette. The
+// styling itself is asserted by TestRenderClaudeTranscriptPaints
+// Conversation above.
+var testANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(text string) string { return testANSIPattern.ReplaceAllString(text, "") }
+
+func TestRenderTranscriptEntriesGoldenSkeleton(t *testing.T) {
+	entries := []TranscriptEntry{
+		{Kind: "prompt", Text: "ask\nsecond line"},
+		{Kind: "reply", Text: "answer"},
+		{Kind: "tool", Tool: "Read", Arg: "/f.go"},
+		{Kind: "result", Text: "one\ntwo\nthree", Hidden: 4},
+	}
+
+	rendered := stripANSI(RenderTranscriptEntries(entries))
+
+	golden := "\n" +
+		"❯ ask\n" +
+		"  second line\n" +
+		"\n" +
+		"⏺ answer\n" +
+		"\n" +
+		"⏺ Read(/f.go)\n" +
+		"  ⎿ one\n" +
+		"    two\n" +
+		"    three\n" +
+		"    … +4 lines\n"
+	if rendered != golden {
+		t.Errorf("skeleton drifted:\ngot  %q\nwant %q", rendered, golden)
 	}
 }

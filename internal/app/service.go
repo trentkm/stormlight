@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -55,10 +56,24 @@ type Service struct {
 	// transcripts caches renders of transcripts that had to cross a
 	// tunnel to get here.
 	transcriptMu sync.Mutex
-	transcripts  map[string]renderedTranscript
+	transcripts  map[string]cachedTranscript
+
+	// localTranscripts caches parses of transcripts on this machine,
+	// keyed by path and invalidated by mtime and size. A 14MB JSONL is
+	// cheap to stat and expensive to re-parse, and the web polls.
+	localTranscriptMu sync.Mutex
+	localTranscripts  map[string]localTranscript
 }
 
-type renderedTranscript struct {
+type localTranscript struct {
+	modTime time.Time
+	size    int64
+	entries []provider.TranscriptEntry
+	ok      bool
+}
+
+type cachedTranscript struct {
+	entries  []provider.TranscriptEntry
 	rendered string
 	ok       bool
 	at       time.Time
@@ -523,14 +538,91 @@ func (s *Service) renderTranscript(
 	ctx context.Context,
 	managedAgent agent.Agent,
 ) (string, bool) {
-	reader, ok := s.runtime.(session.FileReader)
-	if !ok {
-		return provider.RenderClaudeTranscript(managedAgent.TranscriptPath)
-	}
-	if managedAgent.Host == "" {
+	if s.transcriptIsLocal(managedAgent) {
 		// Reading a local file is cheap enough that a cache would only
 		// add staleness.
 		return provider.RenderClaudeTranscript(managedAgent.TranscriptPath)
+	}
+	cached := s.remoteTranscript(ctx, managedAgent)
+	return cached.rendered, cached.ok
+}
+
+// Transcript returns an agent's conversation as parsed entries — the
+// unstyled form the web client paints its own way. ok is false when the
+// agent has no transcript, so callers fall back to the terminal.
+func (s *Service) Transcript(
+	ctx context.Context,
+	id string,
+) ([]provider.TranscriptEntry, bool) {
+	agents, err := s.runtime.ListAgents(ctx)
+	if err != nil {
+		return nil, false
+	}
+	for _, managedAgent := range agents {
+		if managedAgent.ID != id {
+			continue
+		}
+		if managedAgent.TranscriptPath == "" {
+			return nil, false
+		}
+		if s.transcriptIsLocal(managedAgent) {
+			return s.localTranscript(managedAgent.TranscriptPath)
+		}
+		cached := s.remoteTranscript(ctx, managedAgent)
+		return cached.entries, cached.ok
+	}
+	return nil, false
+}
+
+// localTranscript parses a transcript on this machine, re-parsing only
+// when the file's mtime or size moved. The cached slice is shared with
+// callers and never mutated after the parse.
+func (s *Service) localTranscript(path string) ([]provider.TranscriptEntry, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, false
+	}
+	s.localTranscriptMu.Lock()
+	cached, hit := s.localTranscripts[path]
+	s.localTranscriptMu.Unlock()
+	if hit && cached.modTime.Equal(info.ModTime()) && cached.size == info.Size() {
+		return cached.entries, cached.ok
+	}
+	entries, ok := provider.ParseClaudeTranscript(path)
+	s.localTranscriptMu.Lock()
+	if s.localTranscripts == nil {
+		s.localTranscripts = map[string]localTranscript{}
+	}
+	s.localTranscripts[path] = localTranscript{
+		modTime: info.ModTime(),
+		size:    info.Size(),
+		entries: entries,
+		ok:      ok,
+	}
+	s.localTranscriptMu.Unlock()
+	return entries, ok
+}
+
+// transcriptIsLocal reports whether the agent's transcript is a file on
+// this machine, readable directly.
+func (s *Service) transcriptIsLocal(managedAgent agent.Agent) bool {
+	if _, ok := s.runtime.(session.FileReader); !ok {
+		return true
+	}
+	return managedAgent.Host == ""
+}
+
+// remoteTranscript fetches, parses, and renders a transcript that lives
+// across a tunnel, under the TTL cache. The render is memoized with the
+// fetch: entries only change when the file is re-read, so painting them
+// once per fetch serves every refresh frame in between.
+func (s *Service) remoteTranscript(
+	ctx context.Context,
+	managedAgent agent.Agent,
+) cachedTranscript {
+	reader, isReader := s.runtime.(session.FileReader)
+	if !isReader {
+		return cachedTranscript{}
 	}
 
 	key := managedAgent.Host + "\x00" + managedAgent.TranscriptPath
@@ -538,10 +630,10 @@ func (s *Service) renderTranscript(
 	cached, hit := s.transcripts[key]
 	s.transcriptMu.Unlock()
 	if hit && time.Since(cached.at) < remoteTranscriptTTL {
-		return cached.rendered, cached.ok
+		return cached
 	}
 
-	rendered, ok := func() (string, bool) {
+	entries, ok := func() ([]provider.TranscriptEntry, bool) {
 		source, err := reader.ReadAgentFile(ctx, managedAgent.ID, managedAgent.TranscriptPath)
 		if err != nil {
 			diagnostic.Logger().Warn("transcript unavailable",
@@ -550,19 +642,23 @@ func (s *Service) renderTranscript(
 				"path", managedAgent.TranscriptPath,
 				"error", err,
 			)
-			return "", false
+			return nil, false
 		}
 		defer source.Close()
-		return provider.RenderClaudeTranscriptFrom(source)
+		return provider.ParseClaudeTranscriptFrom(source)
 	}()
 
+	fresh := cachedTranscript{entries: entries, ok: ok, at: time.Now()}
+	if ok {
+		fresh.rendered = provider.RenderTranscriptEntries(entries)
+	}
 	s.transcriptMu.Lock()
 	if s.transcripts == nil {
-		s.transcripts = map[string]renderedTranscript{}
+		s.transcripts = map[string]cachedTranscript{}
 	}
-	s.transcripts[key] = renderedTranscript{rendered: rendered, ok: ok, at: time.Now()}
+	s.transcripts[key] = fresh
 	s.transcriptMu.Unlock()
-	return rendered, ok
+	return fresh
 }
 
 func (s *Service) Attach(ctx context.Context, id string) (AttachResult, error) {

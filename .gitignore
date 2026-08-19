@@ -7,4 +7,4 @@
 
 # The frontend toolchain. web/dist is committed on purpose: it is
 # embedded in the binary, so `go build ./...` must work without Node.
-web/node_modules/
+node_modules/

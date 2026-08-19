@@ -48,6 +48,16 @@ export interface Agent {
   host?: string;
 }
 
+/** One conversation event, as /api/agents/{id}/transcript serves it. */
+export interface TranscriptEntry {
+  kind: "prompt" | "reply" | "tool" | "result";
+  text?: string;
+  tool?: string;
+  arg?: string;
+  /** Result lines elided server-side. */
+  hidden?: number;
+}
+
 export interface Provider {
   ID: string;
   Label: string;

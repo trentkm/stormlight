@@ -98,6 +98,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/agents/{id}/interrupt", s.interruptAgent)
 	s.mux.HandleFunc("POST /api/agents/{id}/mark", s.markAgent)
 	s.mux.HandleFunc("POST /api/agents/{id}/clear-attention", s.clearAttention)
+	s.mux.HandleFunc("GET /api/agents/{id}/transcript", s.agentTranscript)
 	s.mux.HandleFunc("GET /api/agents/{id}/terminal", s.terminal)
 
 	s.mux.HandleFunc("GET /api/workspaces", s.listWorkspaces)
