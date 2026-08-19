@@ -39,6 +39,24 @@
         selectionBackground: terminal.selectionBackground,
       },
     });
+    /**
+     * The wheel scrolls the terminal, not the agent.
+     *
+     * An agent that has asked for mouse reporting gets wheel events as
+     * input, and a CLI with a prompt reads them as history — so
+     * scrolling up over the transcript cycled through past prompts
+     * instead of showing what scrolled off. In the normal buffer there
+     * is scrollback and scrolling it is unambiguously what was meant.
+     * In the alternate screen there is none, and the wheel belongs to
+     * whatever full-screen program is drawing there.
+     */
+    built.attachCustomWheelEventHandler((event) => {
+      if (built.buffer.active.type === "alternate") return true;
+      const lines = event.deltaY > 0 ? 3 : -3;
+      built.scrollLines(lines);
+      return false;
+    });
+
     const fitAddon = new FitAddon();
     built.loadAddon(fitAddon);
     built.open(host);

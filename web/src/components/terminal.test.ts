@@ -25,6 +25,20 @@ const { FakeTerminal } = vi.hoisted(() => {
     host!: HTMLElement;
     focuses = 0;
     blurs = 0;
+    scrolled = 0;
+    /** Which buffer the agent is drawing in — the thing that decides
+     *  whether the wheel is ours or the program's. */
+    bufferType: "normal" | "alternate" = "normal";
+    wheel?: (event: WheelEvent) => boolean;
+    get buffer() {
+      return { active: { type: this.bufferType } };
+    }
+    attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean) {
+      this.wheel = handler;
+    }
+    scrollLines(lines: number) {
+      this.scrolled += lines;
+    }
 
     constructor() {
       FakeTerminal.live.push(this);
@@ -113,6 +127,55 @@ function focusedElement() {
 
 beforeEach(() => {
   FakeTerminal.live = [];
+});
+
+/**
+ * The wheel. An agent that asked for mouse reporting receives wheel
+ * events as input, and a CLI with a prompt reads them as history — so
+ * scrolling up over the transcript walked through past prompts instead
+ * of showing what had scrolled off.
+ */
+describe("whose wheel it is", () => {
+  function turn(deltaY: number) {
+    const term = FakeTerminal.live[0];
+    return term.wheel?.(new WheelEvent("wheel", { deltaY }));
+  }
+
+  test("scrolls the terminal rather than reaching the agent", () => {
+    const { close } = show({ agentID: "a1", focused: true });
+    const term = FakeTerminal.live[0];
+
+    const handled = turn(120);
+
+    expect(term.scrolled).toBeGreaterThan(0);
+    // false: xterm must not also send it onward as input.
+    expect(handled).toBe(false);
+    close();
+  });
+
+  test("scrolls back up as well as down", () => {
+    const { close } = show({ agentID: "a1", focused: true });
+    const term = FakeTerminal.live[0];
+
+    turn(-120);
+
+    expect(term.scrolled).toBeLessThan(0);
+    close();
+  });
+
+  // A full-screen program has no scrollback, and the wheel is how it
+  // is driven — that one belongs to the agent.
+  test("leaves the wheel to a full-screen program", () => {
+    const { close } = show({ agentID: "a1", focused: true });
+    const term = FakeTerminal.live[0];
+    term.bufferType = "alternate";
+
+    const handled = turn(120);
+
+    expect(term.scrolled).toBe(0);
+    expect(handled).toBe(true);
+    close();
+  });
 });
 
 describe("who holds the keyboard", () => {

@@ -51,6 +51,10 @@
   --band-ink-dim: #3a5568;
   --accent: #c6e9ff;
   --ice: #7dcfff;
+  /* The mark on the column holding the keyboard. Brighter than --ice
+     on purpose: it is answering "where does j go?", which is worth
+     seeing from across the room rather than squinting for. */
+  --aim: #a8e8ff;
   --hover-bg: rgba(125, 207, 255, 0.06);
   --selected-bg: rgba(98, 174, 239, 0.16);
 
@@ -125,6 +129,7 @@
      white is not text. The deep end of the same blue is. */
   --accent: #1d6485;
   --ice: #26799d;
+  --aim: #0b7fc4;
   /* Translucent, like dark's, rather than the site's flat #eef4f9: the
      same wash has to darken the rail, the roster and the page ground,
      which are three different colors here. */

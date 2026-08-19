@@ -80,6 +80,8 @@ beforeEach(() => {
  * these name the movement rather than accepting any movement at all.
  */
 describe("moving between columns", () => {
+  // Four stops: walking right ends where you type, because in a
+  // browser the composer is a real place the keyboard can be.
   test("l walks right to the end and stops", () => {
     ui.column = "workspaces";
     run("pane-right");
@@ -87,17 +89,44 @@ describe("moving between columns", () => {
     run("pane-right");
     expect(ui.column).toBe("spanreed");
     run("pane-right");
-    expect(ui.column).toBe("spanreed");
+    expect(ui.column).toBe("composer");
+    run("pane-right");
+    expect(ui.column).toBe("composer");
   });
 
   test("h walks left to the end and stops", () => {
-    ui.column = "spanreed";
+    ui.column = "composer";
+    run("pane-left");
+    expect(ui.column).toBe("spanreed");
     run("pane-left");
     expect(ui.column).toBe("agents");
     run("pane-left");
     expect(ui.column).toBe("workspaces");
     run("pane-left");
     expect(ui.column).toBe("workspaces");
+  });
+
+  test("landing on the composer lands in it", () => {
+    document.body.innerHTML = '<input data-composer />';
+    const box = document.querySelector<HTMLElement>("[data-composer]")!;
+    ui.column = "spanreed";
+
+    run("pane-right");
+
+    // A column you cannot type in would be a stop that does nothing.
+    expect(document.activeElement).toBe(box);
+  });
+
+  test("stepping away from it gives the keyboard back", () => {
+    document.body.innerHTML = '<input data-composer />';
+    const box = document.querySelector<HTMLElement>("[data-composer]")!;
+    ui.column = "spanreed";
+    run("pane-right");
+    expect(document.activeElement).toBe(box);
+
+    run("pane-left");
+
+    expect(document.activeElement).not.toBe(box);
   });
 
   test("leaving the pane lets go of the terminal", () => {

@@ -235,6 +235,7 @@ describe("moving between columns", () => {
   function aimed(): string {
     if (document.querySelector(".rail.aimed")) return "workspaces";
     if (document.querySelector(".roster.aimed")) return "agents";
+    if (document.querySelector(".composer.aimed")) return "composer";
     if (document.querySelector(".pane.aimed")) return "spanreed";
     return "none";
   }
@@ -253,7 +254,54 @@ describe("moving between columns", () => {
     press("l");
     expect(aimed()).toBe("spanreed");
     press("l");
+    expect(aimed()).toBe("composer");
+    press("l");
+    expect(aimed()).toBe("composer");
+    done();
+  });
+
+  // Walking right ends in the box you type in, and the box hands the
+  // keyboard back rather than trapping it — h cannot leave a text
+  // field, so Escape has to.
+  test("l walks into the composer, and Escape walks back out", () => {
+    const done = page();
+    press("l");
+    press("l");
+
+    const box = document.querySelector<HTMLInputElement>("[data-composer]")!;
+    expect(document.activeElement).toBe(box);
+
+    box.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        code: "Escape",
+        bubbles: true,
+      }),
+    );
+    flushSync();
+
+    expect(document.activeElement).not.toBe(box);
     expect(aimed()).toBe("spanreed");
+    done();
+  });
+
+  test("a Backspace with nothing to delete leaves too, as in the TUI", () => {
+    const done = page();
+    press("i");
+    flushSync();
+    const box = document.querySelector<HTMLInputElement>("[data-composer]")!;
+    expect(document.activeElement).toBe(box);
+
+    box.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Backspace",
+        code: "Backspace",
+        bubbles: true,
+      }),
+    );
+    flushSync();
+
+    expect(document.activeElement).not.toBe(box);
     done();
   });
 

@@ -21,7 +21,7 @@ export const ui = $state({
    * it. Without this, h and l had nothing to move and j/k could only
    * ever mean "next agent".
    */
-  column: "agents" as "workspaces" | "agents" | "spanreed",
+  column: "agents" as "workspaces" | "agents" | "spanreed" | "composer",
   /** Which tab of the agent pane. */
   pane: "terminal" as "terminal" | "transcript" | "diff",
   /** Walked into the terminal: the agent has the keyboard. */
@@ -91,8 +91,12 @@ export function reconcileFocus(active: Element | null): void {
   else ui.walkedIn = false;
 }
 
-/** The columns, left to right, as the TUI orders its panes. */
-const columns = ["workspaces", "agents", "spanreed"] as const;
+/**
+ * The columns, left to right. The first three are the TUI's panes; the
+ * composer is a fourth stop because in a browser it is a real place the
+ * keyboard can be, and walking right ought to end where you type.
+ */
+const columns = ["workspaces", "agents", "spanreed", "composer"] as const;
 
 /**
  * h and l step between columns and stop at the ends — the TUI clamps
@@ -112,6 +116,15 @@ function stepColumn(by: number): void {
   // Leaving the pane lets go of the terminal; arriving is not the same
   // as walking in, which is Enter's job.
   if (ui.column !== "spanreed") ui.walkedIn = false;
+  // The composer is a place the keyboard can actually be, so landing
+  // on it means landing *in* it — a column you cannot type in would be
+  // a stop that does nothing.
+  if (ui.column === "composer") {
+    document.querySelector<HTMLElement>("[data-composer]")?.focus();
+  } else {
+    const box = document.querySelector<HTMLElement>("[data-composer]");
+    if (box && document.activeElement === box) box.blur();
+  }
 }
 
 /** j and k, meaning whatever the active column says they mean. */
@@ -125,6 +138,12 @@ function stepInColumn(by: number): void {
       stepWorkspace(by);
       return;
     case "spanreed":
+      scrollPane(by);
+      return;
+    case "composer":
+      // Unreachable while the box has focus — every letter belongs to
+      // the message then — so this is the moment after it was blurred
+      // without the column following. Scroll what is above it.
       scrollPane(by);
       return;
     default:
@@ -300,6 +319,7 @@ export function run(id: string, argument?: string): void {
       ui.walkedIn = false;
       ui.zoomed = false;
       ui.column = "agents";
+      document.querySelector<HTMLElement>("[data-composer]")?.blur();
       return;
     case "zoom": {
       // Zoom hides the rail and the roster, so it brings the view that
@@ -375,6 +395,7 @@ export function run(id: string, argument?: string): void {
       if (fleet.selectedID === "") return;
       ui.view = "roster";
       ui.walkedIn = false;
+      ui.column = "composer";
       ui.composing = true;
       return;
 

@@ -53,7 +53,8 @@
   /* The column with the keyboard is lit along its inner edge, the way
      the TUI marks its active pane. */
   .rail.aimed {
-    border-right-color: var(--ice);
+    border-right-color: var(--aim);
+    box-shadow: inset -2px 0 0 -1px var(--aim);
   }
   .rail {
     width: 220px;

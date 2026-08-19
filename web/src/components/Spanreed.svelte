@@ -19,6 +19,24 @@
     }
   });
 
+  /**
+   * The way out of the box. While it holds focus the page's keys are
+   * suppressed — every letter belongs to the message — so h cannot
+   * step back out and something else has to. Escape does, and so does
+   * a Backspace with nothing left to delete, which is how the TUI
+   * leaves its reply box.
+   */
+  function composerKey(event: KeyboardEvent) {
+    const leaving =
+      event.key === "Escape" ||
+      (event.key === "Backspace" && message === "");
+    if (!leaving) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composer?.blur();
+    ui.column = "spanreed";
+  }
+
   const agent = $derived(selected());
 
   async function send(event: SubmitEvent) {
@@ -101,14 +119,30 @@
       {/if}
     {/key}
 
-    <form onsubmit={send}>
+    <!-- A prompt, not a form field. This is where you talk to the
+         agent, and the agent lives one line above it in the same
+         typeface — a rounded input with a send button beside it read
+         like a chat app bolted to a terminal. -->
+    <form
+      class="composer"
+      class:aimed={ui.column === "composer" && ui.view === "roster"}
+      onsubmit={send}
+    >
+      <span class="prompt" aria-hidden="true">›</span>
       <input
         bind:this={composer}
         bind:value={message}
-        placeholder="Message this agent…"
+        data-composer
+        placeholder="message this agent"
         aria-label="Message this agent"
+        spellcheck="false"
+        autocomplete="off"
+        onfocus={() => (ui.column = "composer")}
+        onkeydown={composerKey}
       />
-      <button type="submit" disabled={!message.trim()}>send</button>
+      <span class="hint" aria-hidden="true">
+        {message.trim() ? "enter to send" : "esc to leave"}
+      </span>
     </form>
   {:else}
     <div class="empty">
@@ -122,7 +156,7 @@
   /* Aimed, not walked in: the keyboard scrolls this pane, but the
      agent is not listening yet — that is Enter. */
   .pane.aimed {
-    box-shadow: inset 1px 0 0 var(--ice);
+    box-shadow: inset 2px 0 0 -1px var(--aim);
   }
   .pane {
     flex: 1 1 auto;
@@ -187,26 +221,49 @@
     border-color: var(--failed);
     color: var(--failed);
   }
-  form {
+  /* One surface with the terminal above it: same ground, same
+     typeface, a prompt where a prompt belongs. */
+  .composer {
     display: flex;
+    align-items: baseline;
     gap: 8px;
     flex: 0 0 auto;
-    padding: 8px 10px;
-    background: var(--bg-raised);
+    padding: 7px 12px;
+    background: var(--bg-sunken);
     border-top: 1px solid var(--border);
+  }
+  .composer.aimed {
+    border-top-color: var(--aim);
+    box-shadow: inset 0 2px 0 -1px var(--aim);
+  }
+  .prompt {
+    flex: 0 0 auto;
+    color: var(--working);
+    font-weight: 600;
   }
   input {
     flex: 1 1 auto;
-    padding: 6px 10px;
-    background: var(--field);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-bright);
     font: inherit;
+  }
+  input::placeholder {
+    color: var(--muted);
   }
   input:focus {
     outline: none;
-    border-color: var(--ice);
+  }
+  .hint {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 11px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .composer:focus-within .hint {
+    opacity: 1;
   }
   .empty {
     margin: auto;
