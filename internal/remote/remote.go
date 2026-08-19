@@ -20,7 +20,15 @@ package remote
 // the framing around the tunnel changes — a new handshake field that
 // matters, a different splice — never for an ordinary release, so hosts
 // on adjacent versions keep working.
-const Protocol = 1
+//
+// 2: a remote dispatch launches the provider through the host's login
+// shell, which reaches the provider by way of `stormlight _exec` on that
+// machine. A binary without that subcommand cannot serve a dispatch, and
+// nothing else in the greeting reveals it — so an older host has to be
+// refused here, where the failure can name both versions and the way
+// out, rather than per dispatch as an agent that dies complaining about
+// a directory.
+const Protocol = 2
 
 // Hello is the one line a bridge writes before it becomes a byte pipe.
 // It answers the questions dispatch would otherwise have to guess at from

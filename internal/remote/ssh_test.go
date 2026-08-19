@@ -121,7 +121,7 @@ func TestHandshakeLeavesTheProtocolAlone(t *testing.T) {
 		far.Write([]byte("the first protocol frame"))
 	}()
 
-	hello, err := Handshake(near)
+	hello, err := Handshake(near, "devbox")
 	if err != nil {
 		t.Fatalf("Handshake: %v", err)
 	}
@@ -146,16 +146,63 @@ func TestHandshakeRefusesAnotherProtocol(t *testing.T) {
 		far.Write(append(encoded, '\n'))
 	}()
 
-	_, err := Handshake(near)
+	_, err := Handshake(near, "devbox")
 	if err == nil {
 		t.Fatal("a mismatched protocol must not connect")
 	}
 	// The message has to name both sides: the whole failure is that two
 	// machines disagree, and only one of them is in front of the user.
-	for _, want := range []string{"v9.9.9", localVersion} {
+	for _, want := range []string{"v9.9.9", localVersion, "devbox"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error should name both versions, got: %v", err)
+			t.Fatalf("error should name both versions and the host, got: %v", err)
 		}
+	}
+	// This host is ahead, so the machine to fix is this one — and the
+	// remote setup command would be advice pointing the wrong way.
+	if !strings.Contains(err.Error(), "Update this machine") {
+		t.Fatalf("a newer host should send the user to this machine: %v", err)
+	}
+	if strings.Contains(err.Error(), "remote setup") {
+		t.Fatalf("nothing on the host needs updating: %v", err)
+	}
+}
+
+// TestAnOlderHostIsToldHowToBeUpdated is the failure #188 introduced and
+// #192 is about: a dashboard whose hosts still run a Stormlight that
+// cannot serve a dispatch. Refusing at the handshake is only worth it if
+// the refusal carries the way out.
+func TestAnOlderHostIsToldHowToBeUpdated(t *testing.T) {
+	near, far := net.Pipe()
+	defer near.Close()
+	go func() {
+		encoded, _ := json.Marshal(Hello{Protocol: Protocol - 1, Version: "v0.11.2"})
+		far.Write(append(encoded, '\n'))
+	}()
+
+	_, err := Handshake(near, "mini")
+	if err == nil {
+		t.Fatal("a host that cannot serve a dispatch must not connect")
+	}
+	// Which side is behind is the one thing the numbers do not say, and
+	// the command runs here rather than there.
+	for _, want := range []string{
+		"mini runs an older Stormlight",
+		"v0.11.2",
+		"stormlight remote setup mini --install",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal should carry %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestAVersionlessGreetingIsNotReportedAsAVersion: a binary built
+// without its version stamped says nothing, and "Stormlight ()" reads
+// like a bug in the message rather than a fact about the host.
+func TestAVersionlessGreetingIsNotReportedAsAVersion(t *testing.T) {
+	err := mismatch("mini", Hello{Protocol: Protocol - 1})
+	if !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("an unstamped build should be described, not blank: %v", err)
 	}
 }
 
@@ -171,7 +218,7 @@ func TestHandshakeReportsWhatAnsweredInstead(t *testing.T) {
 		far.Close()
 	}()
 
-	_, err := Handshake(near)
+	_, err := Handshake(near, "devbox")
 	if err == nil || !strings.Contains(err.Error(), "command not found") {
 		t.Fatalf("want the far side's own complaint, got: %v", err)
 	}

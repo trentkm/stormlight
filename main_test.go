@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -328,6 +329,85 @@ func TestAHostWithNoSectionGetsOne(t *testing.T) {
 		}
 		if existing != "" && !strings.HasPrefix(updated, existing) {
 			t.Fatalf("what was there should be kept:\n%q", updated)
+		}
+	}
+}
+
+// TestTheLaunchPreludeInvokesACommandThatExists: a remote dispatch runs
+// `$STORMLIGHT_BIN <subcommand>` from inside shell text, so nothing about
+// a rename would fail to compile. What it would do instead is launch
+// agents that die reporting whatever the root command says about an
+// argument it does not recognise — on another machine, where the message
+// is least likely to be read.
+func TestTheLaunchPreludeInvokesACommandThatExists(t *testing.T) {
+	if !strings.Contains(remote.ExecPrelude, remote.ExecSubcommand) {
+		t.Fatalf("the prelude should invoke %q:\n%s",
+			remote.ExecSubcommand, remote.ExecPrelude)
+	}
+	found := false
+	for _, command := range newRootCommand().Commands() {
+		if command.Name() == remote.ExecSubcommand {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("nothing registers %q, which every remote dispatch runs",
+			remote.ExecSubcommand)
+	}
+}
+
+// TestAStaleHostIsReplacedRatherThanLeftAlone: since #192 a host older
+// than its dashboard is refused at the handshake, and the refusal sends
+// people to `remote setup --install`. If that command treats "already has
+// one" as "nothing to do", the advice is a loop.
+func TestAStaleHostIsReplacedRatherThanLeftAlone(t *testing.T) {
+	present := func(version string) remote.Report {
+		return remote.Report{
+			Host:       "mini",
+			Stormlight: remote.Requirement{Name: "stormlight", Path: "/x", Version: version},
+		}
+	}
+	// Older than this dashboard: the case the refusal is about.
+	why, needed := stormlightNeeded(present("stormlight version v0.11.2"), "v0.11.3", false)
+	if !needed {
+		t.Fatal("a stale host must be replaced, or the advice goes nowhere")
+	}
+	for _, want := range []string{"v0.11.2", "v0.11.3", "mini"} {
+		if !strings.Contains(why, want) {
+			t.Fatalf("it should say what it is replacing and why: %q", why)
+		}
+	}
+	// Matching: a host that is already right is not reinstalled over.
+	if _, needed := stormlightNeeded(present("stormlight version v0.11.3"), "v0.11.3", false); needed {
+		t.Fatal("a host on this version should be left alone")
+	}
+	// Absent: the original reason this branch exists.
+	if _, needed := stormlightNeeded(remote.Report{Host: "mini"}, "v0.11.3", false); !needed {
+		t.Fatal("a host with no Stormlight needs one")
+	}
+	// Two dev builds are indistinguishable, so nothing is assumed —
+	// which is what --force is for.
+	if _, needed := stormlightNeeded(present("stormlight version dev"), "dev", false); needed {
+		t.Fatal("identical versions say nothing about staleness")
+	}
+	if _, needed := stormlightNeeded(present("stormlight version dev"), "dev", true); !needed {
+		t.Fatal("--force should replace it anyway")
+	}
+	// A host that answered with nothing useful is not guessed about.
+	if _, needed := stormlightNeeded(present(""), "v0.11.3", false); needed {
+		t.Fatal("an unreadable version is not evidence of staleness")
+	}
+}
+
+func TestTheReportedVersionIsPulledOutOfTheSentence(t *testing.T) {
+	for reported, want := range map[string]string{
+		"stormlight version v0.11.2": "v0.11.2",
+		"v0.11.2":                    "v0.11.2",
+		"  stormlight version dev  ": "dev",
+		"":                           "",
+	} {
+		if got := reportedVersion(reported); got != want {
+			t.Fatalf("reportedVersion(%q) = %q, want %q", reported, got, want)
 		}
 	}
 }
