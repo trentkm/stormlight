@@ -73,6 +73,11 @@ export function attach(
     // real terminal for every viewer, the dashboard included, and nothing
     // moves it back. Naming none leaves it where it is until this pane
     // has a shape and fit() can speak for it (#155).
+    if (isLaidOut()) {
+      // Re-measure rather than trusting term.cols, which may hold a size
+      // the daemon pushed rather than one this pane has.
+      fitAddon.fit();
+    }
     const measured = isLaidOut() && usable(term.cols, term.rows);
     const opening = measured
       ? { cols: term.cols, rows: term.rows }
@@ -97,8 +102,9 @@ export function attach(
     let replacing = false;
 
     live.onopen = () => {
-      retry = retryFloor;
       onConnection("live");
+      // Measure now: the pane may have been laid out since this viewer
+      // last spoke, and the size in the URL was read before that.
       fit();
     };
 
@@ -106,6 +112,12 @@ export function attach(
       if (typeof event.data === "string") {
         const control: Control = JSON.parse(event.data);
         if (control.type === "seed") {
+          // The attach worked. Not `onopen`: this server upgrades before
+          // it attaches, so a failed attach is an accepted socket that
+          // closes a moment later — and treating that as success resets
+          // the backoff, turning an unreachable daemon into two full
+          // attach attempts a second, forever.
+          retry = retryFloor;
           replacing = true;
           return;
         }
@@ -115,7 +127,14 @@ export function attach(
           // synchronous while term.write is buffered, so resizing here
           // would reflow output that arrived before this notice — the
           // repaint that belongs to this size is queued behind it.
-          term.write("", () => term.resize(cols, rows));
+          // Deferred, so it lands behind the output it belongs to — and
+          // guarded, because the queue it waits in is not drained by
+          // dispose(): switching agents inside that window would resize a
+          // terminal that no longer exists.
+          term.write("", () => {
+            if (closed) return;
+            term.resize(cols, rows);
+          });
           // The daemon just told us the size, so it is ours now. Without
           // this the next fit() measures the same grid, compares it to a
           // stale record, and quietly snaps the replica back to a size

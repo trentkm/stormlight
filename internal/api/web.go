@@ -25,7 +25,14 @@ func (s *Server) serveAssets(w http.ResponseWriter, r *http.Request) {
 	if requested == "" {
 		requested = "index.html"
 	}
-	_, err := fs.Stat(s.assets, requested)
+	info, err := fs.Stat(s.assets, requested)
+	if err == nil && info.IsDir() {
+		// A directory is not a page and not a file. Serving it lets
+		// ServeFileFS answer with a redirect instead — which would then
+		// carry whichever cache header was chosen for the file it is not
+		// serving, pinning a 301 for a year.
+		err = fs.ErrNotExist
+	}
 	if err != nil {
 		// A path that names a file is a file, and a missing one is a 404.
 		// Answering it with the document instead turns a stale asset

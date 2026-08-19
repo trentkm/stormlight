@@ -909,3 +909,31 @@ func TestTheDocumentIsNotCachedAndAssetsAre(t *testing.T) {
 		t.Fatalf("assets are served sniffable: %q", sniff)
 	}
 }
+
+// A directory is neither a page nor a file. Left to ServeFileFS it
+// answers with a redirect, and the redirect would carry the cache header
+// chosen for the file being served instead — a 301 pinned for a year.
+func TestADirectoryIsNotServed(t *testing.T) {
+	server, _ := startAPI(t)
+
+	// Without this the redirect is followed and never seen: what is
+	// being asserted is the answer itself, not where it leads.
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Get(server.URL + "/assets?token=" + testToken)
+	if err != nil {
+		t.Fatalf("GET /assets: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusMovedPermanently {
+		t.Fatalf("a directory answered with a redirect cached as %q",
+			response.Header.Get("Cache-Control"))
+	}
+	if cache := response.Header.Get("Cache-Control"); strings.Contains(cache, "immutable") {
+		t.Fatalf("a directory was cached as %q", cache)
+	}
+}

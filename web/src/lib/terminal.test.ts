@@ -50,16 +50,19 @@ function fakeTerminal() {
     cols: 100,
     rows: 30,
     write(data: Uint8Array | string, done?: () => void) {
-      if (typeof data === "string" && data === "") {
-        // xterm defers a bare callback until everything queued ahead of
-        // it has been parsed; that ordering is the point of using it.
-        queue.push(() => done?.());
-        return;
-      }
-      const text =
-        typeof data === "string" ? data : new TextDecoder().decode(data);
-      calls.push(`write:${JSON.stringify(text)}`);
-      done?.();
+      // Everything is queued, the way xterm's WriteBuffer queues it —
+      // including the bytes. A double that applied writes synchronously
+      // and deferred only the callbacks would order them the opposite way
+      // round from the real thing, on exactly the path these tests exist
+      // to pin.
+      queue.push(() => {
+        if (!(typeof data === "string" && data === "")) {
+          const text =
+            typeof data === "string" ? data : new TextDecoder().decode(data);
+          calls.push(`write:${JSON.stringify(text)}`);
+        }
+        done?.();
+      });
     },
     resize(cols: number, rows: number) {
       calls.push(`resize:${cols}x${rows}`);
@@ -80,14 +83,21 @@ const fitAddon = { fit: () => {} };
 function setup(options: { laidOut?: boolean } = {}) {
   const term = fakeTerminal();
   const states: Connection[] = [];
+  const layout = { laidOut: options.laidOut ?? true };
   const attachment = attach(
     term as never,
     fitAddon as never,
     "agent-one",
-    () => options.laidOut ?? true,
+    () => layout.laidOut,
     (state) => states.push(state),
   );
-  return { term, attachment, states, socket: () => FakeSocket.live.at(-1)! };
+  return {
+    term,
+    attachment,
+    states,
+    layout,
+    socket: () => FakeSocket.live.at(-1)!,
+  };
 }
 
 beforeEach(() => {
@@ -136,6 +146,7 @@ describe("state and output", () => {
     socket().deliverBytes("first output");
     socket().deliverControl({ type: "seed" });
     socket().deliverBytes("exact state");
+    term.drain();
 
     expect(term.calls).toEqual([
       'write:"first output"',
@@ -151,13 +162,16 @@ describe("state and output", () => {
     socket().open();
     socket().deliverBytes("wrapped for the old width");
     socket().deliverControl({ type: "resize", cols: 80, rows: 24 });
-
-    // Not yet: the resize waits on the queue.
-    expect(term.calls).toEqual(['write:"wrapped for the old width"']);
+    socket().deliverBytes("painted for the new one");
     term.drain();
+
+    // The size lands between the two, not before both: the repaint that
+    // belongs to it is the output behind it, and the output ahead of it
+    // was wrapped for the width it is replacing.
     expect(term.calls).toEqual([
       'write:"wrapped for the old width"',
       "resize:80x24",
+      'write:"painted for the new one"',
     ]);
   });
 });
@@ -207,6 +221,43 @@ describe("size negotiation", () => {
   });
 });
 
+describe("a pane with no layout", () => {
+  // The headline rule, on the path that runs every frame rather than only
+  // at attach: a viewer that cannot measure itself must not push a size
+  // onto a terminal the dashboard is also reading.
+  test("never reports a size, however often it is asked", () => {
+    const { term, attachment, socket } = setup({ laidOut: false });
+    socket().open();
+    socket().sent.length = 0;
+
+    term.cols = 120;
+    term.rows = 40;
+    attachment.fit();
+    attachment.fit();
+
+    expect(socket().sent).toEqual([]);
+  });
+
+  // And it must not fabricate one to compare against later. A viewer that
+  // quietly recorded a default as its own would find nothing to report
+  // once the pane appeared at that same size — leaving the daemon on
+  // whatever it had, and this viewer certain it had spoken.
+  test("speaks as soon as it has a shape, having claimed nothing before", () => {
+    const { term, attachment, layout, socket } = setup({ laidOut: false });
+    socket().open();
+    socket().sent.length = 0;
+
+    layout.laidOut = true;
+    term.cols = 80;
+    term.rows = 24;
+    attachment.fit();
+
+    expect(socket().sent).toEqual([
+      JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+    ]);
+  });
+});
+
 describe("losing the connection", () => {
   // The socket ends for reasons this side cannot tell apart — the agent
   // exited, the server restarted, the laptop slept. Freezing a black pane
@@ -225,6 +276,37 @@ describe("losing the connection", () => {
     expect(states).toEqual(["live", "reconnecting", "live"]);
   });
 
+  // The server upgrades before it attaches, so a failed attach is an
+  // accepted socket that closes a moment later. Treating that as success
+  // resets the backoff and turns an unreachable daemon into a retry storm.
+  test("an accepted socket that never seeds does not reset the backoff", () => {
+    const { socket } = setup();
+    socket().open();
+    socket().close();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.live).toHaveLength(2);
+    // Accepted, then closed without ever seeding: the next wait must be
+    // longer, not back to the floor.
+    FakeSocket.live[1].open();
+    FakeSocket.live[1].close();
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.live).toHaveLength(2);
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.live).toHaveLength(3);
+  });
+
+  test("a socket that seeds starts the next backoff from the floor", () => {
+    const { socket } = setup();
+    socket().open();
+    socket().deliverControl({ type: "seed" });
+    socket().deliverBytes("state");
+    socket().close();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.live).toHaveLength(2);
+  });
+
   test("retries back off rather than hammering a server that is gone", () => {
     const { socket } = setup();
     socket().open();
@@ -237,6 +319,21 @@ describe("losing the connection", () => {
     expect(FakeSocket.live).toHaveLength(2);
     vi.advanceTimersByTime(500);
     expect(FakeSocket.live).toHaveLength(3);
+  });
+
+  test("closing marks the attachment closed, not just the socket", () => {
+    const { term, attachment, socket } = setup();
+    socket().open();
+
+    // A resize the daemon pushed, still waiting in the write queue when
+    // the pane goes away. Draining it afterwards must not reach a
+    // terminal that has been disposed.
+    socket().deliverControl({ type: "resize", cols: 80, rows: 24 });
+    attachment.close();
+    term.calls.length = 0;
+    term.drain();
+
+    expect(term.calls).toEqual([]);
   });
 
   test("closing stops the retries and detaches the handler", () => {
