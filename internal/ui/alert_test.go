@@ -1365,3 +1365,74 @@ func TestAnAutoClosedComposerTakesItsComplaintWithIt(t *testing.T) {
 		t.Fatalf("the composer's objection outlived the composer: %v", model.alert.err)
 	}
 }
+
+// A failure that arrived on its own must never move the field the reader
+// is typing into. Their next keystrokes would land in the task body.
+func TestABackgroundFailureNeverMovesTheCursor(t *testing.T) {
+	for height := 21; height <= 26; height++ {
+		model := alertModel(t)
+		model.width = 100
+		model.height = height
+		updated, _ := model.beginDispatch(false)
+		model = updated.(Model)
+		if !model.dispatchNameVisible() {
+			continue
+		}
+		model.formFocus = dispatchName
+		model.focusForm()
+		model.nameInput.SetValue("ap")
+
+		updated, _ = model.Update(dashboardMsg{err: errors.New(sshFailure)})
+		model = updated.(Model)
+		if model.formFocus != dispatchName {
+			t.Fatalf("at height %d a background failure moved focus to %v",
+				height, model.formFocus)
+		}
+		if !model.dispatchNameVisible() {
+			t.Fatalf("at height %d the focused name row stopped being drawn", height)
+		}
+
+		// And the next keystroke still goes where the reader is looking.
+		updated, _ = model.Update(runeKey("i"))
+		model = updated.(Model)
+		if got := strings.TrimSpace(model.nameInput.Value()); got != "api" {
+			t.Fatalf("at height %d the keystroke landed elsewhere: name=%q task=%q",
+				height, got, model.taskInput.Value())
+		}
+	}
+}
+
+// The card is drawn a lift above the body's floor, so the room a modal is
+// given has to account for both or they overlap by exactly that lift.
+func TestModalAndCardDoNotOverlapWithAFootRow(t *testing.T) {
+	for _, size := range [][2]int{{80, 18}, {80, 19}, {90, 20}, {100, 22}} {
+		model := alertModel(t)
+		model.ptyEnabled = false
+		model.width, model.height = size[0], size[1]
+		model.mode = modeDispatch
+		model.raise(errors.New(sshFailure))
+
+		width, height := model.bodyDimensions()
+		_, modalBottom := frameSpan(model.renderModeBody(width, height), 1)
+		cardTop, _ := frameSpan(model.renderBody(), 0)
+		if modalBottom < 0 || cardTop < 0 {
+			continue
+		}
+		if cardTop <= modalBottom {
+			t.Fatalf("%dx%d: card starts at row %d, modal ends at %d",
+				size[0], size[1], cardTop, modalBottom)
+		}
+	}
+}
+
+// A half-typed chord takes Esc first, so the card must not claim it.
+func TestCardYieldsEscapeToAPendingChord(t *testing.T) {
+	model := alertModel(t)
+	model.raise(errors.New("interrupt failed"))
+	model.normalPrefix = ","
+
+	card := ansi.Strip(model.renderAlertCard(model.bodyDimensions()))
+	if strings.Contains(card, "Esc dismiss") {
+		t.Fatalf("the card claimed Esc while a chord was pending:\n%s", card)
+	}
+}

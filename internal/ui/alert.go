@@ -476,6 +476,10 @@ func (m Model) alertRows(width, height int) int {
 // escapeAnswersAlert reports that Esc would reach the card rather than
 // undoing something in front of it. It mirrors updateNormal's own order.
 func (m Model) escapeAnswersAlert() bool {
+	if m.normalPrefix != "" {
+		// A half-typed chord takes Esc first, to cancel itself.
+		return false
+	}
 	if m.selectionActive {
 		return false
 	}
@@ -523,7 +527,22 @@ func (m Model) modalRegion(width, height int) int {
 	if m.mode.isReading() {
 		return height
 	}
-	return max(1, height-m.alertRows(width, height))
+	// F2 of the region's own arithmetic: the card is drawn inputStripRows
+	// above the floor, so reserving only its own height leaves the two
+	// overlapping by exactly that lift on the terminals where the modal
+	// fills its region.
+	reserved := m.alertRows(width, height) + m.inputStripRows()
+	if m.mode == modeDispatch && m.formFocus == dispatchName &&
+		!m.dispatchNameVisibleIn(max(1, height-reserved)) {
+		// Shrinking here would take away the row the reader is typing
+		// into, and a failure that arrived on its own in the background
+		// is the last thing that should move somebody's cursor. The card
+		// overlaps the form's foot for the moment instead; that is
+		// recoverable, and losing the next few keystrokes into the task
+		// body is not.
+		return height
+	}
+	return max(1, height-reserved)
 }
 
 // alertDetailScrolls reports that the open message is longer than the room

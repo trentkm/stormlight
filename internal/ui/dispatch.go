@@ -492,6 +492,16 @@ func (m Model) dispatchNameVisible() bool {
 	return m.dispatchLayout(m.dispatchContentDimensions()).density.showsName()
 }
 
+// dispatchNameVisibleIn answers the same question for a region the modal is
+// not being drawn in yet — what the form would look like if it were given
+// this much room.
+func (m Model) dispatchNameVisibleIn(region int) bool {
+	width, _ := m.bodyDimensions()
+	modalWidth, modalHeight := m.dispatchModalDimensions(width, region)
+	return m.dispatchLayout(
+		max(1, modalWidth-2), max(1, modalHeight-2)).density.showsName()
+}
+
 // dispatchContentDimensions is the modal's interior for the terminal as it
 // stands, matching what renderBody hands renderDispatchModal.
 func (m Model) dispatchContentDimensions() (int, int) {
