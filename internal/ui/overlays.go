@@ -202,7 +202,7 @@ func (m Model) overlayCursor() *tea.Cursor {
 
 func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if m.nvimPath == "" {
-		m.raise(fmt.Errorf("Neovim is not installed or not on PATH"))
+		m.complain(fmt.Errorf("Neovim is not installed or not on PATH"))
 		return m, nil
 	}
 	cwd := strings.TrimSpace(m.cwdInput.Value())
@@ -273,7 +273,7 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	// A missing Yazi here says nothing about another machine, which has
 	// its own PATH and answers for itself.
 	if m.yaziPath == "" && m.addWorkspaceHostName() == "" && m.dispatchHost == "" {
-		m.raise(fmt.Errorf("yazi is not installed or not on PATH"))
+		m.complain(fmt.Errorf("yazi is not installed or not on PATH"))
 		return m, nil
 	}
 	// The picker browses the machine the form is already aimed at.

@@ -80,6 +80,17 @@ func (m mode) isForm() bool {
 	return false
 }
 
+// isReading reports an overlay that is read rather than filled in. They
+// close on any key and are sized to their own content, so the failure card
+// holds off while one is up rather than taking rows out of it.
+func (m mode) isReading() bool {
+	switch m {
+	case modeHelp, modeInfo, modeHistory, modeAlert:
+		return true
+	}
+	return false
+}
+
 // sortMode orders workspaces and agents. Sorting is always an explicit
 // user choice (the yazi-style `,` chord) — rows never rearrange on their
 // own; the default is stable newest-first.
@@ -552,14 +563,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.interaction.SetWidth(interactionWidth)
 			m.interaction.SetHeight(contentHeight)
 		}
-		// A shrink can drop the optional name row out of the form; typing
-		// must not keep landing in a field that is no longer drawn.
-		if m.mode == modeDispatch && m.formFocus == dispatchName &&
-			!m.dispatchNameVisible() {
-			m.formFocus = dispatchTask
-			m.focusForm()
-		}
-		m.syncTaskComposerSize()
+		m.refitForms()
 		if m.overlay != nil {
 			outerWidth, outerHeight := m.overlayDimensions()
 			_, resize := m.overlay.widget.SetSize(
@@ -784,6 +788,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			diagnostic.Logger().Error("add workspace failed", "error", msg.err)
 			return m, nil
 		}
+		// The form's objection to a path is disproved by a path that
+		// worked. Its own close arrives here rather than on a keystroke,
+		// so the keypress sweep never sees it.
+		m.clearComplaint(modeAddWorkspace)
 		m.mode = modeNormal
 		m.blurForm()
 		m.catalogWorkspaces = appendWorkspace(m.catalogWorkspaces, msg.value)

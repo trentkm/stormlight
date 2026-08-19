@@ -1050,7 +1050,10 @@ func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 					strings.TrimSpace(m.pathNav.filter.Value()),
 				))
 			} else {
-				m.clearComplaint(modeDispatch)
+				// m.mode, not the dispatch form: this navigator is the
+				// add-workspace picker too, and a hardcoded surface makes
+				// the clear a no-op there.
+				m.clearComplaint(m.mode)
 			}
 			return false
 		}
@@ -1058,7 +1061,7 @@ func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 			m.complain(fmt.Errorf("no matching directory"))
 			return false
 		}
-		m.clearComplaint(modeDispatch)
+		m.clearComplaint(m.mode)
 		return true
 	}
 	m.pathNav.update(msg)

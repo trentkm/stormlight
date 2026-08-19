@@ -63,7 +63,9 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// The composer stays open for the next message; one i enters the
-		// conversation, Esc leaves it.
+		// conversation, Esc leaves it. Which is why the send has to
+		// retract the objection it disproves — the box outlives it.
+		m.clearComplaint(modeCompose)
 		m.sendInput.SetValue("")
 		m.syncComposerSize()
 		return m, actionCmd("Message sent", func(ctx context.Context) error {

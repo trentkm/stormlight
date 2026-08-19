@@ -187,9 +187,17 @@ func (m *Model) clearComplaint(surface mode) {
 // appearing under it shortens the modal, and a textarea that believes it
 // is taller than the box it is drawn into scrolls and stays scrolled.
 func (m *Model) refitForms() {
-	if m.mode == modeDispatch {
-		m.syncTaskComposerSize()
+	if m.mode != modeDispatch {
+		return
 	}
+	// A shrink can drop the optional name row out of the form, and a card
+	// appearing under it shrinks it exactly like a smaller terminal does.
+	// Typing must not keep landing in a field that is no longer drawn.
+	if m.formFocus == dispatchName && !m.dispatchNameVisible() {
+		m.formFocus = dispatchTask
+		m.focusForm()
+	}
+	m.syncTaskComposerSize()
 }
 
 // resolvePolled is the refresh reporting that it worked. A card raised by
@@ -206,6 +214,7 @@ func (m *Model) resolvePolled() {
 		m.clearAlert()
 	}
 	m.hushedPoll = ""
+	m.heldBack = ""
 }
 
 // keyboardHeldElsewhere reports that the dashboard's own keys are not
@@ -345,6 +354,13 @@ func (m Model) renderAlertCard(width, height int) string {
 	// Three rows is a card with nothing in it: two borders and the keys.
 	// Rendering one anyway is how a card loses its bottom edge.
 	if !m.alert.active() || width < 16 || height < 4 {
+		return ""
+	}
+	if m.mode.isReading() {
+		// Help, info, history and the detail view are read end to end and
+		// close on any key. Shrinking them to make room truncates their
+		// last lines, and drawing over them is worse; the card waits the
+		// few seconds they are open and comes back after.
 		return ""
 	}
 	cardWidth := clamp(width-4, 16, alertCardWidth)

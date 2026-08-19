@@ -9,6 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/workspace"
 )
 
 const sshFailure = "set up thaidex: ssh: connect to host thaidex port 22: " +
@@ -1058,5 +1060,150 @@ func TestFooterNamesScrollOnlyWhenTheMessageScrolls(t *testing.T) {
 		footer, "j/k scroll",
 	) {
 		t.Fatalf("a message that scrolls did not say so: %q", footer)
+	}
+}
+
+// A path that worked disproves the form's objection to the last one — and
+// that form closes on a message, not a keystroke, so the sweep never sees
+// it.
+func TestASuccessfulAddRetractsItsComplaint(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.beginAddWorkspace()
+	model = updated.(Model)
+	updated, _ = model.submitAddWorkspace("/definitely/not/here")
+	model = updated.(Model)
+	if model.alert.raisedIn != modeAddWorkspace {
+		t.Fatalf("the form's objection was tagged %v: %v",
+			model.alert.raisedIn, model.alert.err)
+	}
+
+	updated, _ = model.Update(workspaceAddedMsg{
+		value: workspace.Context{ID: "w1", Root: "/tmp", Name: "tmp"},
+	})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the add succeeded and its complaint stayed: %v", next.alert.err)
+	}
+}
+
+// A message that sends disproves "message cannot be empty", and the
+// composer outlives the send.
+func TestASuccessfulSendRetractsItsComplaint(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = false
+	model.agents = []agent.Agent{{ID: "a1", Name: "one", ProcessLive: true}}
+	model.rebuildGroups("", "a1")
+	model.activePane = paneInteraction
+	model.mode = modeCompose
+	model.sendInput.Focus()
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(Model)
+	if model.alert.message() != "message cannot be empty" {
+		t.Skipf("this model cannot reach the empty-message guard: %v", model.alert.err)
+	}
+
+	model.sendInput.SetValue("a real message")
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the send left its own objection standing: %v", next.alert.err)
+	}
+}
+
+// The path navigator serves the add-workspace picker too, so it must clear
+// whichever form is using it.
+func TestThePathNavigatorClearsTheFormUsingIt(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.beginAddWorkspace()
+	model = updated.(Model)
+	model.complain(errors.New("no such directory: /definitely/not/here"))
+	if model.alert.raisedIn != modeAddWorkspace {
+		t.Fatalf("complaint tagged %v", model.alert.raisedIn)
+	}
+
+	model.clearComplaint(model.mode)
+	if model.alert.active() {
+		t.Fatalf("the picker's own complaint survived its success: %v", model.alert.err)
+	}
+}
+
+// A card shrinks the form exactly like a smaller terminal does, so the
+// same guard has to run: typing must not land in a field that is no longer
+// drawn.
+func TestACardNeverLeavesFocusOnAnUndrawnField(t *testing.T) {
+	for height := 20; height <= 26; height++ {
+		model := alertModel(t)
+		model.width = 120
+		model.height = height
+		updated, _ := model.beginDispatch(false)
+		model = updated.(Model)
+		if !model.dispatchNameVisible() {
+			continue
+		}
+		model.formFocus = dispatchName
+		model.focusForm()
+
+		updated, _ = model.Update(dashboardMsg{err: errors.New(sshFailure)})
+		model = updated.(Model)
+		if !model.dispatchNameVisible() && model.formFocus == dispatchName {
+			t.Fatalf("at height %d focus stayed on a name row the form no longer draws",
+				height)
+		}
+	}
+}
+
+// Read-only overlays are sized to their own content and close on any key;
+// taking rows out of them truncates their last lines.
+func TestReadingOverlaysKeepTheirLastLines(t *testing.T) {
+	model := alertModel(t)
+	model.width = 120
+	model.height = 44
+	width, height := model.bodyDimensions()
+	bare := model.renderHelpModal(width, height)
+
+	model.raise(errors.New(sshFailure))
+	model.mode = modeHelp
+	if got := model.renderModeBody(width, height); !strings.Contains(
+		ansi.Strip(got), strings.TrimSpace(ansi.Strip(lastLine(bare))),
+	) {
+		t.Fatalf("the help lost its last line to the card:\n%s", ansi.Strip(got))
+	}
+	if card := model.renderAlertCard(width, height); card != "" {
+		t.Fatalf("the card drew over a reading overlay:\n%s", card)
+	}
+}
+
+func lastLine(block string) string {
+	lines := strings.Split(strings.TrimRight(block, "\n"), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		if strings.TrimSpace(ansi.Strip(lines[index])) != "" {
+			return lines[index]
+		}
+	}
+	return ""
+}
+
+// Recovery is news everywhere, including for a card held back inside the
+// portal.
+func TestRecoveryLiftsTheHoldBackToo(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	down := func() dashboardMsg {
+		return dashboardMsg{err: errors.New("daemon is not listening")}
+	}
+	updated, _ := model.Update(down())
+	model = updated.(Model)
+	moment := time.Now()
+	model.ageAlert(moment)
+	model.ageAlert(moment.Add(alertLinger + time.Second))
+	if model.heldBack == "" {
+		t.Fatalf("the timeout did not hold the failure back")
+	}
+
+	updated, _ = model.Update(dashboardMsg{})
+	model = updated.(Model)
+	updated, _ = model.Update(down())
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("a failure that returned after a recovery stayed held back")
 	}
 }
