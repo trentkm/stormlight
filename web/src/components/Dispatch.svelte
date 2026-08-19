@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from "../lib/api";
-  import { act, fleet, workspaceList } from "../lib/state.svelte";
+  import { act, fleet, selected, workspaceList } from "../lib/state.svelte";
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -26,9 +26,24 @@
     modal?.showModal();
   });
 
+  // The form opens on the workspace the dashboard is already looking at:
+  // the rail's highlight, or — with "All agents" showing, where the rail
+  // names no one — whatever the selected agent is running in. That is the
+  // same order the TUI's dispatch form resolves, and it means the common
+  // case of "another one of these, here" needs no field touched. The top
+  // of the list is the fallback for a dashboard aimed at nothing, not the
+  // default.
+  const preferred = $derived(
+    [fleet.workspaceID, selected()?.workspace?.id].find((id) =>
+      workspaces.some((candidate) => candidate.id === id),
+    ) ??
+      workspaces[0]?.id ??
+      "",
+  );
+
   $effect(() => {
     if (!provider && available.length) provider = available[0].ID;
-    if (!workspaceID && workspaces.length) workspaceID = workspaces[0].id;
+    if (!workspaceID && preferred) workspaceID = preferred;
   });
 
   const workspace = $derived(workspaces.find((w) => w.id === workspaceID));
