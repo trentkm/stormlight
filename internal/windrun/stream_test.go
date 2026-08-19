@@ -171,6 +171,47 @@ func TestAttachWithoutASizeLeavesTheTerminalAlone(t *testing.T) {
 	}
 }
 
+// The snapshot's bytes are wrapped for a width, and the seed has to say
+// which — otherwise a viewer that asserted no geometry paints them at its
+// own assumption, which is how a snapshot arrives pre-mangled.
+func TestTheSeedNamesTheSizeItWasRenderedAt(t *testing.T) {
+	runtime := remoteRuntime(t)
+
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("claude"),
+		Name:     "seeded",
+		Task:     "hold a terminal",
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	sized, err := runtime.AttachTerminal(context.Background(), dispatched.ID, 132, 43)
+	if err != nil {
+		t.Fatalf("AttachTerminal: %v", err)
+	}
+	defer sized.Close()
+	waitForSize(t, runtime, dispatched.ID, 132, 43)
+
+	// A second viewer, naming nothing — the case the size exists for.
+	blind, err := runtime.AttachTerminal(context.Background(), dispatched.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("AttachTerminal without a size: %v", err)
+	}
+	defer blind.Close()
+
+	seed := blind.Seed()
+	if seed.Resize == nil {
+		t.Fatal("the seed named no size, so a viewer has nothing to paint it at")
+	}
+	if seed.Resize.Cols != 132 || seed.Resize.Rows != 43 {
+		t.Fatalf("seed size = %dx%d, want the terminal's 132x43",
+			seed.Resize.Cols, seed.Resize.Rows)
+	}
+}
+
 func sessionSize(t *testing.T, runtime *Runtime, id string) (int, int) {
 	t.Helper()
 	sessionID, err := runtime.sessionIDFor(id)

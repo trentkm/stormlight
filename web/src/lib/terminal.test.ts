@@ -140,6 +140,25 @@ describe("attaching", () => {
 });
 
 describe("state and output", () => {
+  // A viewer that named no size has no other way to learn what its seed
+  // was wrapped for. The size arrives just ahead of the state, and the
+  // replica has to be that size before those bytes land in it.
+  test("a seed is sized before it is painted", () => {
+    const { term, socket } = setup({ laidOut: false });
+    socket().open();
+
+    socket().deliverControl({ type: "resize", cols: 132, rows: 43 });
+    socket().deliverControl({ type: "seed" });
+    socket().deliverBytes("wrapped for 132 columns");
+    term.drain();
+
+    expect(term.calls).toEqual([
+      "resize:132x43",
+      'write:"\\u001bc"',
+      'write:"wrapped for 132 columns"',
+    ]);
+  });
+
   test("a seed replaces the replica rather than extending it", () => {
     const { term, socket } = setup();
     socket().open();

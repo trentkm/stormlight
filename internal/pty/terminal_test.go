@@ -12,16 +12,19 @@ import (
 )
 
 type fakeTransport struct {
-	seed   []byte
-	output chan Message
-	writes [][]byte
+	seed     []byte
+	seedSize *Size
+	output   chan Message
+	writes   [][]byte
 }
 
 func newFakeTransport(seed string) *fakeTransport {
 	return &fakeTransport{seed: []byte(seed), output: make(chan Message)}
 }
 
-func (t *fakeTransport) Seed() []byte                           { return t.seed }
+func (t *fakeTransport) Seed() Message {
+	return Message{Resync: t.seed, Resize: t.seedSize}
+}
 func (t *fakeTransport) Output() <-chan Message                 { return t.output }
 func (t *fakeTransport) Write(data []byte) error                { t.writes = append(t.writes, data); return nil }
 func (t *fakeTransport) Resize(context.Context, int, int) error { return nil }

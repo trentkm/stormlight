@@ -130,7 +130,11 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 		cols: cols, rows: rows, termCols: cols, termRows: rows,
 		viewDirty: true,
 	}
-	s.replaceReplica(transport.Seed(), nil)
+	seed := transport.Seed()
+	// The seed names the size it was rendered at when the transport knows
+	// it, which is what lets a viewer that asserted no geometry of its own
+	// still paint the snapshot at the width it was wrapped for.
+	s.replaceReplica(seed.Resync, seed.Resize)
 	model := Model{id: lastID.Add(1), state: s}
 	go s.pump(model)
 	return model

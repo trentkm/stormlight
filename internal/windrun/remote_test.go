@@ -187,8 +187,8 @@ func TestRemoteRosterAndTerminalCrossTheBridge(t *testing.T) {
 		t.Fatalf("AttachTerminal: %v", err)
 	}
 	defer stream.Close()
-	if !strings.Contains(string(stream.Seed()), "heard:over the bridge") {
-		t.Fatalf("attachment seed lost the story:\n%s", stream.Seed())
+	if !strings.Contains(string(stream.Seed().Resync), "heard:over the bridge") {
+		t.Fatalf("attachment seed lost the story:\n%s", stream.Seed().Resync)
 	}
 
 	if err := runtime.Delete(context.Background(), dispatched.ID); err != nil {
@@ -337,7 +337,7 @@ func answerTheOverlay(t *testing.T, runtime *Runtime, answer string) {
 
 func drainOverlay(t *testing.T, overlay session.Overlay, want string) string {
 	t.Helper()
-	collected := string(overlay.Seed())
+	collected := string(overlay.Seed().Resync)
 	deadline := time.After(10 * time.Second)
 	for !strings.Contains(collected, want) {
 		select {
