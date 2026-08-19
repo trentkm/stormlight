@@ -57,19 +57,41 @@ export const bindings: Binding[] = [
   {
     id: "pane-left",
     keys: "h",
-    what: "move to the roster",
+    what: "move between columns: workspaces, agents, the pane",
     group: "Navigate",
   },
   {
     id: "pane-right",
     keys: "l",
-    what: "move to the agent pane",
+    what: "move between columns, the other way",
     group: "Navigate",
   },
-  { id: "down", keys: "j", what: "move down; scroll the pane", group: "Navigate" },
-  { id: "up", keys: "k", what: "move up; scroll the pane", group: "Navigate" },
-  { id: "first", keys: "gg", what: "first item", group: "Navigate" },
-  { id: "last", keys: "G", what: "last item", group: "Navigate" },
+  {
+    id: "column-next",
+    keys: "Tab",
+    what: "cycle columns, wrapping where h and l stop",
+    group: "Navigate",
+  },
+  {
+    id: "column-previous",
+    keys: "Shift-Tab",
+    what: "cycle columns backwards",
+    group: "Navigate",
+  },
+  {
+    id: "down",
+    keys: "j",
+    what: "move down in the aimed column; scroll the pane",
+    group: "Navigate",
+  },
+  {
+    id: "up",
+    keys: "k",
+    what: "move up in the aimed column; scroll the pane",
+    group: "Navigate",
+  },
+  { id: "first", keys: "gg", what: "first item, or the top", group: "Navigate" },
+  { id: "last", keys: "G", what: "last item, or the bottom", group: "Navigate" },
   {
     id: "walk-in",
     keys: "Enter",
@@ -446,6 +468,8 @@ export function match(
       return { id: "", pending: "g" };
     case "G":
       return { id: "last" };
+    case "Tab":
+      return { id: event.shiftKey ? "column-previous" : "column-next" };
     case "Enter":
       return { id: "walk-in" };
     case "n":

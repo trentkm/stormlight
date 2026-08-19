@@ -116,6 +116,157 @@ describe("moving between columns", () => {
   });
 });
 
+/**
+ * Nine mutations survived the first version of this file, all of them
+ * in the half of the feature that scrolls rather than selects. These
+ * are the tests that kill them.
+ */
+describe("j and k in the pane", () => {
+  function pane(html: string): HTMLElement {
+    document.body.innerHTML = html;
+    const element = document.body.firstElementChild as HTMLElement;
+    // jsdom lays nothing out, so scrollBy/scrollHeight need shapes.
+    Object.defineProperty(element, "scrollHeight", { value: 1000 });
+    // scrollBy's signature admits a number as well as options; the
+    // code only ever passes options, and the double says so.
+    element.scrollBy = (options?: number | ScrollToOptions) => {
+      element.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+    };
+    return element;
+  }
+
+  test("scrolls the transcript", () => {
+    const scroller = pane('<div class="transcript"></div>');
+    ui.column = "spanreed";
+
+    run("down");
+
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    // And the roster did not move underneath it.
+    expect(fleet.selectedID).toBe("a");
+  });
+
+  test("scrolls the diff", () => {
+    const scroller = pane('<div class="diff"></div>');
+    ui.column = "spanreed";
+    run("down");
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+  });
+
+  // The TUI's j/k scroll the PTY's scrollback in the interaction pane;
+  // leaving the terminal out made four keys dead on the tab people are
+  // on most.
+  test("scrolls the terminal's scrollback", () => {
+    const scroller = pane(
+      '<div data-walk-target><div class="xterm-viewport"></div></div>',
+    ).querySelector<HTMLElement>(".xterm-viewport")!;
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000 });
+    scroller.scrollBy = (options?: number | ScrollToOptions) => {
+      scroller.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+    };
+    ui.column = "spanreed";
+
+    run("down");
+
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+  });
+
+  test("with nothing to scroll, moves the roster rather than nothing", () => {
+    document.body.innerHTML = "";
+    ui.column = "spanreed";
+
+    run("down");
+
+    expect(fleet.selectedID).toBe("b");
+  });
+
+  test("gg and G reach the ends of what is scrolling", () => {
+    const scroller = pane('<div class="transcript"></div>');
+    scroller.scrollTop = 400;
+    ui.column = "spanreed";
+
+    run("first");
+    expect(scroller.scrollTop).toBe(0);
+    run("last");
+    expect(scroller.scrollTop).toBe(1000);
+  });
+
+  test("gg and G fall through when there is nothing to scroll", () => {
+    document.body.innerHTML = "";
+    ui.column = "spanreed";
+
+    run("last");
+
+    expect(fleet.selectedID).toBe("c");
+  });
+});
+
+describe("walking out lands somewhere the keys work", () => {
+  // The regression this file exists to prevent: walking out left the
+  // keyboard aimed at a pane whose tab does not scroll, so j, k, gg
+  // and G all did nothing — worse than before the columns existed.
+  test("Ctrl-space puts the keyboard back on the roster", () => {
+    run("walk-in");
+    expect(ui.column).toBe("spanreed");
+
+    run("walk-out");
+
+    expect(ui.column).toBe("agents");
+    run("down");
+    expect(fleet.selectedID).toBe("b");
+  });
+
+  test("and collapses zoom, as the TUI's seam key does", () => {
+    run("walk-in");
+    run("zoom");
+    expect(ui.zoomed).toBe(true);
+
+    run("walk-out");
+
+    expect(ui.zoomed).toBe(false);
+  });
+});
+
+describe("keys that need their view to mean anything", () => {
+  test("a pane key from the wall brings the roster with it", () => {
+    ui.view = "wall";
+    run("pane-diff");
+    expect(ui.view).toBe("roster");
+    expect(ui.pane).toBe("diff");
+  });
+
+  test("zoom from the canvas does too, and aims at the pane", () => {
+    ui.view = "canvas";
+    run("zoom");
+    expect(ui.view).toBe("roster");
+    expect(ui.zoomed).toBe(true);
+    expect(ui.column).toBe("spanreed");
+  });
+
+  // Zoomed, the rail and the roster are not on screen; stepping onto
+  // one would move a cursor nobody can see.
+  test("h and l do not step onto a hidden column", () => {
+    run("zoom");
+    expect(ui.column).toBe("spanreed");
+    run("pane-left");
+    expect(ui.column).toBe("spanreed");
+  });
+});
+
+describe("tab cycles where h and l stop", () => {
+  test("forwards, wrapping", () => {
+    ui.column = "spanreed";
+    run("column-next");
+    expect(ui.column).toBe("workspaces");
+  });
+
+  test("backwards, wrapping", () => {
+    ui.column = "workspaces";
+    run("column-previous");
+    expect(ui.column).toBe("spanreed");
+  });
+});
+
 describe("j and k mean what the aimed column says", () => {
   test("in the roster they change the agent", () => {
     ui.column = "agents";
@@ -149,6 +300,15 @@ describe("j and k mean what the aimed column says", () => {
     // The pane beside the roster must not be left showing an agent from
     // the workspace you just left.
     expect(fleet.selectedID).toBe("far");
+  });
+
+  test("a vanished workspace lands on All agents rather than jumping", () => {
+    fleet.workspaceID = "gone";
+    ui.column = "workspaces";
+
+    run("up");
+
+    expect(fleet.workspaceID).toBe("");
   });
 
   test("the rail stops at its ends", () => {

@@ -52,7 +52,7 @@
         <button
           class:on={ui.pane === "transcript"}
           onclick={() => run("pane-transcript")}
-          title="alt+t"
+          title="T"
         >
           transcript
         </button>

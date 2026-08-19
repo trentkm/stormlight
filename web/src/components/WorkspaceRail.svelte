@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ui } from "../lib/commands.svelte";
+  import { run, ui } from "../lib/commands.svelte";
   import { fleet, agentsIn, workspaceList } from "../lib/state.svelte";
   import { isUrgent } from "../lib/types";
 
@@ -22,7 +22,7 @@
   <button
     class="row"
     class:selected={fleet.workspaceID === ""}
-    onclick={() => (fleet.workspaceID = "")}
+    onclick={() => run("select-workspace", "")}
   >
     <span class="name">All agents</span>
     <span class="count">{fleet.agents.length}</span>
@@ -32,7 +32,7 @@
     <button
       class="row"
       class:selected={fleet.workspaceID === workspace.id}
-      onclick={() => (fleet.workspaceID = workspace.id)}
+      onclick={() => run("select-workspace", workspace.id)}
       title={workspace.root}
     >
       <span class="name">{workspace.name}</span>

@@ -103,11 +103,23 @@ function stepColumn(by: number): void {
   // A view without these columns has nothing to step through, and
   // walking in means the keyboard belongs to the agent anyway.
   if (ui.view !== "roster") return;
+  // Zoomed, the rail and the roster are not on screen; stepping onto
+  // one would move a cursor nobody can see.
+  if (ui.zoomed) return;
   const at = columns.indexOf(ui.column);
   const next = Math.min(columns.length - 1, Math.max(0, at + by));
   ui.column = columns[next];
   // Leaving the pane lets go of the terminal; arriving is not the same
   // as walking in, which is Enter's job.
+  if (ui.column !== "spanreed") ui.walkedIn = false;
+}
+
+/** tab wraps where h and l clamp — the TUI binds both. */
+function cycleColumn(by: number): void {
+  if (ui.view !== "roster" || ui.zoomed) return;
+  const at = columns.indexOf(ui.column);
+  const next = (at + by + columns.length) % columns.length;
+  ui.column = columns[next];
   if (ui.column !== "spanreed") ui.walkedIn = false;
 }
 
@@ -134,8 +146,10 @@ function toEnd(which: "first" | "last"): void {
     const scroller = paneScroller();
     if (scroller) {
       scroller.scrollTop = which === "first" ? 0 : scroller.scrollHeight;
+      return;
     }
-    return;
+    // Nothing to scroll: fall through to the roster rather than
+    // swallowing the key.
   }
   if (ui.view === "roster" && ui.column === "workspaces") {
     const list = ["", ...workspaceList().map((workspace) => workspace.id)];
@@ -164,19 +178,31 @@ function selectWorkspace(id: string): void {
   fleet.selectedID = list.length > 0 ? list[0].id : "";
 }
 
-/** Whatever the pane beside the roster is currently scrolling. */
+/**
+ * Whatever the aimed pane scrolls.
+ *
+ * The transcript and the diff are ordinary scrollers. The terminal's is
+ * xterm's viewport, which scrolls its scrollback — the same thing the
+ * TUI's j/k do in the interaction pane. Leaving it out meant four keys
+ * did nothing at all on the tab people are on most.
+ */
 function paneScroller(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(".transcript, .diff");
+  return document.querySelector<HTMLElement>(
+    ".transcript, .diff, [data-walk-target] .xterm-viewport",
+  );
 }
 
-/**
- * j/k in the pane scrolls it — the transcript and the diff are ordinary
- * scrollers. The terminal is not: it has its own scrollback and its own
- * keys, and reaching into it from here would fight the agent.
- */
+/** j/k in the aimed pane scrolls it. */
 function scrollPane(by: number): void {
   const scroller = paneScroller();
-  if (scroller) scroller.scrollBy({ top: by * 80 });
+  // No scroller at all — an agent with nothing open yet. Moving the
+  // roster is better than doing nothing, which is what a person
+  // pressing j is asking for either way.
+  if (!scroller) {
+    step(by);
+    return;
+  }
+  scroller.scrollBy({ top: by * 80 });
 }
 
 /** The agents the roster is showing, in the order it shows them. */
@@ -218,8 +244,9 @@ function stepQueue(by: number): void {
   const at = waiting.findIndex((agent) => agent.id === fleet.selectedID);
   const next = at === -1 ? 0 : (at + by + waiting.length) % waiting.length;
   fleet.selectedID = waiting[next].id;
-  // Walking to an agent that needs you is walking to its terminal:
-  // that is where the answer gets typed.
+  // The roster, because that is where the answer gets typed — but not
+  // walked in: the TUI's queue keys move the cursor and leave walking
+  // in to Enter.
   ui.view = "roster";
 }
 
@@ -259,6 +286,12 @@ export function run(id: string, argument?: string): void {
     case "pane-right":
       stepColumn(1);
       return;
+    case "column-next":
+      cycleColumn(1);
+      return;
+    case "column-previous":
+      cycleColumn(-1);
+      return;
 
     // The terminal
     case "walk-in":
@@ -269,10 +302,21 @@ export function run(id: string, argument?: string): void {
       ui.walkedIn = true;
       return;
     case "walk-out":
+      // One step out, landing on the roster with zoom collapsed —
+      // exactly what the TUI's seam key does (ptykeys.go). Leaving the
+      // keyboard aimed at the pane instead left j and k with nothing to
+      // move, which is worse than where they started.
       ui.walkedIn = false;
+      ui.zoomed = false;
+      ui.column = "agents";
       return;
     case "zoom":
+      // Zoom hides the rail and the roster, so it has to bring the
+      // view that has a terminal and aim the keyboard at what is left
+      // — otherwise j moved a cursor nobody could see.
+      ui.view = "roster";
       ui.zoomed = !ui.zoomed;
+      if (ui.zoomed) ui.column = "spanreed";
       return;
 
     // Views and panes
@@ -288,13 +332,19 @@ export function run(id: string, argument?: string): void {
       ui.walkedIn = false;
       return;
     case "pane-terminal":
+      // A pane key brings its view with it: setting a tab that only
+      // the roster renders, from the wall, changed nothing anyone
+      // could see.
+      ui.view = "roster";
       ui.pane = "terminal";
       return;
     case "pane-transcript":
+      ui.view = "roster";
       ui.pane = "transcript";
       ui.walkedIn = false;
       return;
     case "pane-diff":
+      ui.view = "roster";
       ui.pane = "diff";
       ui.walkedIn = false;
       return;
