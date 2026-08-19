@@ -1151,24 +1151,53 @@ func TestACardNeverLeavesFocusOnAnUndrawnField(t *testing.T) {
 	}
 }
 
-// Read-only overlays are sized to their own content and close on any key;
-// taking rows out of them truncates their last lines.
-func TestReadingOverlaysKeepTheirLastLines(t *testing.T) {
+// Read-only overlays are sized to their own content, so taking rows out of
+// them cuts their last lines off. They keep their full height and the card
+// floats over them instead — a failure must never be invisible, which is
+// the whole point of the surface.
+func TestReadingOverlaysKeepTheirLastLinesAndStillShowFailures(t *testing.T) {
+	// 120x44: tall enough that the help draws its final entry, so
+	// shrinking by the card's rows is visible as content loss rather than
+	// as a border that moves.
 	model := alertModel(t)
 	model.width = 120
 	model.height = 44
 	width, height := model.bodyDimensions()
-	bare := model.renderHelpModal(width, height)
+	if !strings.Contains(
+		ansi.Strip(model.renderHelpModal(width, height)), "quit the dashboard",
+	) {
+		t.Skip("this terminal is too short for the help's last entry")
+	}
 
 	model.raise(errors.New(sshFailure))
 	model.mode = modeHelp
-	if got := model.renderModeBody(width, height); !strings.Contains(
-		ansi.Strip(got), strings.TrimSpace(ansi.Strip(lastLine(bare))),
+	if got := ansi.Strip(model.renderModeBody(width, height)); !strings.Contains(
+		got, "quit the dashboard",
 	) {
-		t.Fatalf("the help lost its last line to the card:\n%s", ansi.Strip(got))
+		t.Fatalf("the help lost its last entry to the card:\n%s", got)
 	}
-	if card := model.renderAlertCard(width, height); card != "" {
-		t.Fatalf("the card drew over a reading overlay:\n%s", card)
+	if model.renderAlertCard(width, height) == "" {
+		t.Fatalf("the failure was invisible while the help was open")
+	}
+}
+
+// A failure raised while a reading overlay is open is exactly the case the
+// card must not swallow: nothing else on screen will mention it.
+func TestAFailureRaisedUnderAReadingOverlayIsVisible(t *testing.T) {
+	for _, surface := range []mode{modeHelp, modeInfo, modeHistory, modeAlert} {
+		model := alertModel(t)
+		model.mode = surface
+		model.raise(errors.New("session history is unreadable"))
+
+		width, height := model.bodyDimensions()
+		if !strings.Contains(
+			ansi.Strip(model.renderBody()), "session history is unreadable",
+		) {
+			t.Fatalf("mode %v swallowed the failure raised under it", surface)
+		}
+		if model.renderAlertCard(width, height) == "" {
+			t.Fatalf("mode %v drew no card", surface)
+		}
 	}
 }
 
@@ -1205,5 +1234,45 @@ func TestRecoveryLiftsTheHoldBackToo(t *testing.T) {
 	updated, _ = model.Update(down())
 	if next := updated.(Model); !next.alert.active() {
 		t.Fatalf("a failure that returned after a recovery stayed held back")
+	}
+}
+
+// An unreadable shelf is not an empty one. Saying "nothing here yet" when
+// the read failed is the screen telling the reader something untrue.
+func TestHistoryDoesNotClaimAnEmptyShelfWhenItCouldNotRead(t *testing.T) {
+	model := alertModel(t)
+	model.mode = modeHistory
+	model.historyLoading = true
+
+	updated, _ := model.Update(historyMsg{err: errors.New("state directory is unreadable")})
+	model = updated.(Model)
+
+	view := ansi.Strip(model.renderHistoryModal(model.bodyDimensions()))
+	if strings.Contains(view, "No past sessions recorded yet") {
+		t.Fatalf("the modal claimed an empty shelf after a failed read:\n%s", view)
+	}
+	if !strings.Contains(view, "state directory is unreadable") {
+		t.Fatalf("the modal does not say why it is empty:\n%s", view)
+	}
+}
+
+// The transcript's foot row always says something — the reply affordances,
+// the amber band, the search readout — and the card must stay off it.
+func TestCardStaysOffTheTranscriptsFootRow(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = false
+	if got := model.inputStripRows(); got < 1 {
+		t.Fatalf("the transcript's foot row was not reserved: %d", got)
+	}
+
+	model.search.query = "needle"
+	if got := model.inputStripRows(); got < 1 {
+		t.Fatalf("the search readout was not reserved: %d", got)
+	}
+
+	model.ptyEnabled = true
+	model.mode = modeNormal
+	if got := model.inputStripRows(); got != 0 {
+		t.Fatalf("the portal reserved %d rows; it has no foot row", got)
 	}
 }

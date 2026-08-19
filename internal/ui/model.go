@@ -251,37 +251,40 @@ type Model struct {
 	height          int
 	ready           bool
 
-	mode                    mode
-	formFocus               dispatchFocus
-	providers               []provider.Info
-	providerIndex           int
-	cwdInput                lineInput
-	nameInput               lineInput
-	taskInput               textarea.Model
-	sendInput               textarea.Model
-	initialCwd              string
-	initialWorkspaceID      string
-	interactionContent      string
-	search                  transcriptSearch
-	selectionActive         bool
-	selectionDragging       bool
-	selectionAnchor         int
-	selectionHead           int
-	directories             []directoryChoice
-	directoryIndex          int
-	yaziPath                string
-	nvimPath                string
-	dispatchMode            agent.PermissionMode
-	modeForDir              func(string) (agent.PermissionMode, bool)
-	providerForDir          func(string) (agent.Provider, bool)
-	renameInput             lineInput
-	renameAgentID           string
-	renameWorkspace         workspace.Context
-	markAgentID             string
-	markIndex               int
-	historyRecords          []history.Record
-	historyCursor           int
-	historyLoading          bool
+	mode               mode
+	formFocus          dispatchFocus
+	providers          []provider.Info
+	providerIndex      int
+	cwdInput           lineInput
+	nameInput          lineInput
+	taskInput          textarea.Model
+	sendInput          textarea.Model
+	initialCwd         string
+	initialWorkspaceID string
+	interactionContent string
+	search             transcriptSearch
+	selectionActive    bool
+	selectionDragging  bool
+	selectionAnchor    int
+	selectionHead      int
+	directories        []directoryChoice
+	directoryIndex     int
+	yaziPath           string
+	nvimPath           string
+	dispatchMode       agent.PermissionMode
+	modeForDir         func(string) (agent.PermissionMode, bool)
+	providerForDir     func(string) (agent.Provider, bool)
+	renameInput        lineInput
+	renameAgentID      string
+	renameWorkspace    workspace.Context
+	markAgentID        string
+	markIndex          int
+	historyRecords     []history.Record
+	historyCursor      int
+	historyLoading     bool
+	// historyFailed is why the shelf is empty, when it is empty because
+	// nothing could be read rather than because nothing is there.
+	historyFailed           error
 	historyFilter           lineInput
 	historyFiltering        bool
 	pathNav                 pathNav
@@ -563,6 +566,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.interaction.SetWidth(interactionWidth)
 			m.interaction.SetHeight(contentHeight)
 		}
+		m.syncTaskComposerSize()
 		m.refitForms()
 		if m.overlay != nil {
 			outerWidth, outerHeight := m.overlayDimensions()
@@ -659,6 +663,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case historyMsg:
 		m.historyLoading = false
+		m.historyFailed = msg.err
 		if msg.err != nil {
 			m.raise(msg.err)
 			return m, nil

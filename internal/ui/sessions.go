@@ -215,6 +215,16 @@ func (m Model) renderHistoryModal(width, height int) string {
 	switch {
 	case m.historyLoading:
 		lines = append(lines, "  "+mutedStyle().Render("Loading…"))
+	case m.historyFailed != nil:
+		// Not an empty shelf — an unreadable one. Saying "nothing here
+		// yet" would be the screen telling the reader something untrue.
+		lines = append(lines,
+			"  "+errorStyle().Render("Could not read past sessions."))
+		for _, line := range wrapMessage(
+			strings.TrimSpace(m.historyFailed.Error()), max(1, contentWidth-2),
+		) {
+			lines = append(lines, "  "+mutedStyle().Render(line))
+		}
 	case len(m.historyRecords) == 0:
 		lines = append(lines,
 			"  "+mutedStyle().Render("No past sessions recorded yet."),

@@ -116,8 +116,10 @@ func (m *Model) raiseFailure(err error, polled bool) {
 		if polled {
 			// The same text arriving from the poll makes this the poll's
 			// card too, and a card that never learns it is polled never
-			// clears itself when the daemon comes back.
+			// clears itself when the daemon comes back. The recall slot
+			// is the same failure and learns it at the same moment.
 			m.alert.polled = true
+			m.lastFailure.polled = true
 		}
 		return
 	}
@@ -356,13 +358,6 @@ func (m Model) renderAlertCard(width, height int) string {
 	if !m.alert.active() || width < 16 || height < 4 {
 		return ""
 	}
-	if m.mode.isReading() {
-		// Help, info, history and the detail view are read end to end and
-		// close on any key. Shrinking them to make room truncates their
-		// last lines, and drawing over them is worse; the card waits the
-		// few seconds they are open and comes back after.
-		return ""
-	}
 	cardWidth := clamp(width-4, 16, alertCardWidth)
 	textWidth := max(4, cardWidth-6)
 	budget := clamp(height-3, 1, alertCardLines)
@@ -428,18 +423,23 @@ func (m Model) alertCardKeys(clipped bool) string {
 // floats above them instead of over them — covering the box someone is
 // typing into is worse than covering anything else on screen.
 func (m Model) inputStripRows() int {
-	switch m.mode {
-	case modeCompose:
+	if m.mode == modeCompose {
 		// Measured where renderInteraction lays it out, not at the pane's
 		// full width — three columns of difference is a wrapped line, and
 		// a lift one row short covers the rule it exists to clear.
 		composerWidth, _ := m.interactionDimensions()
 		// The composer is its input between two rules.
 		return composerHeight(m.sendInput.Value(), max(1, composerWidth)) + 2
-	case modeSearch:
-		return 1
 	}
-	return 0
+	if m.ptyEnabled {
+		// The portal is the pane; the card floats over the terminal and
+		// ages out rather than reserving anything.
+		return 0
+	}
+	// The transcript's foot row is never empty: the reply and search
+	// affordances, the amber band telling the reader an agent is waiting
+	// on them, or the search readout answering which match of how many.
+	return 1
 }
 
 // alertRows is how many rows the card will take, which is how much of the
@@ -493,9 +493,15 @@ func (m Model) alertDetailWindow() (int, int) {
 	return max(4, width-6), max(1, height-6)
 }
 
-// modalRegion is the room a modal has: the body, less whatever rows the
-// failure card has claimed at its foot.
+// modalRegion is the room a modal has. A form makes way for the card: it
+// is being typed into, and a card over the field is intolerable. An
+// overlay that is only read does not — it is sized to its own content, so
+// shrinking it silently cuts its last lines off, and it closes on any key.
+// The card floats over that instead, which loses nothing either way.
 func (m Model) modalRegion(width, height int) int {
+	if m.mode.isReading() {
+		return height
+	}
 	return max(1, height-m.alertRows(width, height))
 }
 
