@@ -327,10 +327,16 @@ export function run(id: string, argument?: string): void {
     case "view-wall":
       ui.view = "wall";
       ui.walkedIn = false;
+      // Zoom belongs to the roster's pane; carrying it here would
+      // strand a later 1 on a roster with no rail and no list.
+      ui.zoomed = false;
       return;
     case "view-canvas":
       ui.view = "canvas";
       ui.walkedIn = false;
+      // Zoom belongs to the roster's pane; carrying it here would
+      // strand a later 1 on a roster with no rail and no list.
+      ui.zoomed = false;
       return;
     // A pane key brings its view with it — setting a tab only the
     // roster renders, from the wall, changed nothing anyone could see

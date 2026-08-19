@@ -270,6 +270,25 @@ describe("keys that need an agent to mean anything", () => {
 
   // The TUI's zoom sets the interaction pane with it; a terminal
   // filling the body while ignoring what you type is half a gesture.
+  test("zoom brings the terminal tab it is zooming", () => {
+    run("pane-diff");
+    expect(ui.pane).toBe("diff");
+
+    run("zoom");
+
+    // Walking in to a tab that is display:none would be a terminal
+    // filling the body and showing nothing.
+    expect(ui.pane).toBe("terminal");
+  });
+
+  test("leaving the roster disarms zoom", () => {
+    run("zoom");
+    run("view-wall");
+    expect(ui.zoomed).toBe(false);
+    run("view-roster");
+    expect(ui.zoomed).toBe(false);
+  });
+
   test("zoom walks in", () => {
     run("zoom");
     expect(ui.zoomed).toBe(true);
@@ -682,6 +701,90 @@ describe("marking", () => {
  * dead in the shipped code. So: press every binding, and require that
  * something observable moves.
  */
+/**
+ * The seam that keeps splitting.
+ *
+ * Three rounds running, a change to the dispatcher did not reach the
+ * table that describes the keys: h/l's wording, zoom's new meaning,
+ * zoom's new requirement. Each was found by a person reading both
+ * files side by side, which is not a thing that scales.
+ *
+ * So: ask the dispatcher what it actually requires, by running every
+ * binding with an agent and without one, and require the table to say
+ * the same thing. A command that does nothing without a selection is
+ * one the palette must not offer without a selection.
+ */
+describe("the table declares what the dispatcher requires", () => {
+  // Two worlds again, for the same reason the inertness test needs
+  // them: a command that is already where it is going moves nothing,
+  // and that is not the same as needing an agent to go there.
+  function settleWorld(withAgent: boolean, where: "cold" | "hot") {
+    calls.length = 0;
+    document.body.innerHTML = "";
+    fleet.agents = [agent("a"), agent("b"), agent("c")];
+    fleet.selectedID = withAgent ? (where === "cold" ? "a" : "c") : "";
+    fleet.workspaceID = "";
+    Object.assign(ui, {
+      view: where === "cold" ? "roster" : "wall",
+      pane: where === "cold" ? "terminal" : "diff",
+      walkedIn: false,
+      zoomed: false,
+      palette: false,
+      keys: false,
+      dispatching: false,
+      confirmDelete: "",
+      composing: false,
+      pending: "",
+      column: where === "cold" ? "agents" : "spanreed",
+    });
+  }
+
+  function moves(id: string, withAgent: boolean): boolean {
+    return (["cold", "hot"] as const).some((where) =>
+      movesIn(id, withAgent, where),
+    );
+  }
+
+  function movesIn(
+    id: string,
+    withAgent: boolean,
+    where: "cold" | "hot",
+  ): boolean {
+    settleWorld(withAgent, where);
+    const before = JSON.stringify({
+      ui: { ...ui },
+      selected: fleet.selectedID,
+      workspace: fleet.workspaceID,
+      calls: [...calls],
+    });
+    run(id);
+    return (
+      JSON.stringify({
+        ui: { ...ui },
+        selected: fleet.selectedID,
+        workspace: fleet.workspaceID,
+        calls: [...calls],
+      }) !== before
+    );
+  }
+
+  test("needsAgent means exactly what run() does", () => {
+    const mismatched: string[] = [];
+    for (const binding of bindings) {
+      const withoutOne = moves(binding.id, false);
+      const withOne = moves(binding.id, true);
+      const requiresOne = withOne && !withoutOne;
+      if (requiresOne !== (binding.needsAgent === true)) {
+        mismatched.push(
+          `${binding.id}: run() ${requiresOne ? "requires" : "does not require"}` +
+            ` an agent, table says ${binding.needsAgent === true}`,
+        );
+      }
+    }
+    expect(mismatched).toEqual([]);
+  });
+});
+
 describe("every binding actually does something", () => {
   /** A snapshot of everything a command could move. */
   function world() {

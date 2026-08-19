@@ -241,8 +241,9 @@ export const bindings: Binding[] = [
   {
     id: "zoom",
     keys: "alt+z",
-    what: "zoom the terminal over the body",
+    what: "zoom the terminal over the body, and walk into it",
     group: "View",
+    needsAgent: true,
     whileWalkedIn: true,
     palette: "Zoom the terminal",
   },
