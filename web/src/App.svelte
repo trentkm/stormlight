@@ -1,28 +1,60 @@
 <script lang="ts">
   import { claimToken } from "./lib/api";
+  import { run, ui } from "./lib/commands.svelte";
+  import { focusOf, match } from "./lib/keys";
   import { fleet, start } from "./lib/state.svelte";
   import { isUrgent } from "./lib/types";
   import Canvas from "./components/Canvas.svelte";
   import Dispatch from "./components/Dispatch.svelte";
+  import Keys from "./components/Keys.svelte";
+  import Palette from "./components/Palette.svelte";
   import Wall from "./components/Wall.svelte";
   import Roster from "./components/Roster.svelte";
   import Spanreed from "./components/Spanreed.svelte";
   import WorkspaceRail from "./components/WorkspaceRail.svelte";
 
   const authorized = claimToken();
-  let dispatching = $state(false);
-  let view = $state<"roster" | "wall" | "canvas">("roster");
 
   $effect(() => {
     if (!authorized) return;
     return start();
   });
 
+  /**
+   * One listener for the whole page.
+   *
+   * It runs in the capture phase so the page's keys are decided before
+   * anything nested can swallow them — but it takes only what the
+   * keymap claims, and preventDefault fires only for a key that
+   * actually meant something. Everything else reaches whatever it was
+   * going to reach, which is how a walked-in terminal keeps its
+   * keystrokes and the browser keeps its chords.
+   */
+  function key(event: KeyboardEvent) {
+    // Overlays run their own keyboards; the page's keys wait.
+    if (ui.palette || ui.keys) return;
+    const found = match(
+      event,
+      focusOf(document.activeElement, ui.walkedIn),
+      ui.pending,
+    );
+    if (!found) {
+      ui.pending = "";
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    ui.pending = found.pending ?? "";
+    if (found.id !== "") run(found.id);
+  }
+
   const urgent = $derived(fleet.agents.filter(isUrgent).length);
   const working = $derived(
     fleet.agents.filter((a) => a.process_live && !isUrgent(a)).length,
   );
 </script>
+
+<svelte:window onkeydowncapture={key} />
 
 {#if !authorized || fleet.lost}
   <main class="gate">
@@ -37,17 +69,31 @@
     <header class="top">
       <span class="wordmark">Stormlight</span>
       <div class="views">
-        <button class:on={view === "roster"} onclick={() => (view = "roster")}>
+        <button
+          class:on={ui.view === "roster"}
+          onclick={() => run("view-roster")}
+          title="1"
+        >
           roster
         </button>
-        <button class:on={view === "wall"} onclick={() => (view = "wall")}>
+        <button
+          class:on={ui.view === "wall"}
+          onclick={() => run("view-wall")}
+          title="2"
+        >
           wall
         </button>
-        <button class:on={view === "canvas"} onclick={() => (view = "canvas")}>
+        <button
+          class:on={ui.view === "canvas"}
+          onclick={() => run("view-canvas")}
+          title="3"
+        >
           canvas
         </button>
       </div>
-      <button onclick={() => (dispatching = true)}>dispatch</button>
+      <button onclick={() => run("dispatch")} title="n">dispatch</button>
+      <button class="ghost" onclick={() => run("palette")} title="⌘K">⌘K</button>
+      <button class="ghost" onclick={() => run("help")} title="?">?</button>
       <span class="spacer"></span>
       {#if urgent}
         <span class="tally waiting">◆ {urgent} needs input</span>
@@ -57,10 +103,10 @@
 
     <div class="body">
       <WorkspaceRail />
-      {#if view === "wall"}
-        <Wall onopen={() => (view = "roster")} />
-      {:else if view === "canvas"}
-        <Canvas onopen={() => (view = "roster")} />
+      {#if ui.view === "wall"}
+        <Wall onopen={() => run("view-roster")} />
+      {:else if ui.view === "canvas"}
+        <Canvas onopen={() => run("view-roster")} />
       {:else}
         <Roster />
         <Spanreed />
@@ -75,8 +121,17 @@
     {/if}
   </div>
 
-  {#if dispatching}
-    <Dispatch onclose={() => (dispatching = false)} />
+  {#if ui.dispatching}
+    <Dispatch onclose={() => (ui.dispatching = false)} />
+  {/if}
+  {#if ui.palette}
+    <Palette
+      onrun={(id, argument) => run(id, argument)}
+      onclose={() => (ui.palette = false)}
+    />
+  {/if}
+  {#if ui.keys}
+    <Keys onclose={() => (ui.keys = false)} />
   {/if}
 {/if}
 
@@ -127,6 +182,14 @@
     font-weight: 500;
   }
   .views button:hover:not(.on) {
+    color: var(--band);
+  }
+  .ghost {
+    padding: 2px 8px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .ghost:hover {
     color: var(--band);
   }
   .tally {
