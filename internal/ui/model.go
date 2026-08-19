@@ -67,6 +67,19 @@ const (
 	modeAlert
 )
 
+// isForm reports that a mode is one the human is filling in — a field, a
+// path, a task. Those own their complaints: the objection dies with the
+// form. The informational overlays are not forms; any key closes them, so
+// treating that key as an answer to a failure would be the keystroke-wipe
+// this whole surface exists to remove.
+func (m mode) isForm() bool {
+	switch m {
+	case modeDispatch, modeAddWorkspace, modeRename, modeCompose:
+		return true
+	}
+	return false
+}
+
 // sortMode orders workspaces and agents. Sorting is always an explicit
 // user choice (the yazi-style `,` chord) — rows never rearrange on their
 // own; the default is stable newest-first.
@@ -266,10 +279,16 @@ type Model struct {
 
 	interactionID       string
 	interactionLoadedAt time.Time
-	// The failure surface: the card standing over the body, and the
-	// snapshot the detail view reads from. See alert.go.
-	alert          alert
-	alertDetail    alertDetail
+	// The failure surface. See alert.go.
+	alert alert
+	// lastFailure is the most recent failure's full text, kept past its
+	// card so `e` can still reach it; alertDetail is the copy an open
+	// detail view is reading, which nothing may overwrite mid-read.
+	lastFailure alertDetail
+	alertDetail alertDetail
+	// hushedPoll is a self-repeating failure the reader has dismissed,
+	// silenced until the poll recovers.
+	hushedPoll     string
 	shimmerPhase   int
 	shimmerRunning bool
 
@@ -814,7 +833,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.updateKey(msg)
 		if model, ok := updated.(Model); ok &&
 			standing != nil && model.alert.err == standing &&
-			mode == raisedIn && mode != modeNormal && model.mode != mode {
+			mode == raisedIn && raisedIn.isForm() && model.mode != mode {
 			model.dismissAlert()
 			return model, cmd
 		}

@@ -93,7 +93,7 @@ func (m Model) renderModeBody(width, contentHeight int) string {
 	// card is anchored to the foot of the body and the two would otherwise
 	// want the same rows — and the card would win, covering the form's
 	// last lines while the only key it named cancelled that form.
-	region := max(1, contentHeight-m.alertRows(width, contentHeight))
+	region := m.modalRegion(width, contentHeight)
 	var modal string
 	switch m.mode {
 	case modeDispatch:

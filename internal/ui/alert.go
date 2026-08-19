@@ -93,24 +93,47 @@ func (m *Model) raiseFailure(err error, polled bool) {
 	if m.alert.active() && m.alert.message() == message {
 		return
 	}
-	m.alert = alert{err: err, raisedIn: m.mode, polled: polled, at: now()}
+	if polled && message == m.hushedPoll {
+		// The reader already dealt with this one. The poll will keep
+		// reporting it every tick until the daemon comes back, and a
+		// dismissal that lasts 700ms is not a dismissal.
+		return
+	}
+	m.alert = alert{err: err, raisedIn: m.mode, polled: polled, at: alertClock()}
 	// Every failure leaves its full text behind, so `e` can still reach
-	// the last one after the card has gone.
-	m.alertDetail = alertDetail{text: message, at: m.alert.at}
+	// the last one after the card has gone. This is not what an open
+	// detail view is reading — that took its own copy — because a poll
+	// failing every tick would otherwise swap the message out from under
+	// someone in the middle of reading it.
+	m.lastFailure = alertDetail{text: message, at: m.alert.at}
 }
 
-// now is the clock the alert reads; tests replace it to keep ages fixed.
-var now = time.Now
+// alertClock is when a failure says it arrived; tests replace it to hold
+// an age still. It is not named `now` because `ageAlert` takes a `now`,
+// and a package-scope name that ordinary parameters shadow is a trap.
+var alertClock = time.Now
 
-func (m *Model) dismissAlert() { m.alert = alert{} }
+// dismissAlert takes the card down. Dismissing a self-repeating failure
+// also hushes it: the poll would otherwise raise the identical message on
+// the very next tick, and the Esc the card advertised would do nothing
+// that lasts.
+func (m *Model) dismissAlert() {
+	if m.alert.polled {
+		m.hushedPoll = m.alert.message()
+	}
+	m.alert = alert{}
+}
 
 // resolvePolled is the refresh reporting that it worked. A card raised by
 // a failing poll is the one kind that answers itself: the daemon came back,
 // so the complaint is no longer true and should not sit there insisting.
+// The recovery also lifts the hush — if the failure returns after this, it
+// is news again.
 func (m *Model) resolvePolled() {
 	if m.alert.polled {
-		m.dismissAlert()
+		m.alert = alert{}
 	}
+	m.hushedPoll = ""
 }
 
 // keyboardHeldElsewhere reports that the dashboard's own keys are not
@@ -150,7 +173,7 @@ func (m Model) alertDetailReachable() bool {
 // readableFailure reports that there is a last failure for `e` to open —
 // the standing card's, or the one whose card has already gone.
 func (m Model) readableFailure() bool {
-	return strings.TrimSpace(m.alertDetail.text) != ""
+	return strings.TrimSpace(m.lastFailure.text) != ""
 }
 
 // openAlertDetail hands the last failure to the reader in full and clears
@@ -159,10 +182,12 @@ func (m Model) readableFailure() bool {
 // the ones raised inside the portal, where no key is ours — are exactly
 // the ones whose card is gone by the time the reader can act.
 func (m Model) openAlertDetail() (tea.Model, tea.Cmd) {
-	if strings.TrimSpace(m.alertDetail.text) == "" {
+	if !m.readableFailure() {
 		return m, nil
 	}
-	m.alertDetail.offset = 0
+	// A copy, taken once: what is on screen must not change under the
+	// reader because a background poll failed again while they read.
+	m.alertDetail = m.lastFailure
 	m.dismissAlert()
 	m.mode = modeAlert
 	return m, nil
@@ -251,7 +276,10 @@ func (m Model) renderAlertCard(width, height int) string {
 		}
 		body = append(body, " "+marker+line)
 	}
-	if keys := m.alertCardKeys(clipped); keys != "" {
+	if keys := m.alertCardKeys(clipped); keys != "" &&
+		lipgloss.Width(keys) <= cardWidth-2 {
+		// Only if it fits on one row. Wrapped, it would cost the card the
+		// row its frame was budgeted, and the bottom border with it.
 		body = append(body, alignRight(keys, cardWidth-2))
 	}
 	return lipgloss.NewStyle().
@@ -312,8 +340,20 @@ func (m Model) alertDetailDimensions(width, height int) (int, int) {
 // alertDetailWindow is the text area inside the modal: how wide a line may
 // be and how many of them are on screen at once.
 func (m Model) alertDetailWindow() (int, int) {
-	width, height := m.alertDetailDimensions(m.bodyDimensions())
+	// Measured in the region the modal is drawn in, card and all. Sizing
+	// this from the whole body while the view is rendered into less than
+	// that puts the tail of a long message out of reach of every scroll
+	// key: the state believes it is already at the bottom.
+	bodyWidth, bodyHeight := m.bodyDimensions()
+	width, height := m.alertDetailDimensions(
+		bodyWidth, m.modalRegion(bodyWidth, bodyHeight))
 	return max(4, width-6), max(1, height-6)
+}
+
+// modalRegion is the room a modal has: the body, less whatever rows the
+// failure card has claimed at its foot.
+func (m Model) modalRegion(width, height int) int {
+	return max(1, height-m.alertRows(width, height))
 }
 
 func (m Model) renderAlertModal(width, height int) string {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -446,5 +447,174 @@ func TestFooterNamesTheDetailViewsOwnKeys(t *testing.T) {
 	}
 	if strings.Contains(footer, "n new") || strings.Contains(footer, "q quit") {
 		t.Fatalf("footer advertises keys the detail view does not answer: %q", footer)
+	}
+}
+
+// A message read minutes after its card is gone has to place itself in
+// time; one still on screen does not.
+func TestRecalledFailureCarriesItsAge(t *testing.T) {
+	moment := time.Now()
+	alertClock = func() time.Time { return moment.Add(-7 * time.Minute) }
+	t.Cleanup(func() { alertClock = time.Now })
+
+	model := alertModel(t)
+	model.raise(errors.New("interrupt failed"))
+	updated, _ := model.Update(runeKey("e"))
+	model = updated.(Model)
+
+	view := ansi.Strip(model.renderAlertModal(model.bodyDimensions()))
+	if !strings.Contains(view, "7m ago") {
+		t.Fatalf("a recalled failure did not say when it happened:\n%s", view)
+	}
+
+	alertClock = time.Now
+	fresh := alertModel(t)
+	fresh.raise(errors.New("interrupt failed"))
+	updated, _ = fresh.Update(runeKey("e"))
+	view = ansi.Strip(updated.(Model).renderAlertModal(fresh.bodyDimensions()))
+	if strings.Contains(view, "ago") {
+		t.Fatalf("a failure that just happened stamped itself anyway:\n%s", view)
+	}
+}
+
+// The poll fires every 700ms. A failure arriving while someone is reading
+// another one must not swap the text out from under them.
+func TestOpenDetailIsNotOverwrittenByANewFailure(t *testing.T) {
+	model := alertModel(t)
+	model.raise(errors.New(sshFailure))
+
+	updated, _ := model.Update(runeKey("e"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(dashboardMsg{err: errors.New("daemon poll failed")})
+	model = updated.(Model)
+
+	view := ansi.Strip(model.renderAlertModal(model.bodyDimensions()))
+	if strings.Contains(view, "daemon poll failed") {
+		t.Fatalf("a background failure rewrote the message being read:\n%s", view)
+	}
+	if !strings.Contains(unwrapped(view), unwrapped(sshFailure)) {
+		t.Fatalf("the message being read went missing:\n%s", view)
+	}
+	if model.alertDetail.text == model.lastFailure.text {
+		t.Fatalf("the open view and the recall slot are the same storage")
+	}
+}
+
+// A dismissal that lasts 700ms is not a dismissal: the poll would raise the
+// identical failure on the next tick, forever.
+func TestDismissingARecurringFailureSticks(t *testing.T) {
+	model := alertModel(t)
+	down := func() dashboardMsg {
+		return dashboardMsg{err: errors.New("daemon is not listening")}
+	}
+
+	updated, _ := model.Update(down())
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.alert.active() {
+		t.Fatalf("Esc did not take the card down")
+	}
+
+	updated, _ = model.Update(down())
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the next tick raised the failure the reader just dismissed")
+	}
+	model = updated.(Model)
+
+	// Recovery lifts the hush: if it breaks again after working, that is
+	// news.
+	updated, _ = model.Update(dashboardMsg{})
+	model = updated.(Model)
+	updated, _ = model.Update(down())
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("a failure that returned after a recovery stayed silent")
+	}
+}
+
+// Reading a recurring failure dismisses it too, so it must not reappear as
+// a card underneath the view that is reading it.
+func TestReadingARecurringFailureDoesNotRaiseItAgain(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	model = updated.(Model)
+
+	updated, _ = model.Update(runeKey("e"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the card came back under the view opened to read it")
+	}
+}
+
+// Any key closes an informational overlay, so treating that key as an
+// answer to a failure is the keystroke-wipe this surface exists to remove.
+func TestClosingAnInformationalOverlayKeepsTheFailure(t *testing.T) {
+	model := alertModel(t)
+	model.mode = modeHistory
+	model.raise(errors.New("session history is unreadable"))
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.mode != modeNormal {
+		t.Fatalf("Esc did not close the history: mode = %v", model.mode)
+	}
+	if !model.alert.active() {
+		t.Fatalf("closing the history discarded the failure it was showing")
+	}
+}
+
+// The window the scroll keys clamp to must be the one the message is drawn
+// into, card and all, or the tail is unreachable by every scroll key: the
+// state believes it is already at the bottom.
+func TestScrollReachesTheEndWhileACardStands(t *testing.T) {
+	model := alertModel(t)
+	model.width = 100
+	model.height = 30
+	// Distinct lines, because a message that repeats itself cannot tell a
+	// test whether it is looking at the last line or the tenth.
+	numbered := make([]string, 40)
+	for index := range numbered {
+		numbered[index] = fmt.Sprintf("failure detail line %02d", index+1)
+	}
+	model.raise(errors.New(strings.Join(numbered, "\n")))
+
+	updated, _ := model.Update(runeKey("e"))
+	model = updated.(Model)
+	// A poll failure raises a card under the open view, which is what
+	// shrinks the room the message is drawn into.
+	updated, _ = model.Update(dashboardMsg{err: errors.New("daemon poll failed")})
+	model = updated.(Model)
+	if !model.alert.active() {
+		t.Fatalf("expected a card standing under the detail view")
+	}
+
+	updated, _ = model.Update(runeKey("G"))
+	model = updated.(Model)
+
+	// Read the screen, not the state that decided what to put on it.
+	view := ansi.Strip(model.renderBody())
+	if !strings.Contains(view, numbered[len(numbered)-1]) {
+		t.Fatalf("G left the last line of the message unreachable:\n%s", view)
+	}
+}
+
+// A keys row too wide for the card wraps, costing the card the row its
+// frame was budgeted and the bottom border with it.
+func TestNarrowCardDropsItsKeysRatherThanItsFrame(t *testing.T) {
+	model := alertModel(t)
+	model.width = 25
+	model.height = 7
+	model.raise(errors.New("boom"))
+
+	width, height := model.bodyDimensions()
+	card := ansi.Strip(model.renderAlertCard(width, height))
+	if !strings.Contains(card, "╰") {
+		t.Fatalf("the card lost its bottom edge:\n%s", card)
+	}
+	if rows := strings.Count(card, "\n") + 1; rows > height {
+		t.Fatalf("the card rendered %d rows into a body of %d:\n%s", rows, height, card)
 	}
 }
