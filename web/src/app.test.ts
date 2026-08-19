@@ -316,6 +316,39 @@ describe("the rail and the keyboard agree", () => {
     done();
   });
 
+  // Both rows, because the All agents row is a separate call site and
+  // was the one still bypassing the shared path.
+  test("clicking All agents resets the agent too", () => {
+    const done = page();
+    fleet.agents = [
+      agent("here"),
+      agent("far", {
+        workspace: {
+          id: "other",
+          kind: "git",
+          name: "other",
+          root: "/o",
+          execution_root: "/o",
+        },
+      }),
+    ];
+    fleet.workspaceID = "other";
+    fleet.selectedID = "far";
+    flushSync();
+
+    const row = [...document.querySelectorAll<HTMLElement>(".rail .row")].find(
+      (element) => element.textContent?.includes("All agents"),
+    )!;
+    row.click();
+    flushSync();
+
+    expect(fleet.workspaceID).toBe("");
+    // Reset to the first of everything, not left on whatever was
+    // selected in the workspace we just left.
+    expect(fleet.selectedID).toBe("here");
+    done();
+  });
+
   test("clicking a workspace resets the agent, as j does", () => {
     const done = page();
     // An agent in another workspace, so the pane has somewhere wrong to
@@ -363,8 +396,17 @@ describe("the rail and the keyboard agree", () => {
   // A click inside the terminal aims the pane without walking in. That
   // is fine only because j and k scroll the terminal's scrollback; when
   // they did nothing, one click left four keys dead.
-  test("clicking the pane aims it, and j still means something", () => {
+  // A click inside the terminal aims the pane without walking in. That
+  // is only tolerable because j and k then scroll the terminal's
+  // scrollback — when they did nothing, one click left four keys dead.
+  test("clicking the pane aims it, and j scrolls the terminal", () => {
     const done = page();
+    const viewport = document.querySelector<HTMLElement>(".xterm-viewport")!;
+    Object.defineProperty(viewport, "scrollHeight", { value: 1000 });
+    viewport.scrollBy = (options?: number | ScrollToOptions) => {
+      viewport.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+    };
+
     document
       .querySelector(".pane")!
       .dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -373,10 +415,12 @@ describe("the rail and the keyboard agree", () => {
     expect(document.querySelector(".pane.aimed")).not.toBeNull();
     expect(ui.walkedIn).toBe(false);
     const before = selected();
+
     press("j");
-    // Nothing to scroll in the stub, so it falls through to the roster
-    // rather than swallowing the key.
-    expect(selected()).not.toBe(before);
+
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    // And the roster stayed where it was.
+    expect(selected()).toBe(before);
     done();
   });
 });

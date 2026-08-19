@@ -122,53 +122,72 @@ describe("moving between columns", () => {
  * are the tests that kill them.
  */
 describe("j and k in the pane", () => {
-  function pane(html: string): HTMLElement {
-    document.body.innerHTML = html;
-    const element = document.body.firstElementChild as HTMLElement;
-    // jsdom lays nothing out, so scrollBy/scrollHeight need shapes.
-    Object.defineProperty(element, "scrollHeight", { value: 1000 });
-    // scrollBy's signature admits a number as well as options; the
-    // code only ever passes options, and the double says so.
-    element.scrollBy = (options?: number | ScrollToOptions) => {
-      element.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+  /**
+   * Spanreed's real shape: the terminal stays mounted — and stays
+   * *first* — while the transcript or diff renders after it, so tab
+   * switches do not churn the attachment. Building only the tab under
+   * test hid a selector that took whatever came first in the document,
+   * which was always the hidden terminal.
+   */
+  function spanreed(tab: "terminal" | "transcript" | "diff") {
+    document.body.innerHTML =
+      '<div data-walk-target><div class="xterm-viewport"></div></div>' +
+      (tab === "transcript" ? '<div class="transcript"></div>' : "") +
+      (tab === "diff" ? '<div class="diff"></div>' : "");
+    ui.pane = tab;
+    ui.column = "spanreed";
+    const shape = (element: HTMLElement) => {
+      Object.defineProperty(element, "scrollHeight", { value: 1000 });
+      // scrollBy's signature admits a number as well as options; the
+      // code only ever passes options, and the double says so.
+      element.scrollBy = (options?: number | ScrollToOptions) => {
+        element.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+      };
+      return element;
     };
-    return element;
+    return {
+      terminal: shape(
+        document.querySelector<HTMLElement>(".xterm-viewport")!,
+      ),
+      visible: shape(
+        document.querySelector<HTMLElement>(
+          tab === "terminal" ? ".xterm-viewport" : `.${tab}`,
+        )!,
+      ),
+    };
   }
 
-  test("scrolls the transcript", () => {
-    const scroller = pane('<div class="transcript"></div>');
-    ui.column = "spanreed";
+  test("scrolls the transcript, not the terminal behind it", () => {
+    const { visible, terminal } = spanreed("transcript");
 
     run("down");
 
-    expect(scroller.scrollTop).toBeGreaterThan(0);
-    // And the roster did not move underneath it.
+    expect(visible.scrollTop).toBeGreaterThan(0);
+    // The terminal is still mounted, hidden, and first in the document:
+    // scrolling it would move nothing anyone can see.
+    expect(terminal.scrollTop).toBe(0);
+    // And the roster did not move underneath it either.
     expect(fleet.selectedID).toBe("a");
   });
 
-  test("scrolls the diff", () => {
-    const scroller = pane('<div class="diff"></div>');
-    ui.column = "spanreed";
+  test("scrolls the diff, not the terminal behind it", () => {
+    const { visible, terminal } = spanreed("diff");
+
     run("down");
-    expect(scroller.scrollTop).toBeGreaterThan(0);
+
+    expect(visible.scrollTop).toBeGreaterThan(0);
+    expect(terminal.scrollTop).toBe(0);
   });
 
   // The TUI's j/k scroll the PTY's scrollback in the interaction pane;
   // leaving the terminal out made four keys dead on the tab people are
   // on most.
   test("scrolls the terminal's scrollback", () => {
-    const scroller = pane(
-      '<div data-walk-target><div class="xterm-viewport"></div></div>',
-    ).querySelector<HTMLElement>(".xterm-viewport")!;
-    Object.defineProperty(scroller, "scrollHeight", { value: 1000 });
-    scroller.scrollBy = (options?: number | ScrollToOptions) => {
-      scroller.scrollTop += (options as ScrollToOptions)?.top ?? 0;
-    };
-    ui.column = "spanreed";
+    const { terminal } = spanreed("terminal");
 
     run("down");
 
-    expect(scroller.scrollTop).toBeGreaterThan(0);
+    expect(terminal.scrollTop).toBeGreaterThan(0);
   });
 
   test("with nothing to scroll, moves the roster rather than nothing", () => {
@@ -181,14 +200,14 @@ describe("j and k in the pane", () => {
   });
 
   test("gg and G reach the ends of what is scrolling", () => {
-    const scroller = pane('<div class="transcript"></div>');
-    scroller.scrollTop = 400;
-    ui.column = "spanreed";
+    const { visible, terminal } = spanreed("transcript");
+    visible.scrollTop = 400;
 
     run("first");
-    expect(scroller.scrollTop).toBe(0);
+    expect(visible.scrollTop).toBe(0);
     run("last");
-    expect(scroller.scrollTop).toBe(1000);
+    expect(visible.scrollTop).toBe(1000);
+    expect(terminal.scrollTop).toBe(0);
   });
 
   test("gg and G fall through when there is nothing to scroll", () => {
@@ -227,12 +246,60 @@ describe("walking out lands somewhere the keys work", () => {
   });
 });
 
-describe("keys that need their view to mean anything", () => {
-  test("a pane key from the wall brings the roster with it", () => {
+describe("keys that need an agent to mean anything", () => {
+  test("a pane key with nothing selected navigates nowhere", () => {
+    fleet.selectedID = "";
     ui.view = "wall";
+
+    run("pane-terminal");
+    run("pane-transcript");
     run("pane-diff");
+
+    expect(ui.view).toBe("wall");
+  });
+
+  test("zoom with nothing selected does nothing at all", () => {
+    fleet.selectedID = "";
+    ui.view = "wall";
+
+    run("zoom");
+
+    expect(ui.zoomed).toBe(false);
+    expect(ui.view).toBe("wall");
+  });
+
+  // The TUI's zoom sets the interaction pane with it; a terminal
+  // filling the body while ignoring what you type is half a gesture.
+  test("zoom walks in", () => {
+    run("zoom");
+    expect(ui.zoomed).toBe(true);
+    expect(ui.walkedIn).toBe(true);
+    expect(ui.pane).toBe("terminal");
+  });
+
+  test("zoom from another view zooms rather than un-zooming", () => {
+    run("zoom");
+    ui.view = "wall";
+
+    run("zoom");
+
     expect(ui.view).toBe("roster");
-    expect(ui.pane).toBe("diff");
+    expect(ui.zoomed).toBe(true);
+  });
+});
+
+describe("keys that need their view to mean anything", () => {
+  test("every pane key from the wall brings the roster with it", () => {
+    for (const [id, tab] of [
+      ["pane-diff", "diff"],
+      ["pane-transcript", "transcript"],
+      ["pane-terminal", "terminal"],
+    ] as const) {
+      ui.view = "wall";
+      run(id);
+      expect(ui.view, id).toBe("roster");
+      expect(ui.pane, id).toBe(tab);
+    }
   });
 
   test("zoom from the canvas does too, and aims at the pane", () => {
@@ -249,20 +316,6 @@ describe("keys that need their view to mean anything", () => {
     run("zoom");
     expect(ui.column).toBe("spanreed");
     run("pane-left");
-    expect(ui.column).toBe("spanreed");
-  });
-});
-
-describe("tab cycles where h and l stop", () => {
-  test("forwards, wrapping", () => {
-    ui.column = "spanreed";
-    run("column-next");
-    expect(ui.column).toBe("workspaces");
-  });
-
-  test("backwards, wrapping", () => {
-    ui.column = "workspaces";
-    run("column-previous");
     expect(ui.column).toBe("spanreed");
   });
 });

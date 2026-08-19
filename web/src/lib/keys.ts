@@ -67,18 +67,6 @@ export const bindings: Binding[] = [
     group: "Navigate",
   },
   {
-    id: "column-next",
-    keys: "Tab",
-    what: "cycle columns, wrapping where h and l stop",
-    group: "Navigate",
-  },
-  {
-    id: "column-previous",
-    keys: "Shift-Tab",
-    what: "cycle columns backwards",
-    group: "Navigate",
-  },
-  {
     id: "down",
     keys: "j",
     what: "move down in the aimed column; scroll the pane",
@@ -289,6 +277,10 @@ export const unavailable: Array<{ keys: string; why: string }> = [
     why: "the terminal socket takes text; drop images into the agent's own terminal",
   },
   { keys: "F", why: "full-screen attach is a terminal-only idea" },
+  {
+    keys: "Tab",
+    why: "it moves focus through the page; taking it would leave a keyboard user with no way to reach anything. h and l step the columns instead",
+  },
 ];
 
 /**
@@ -468,8 +460,6 @@ export function match(
       return { id: "", pending: "g" };
     case "G":
       return { id: "last" };
-    case "Tab":
-      return { id: event.shiftKey ? "column-previous" : "column-next" };
     case "Enter":
       return { id: "walk-in" };
     case "n":

@@ -246,31 +246,57 @@ describe("the table as documentation", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  // The point of the table: what `?` lists is what the dispatcher runs.
-  // A binding nothing can produce is a promise the client does not keep.
-  test("every non-chord binding is reachable from a key press", () => {
+  /**
+   * The point of the table: what `?` lists is what the dispatcher runs.
+   * A binding nothing can produce is a promise the client does not
+   * keep — which is exactly how `Tab` shipped bound and unverified: the
+   * old version of this test *skipped* any spelling longer than one
+   * character, so a whole binding could hide in the gap.
+   *
+   * Nothing is skipped now. A spelling this test does not know how to
+   * press is a failure, not a pass, so the next multi-character key
+   * teaches the test rather than slipping past it.
+   */
+  test("every binding is reachable from the keys it names", () => {
+    /** The event a spelling stands for, or null for a sequence whose
+     *  own test covers it. */
+    function pressFor(keys: string): KeyboardEvent | null {
+      if (keys.includes(" then ")) return null;
+      if (keys === "gg") return null;
+      if (keys === "⌘K / Ctrl-Alt-K") return press("k", { meta: true });
+      if (keys === "Ctrl-space") {
+        return press(" ", { ctrl: true, code: "Space" });
+      }
+      if (keys.startsWith("alt+")) {
+        return press(keys.slice(4), { alt: true });
+      }
+      if (keys === "Enter") return press("Enter");
+      if (keys.length === 1) return press(keys);
+      throw new Error(
+        `this test does not know how to press "${keys}" — teach it, ` +
+          `rather than letting the binding go unverified`,
+      );
+    }
+
     const unreachable = bindings
-      .filter(
-        (binding) =>
-          !["palette", "first", "delete"].includes(binding.id) &&
-          !binding.keys.includes(" then "),
-      )
+      .filter((binding) => pressFor(binding.keys) !== null)
       .filter((binding) => {
-        const alt = binding.keys.startsWith("alt+");
-        const key = alt ? binding.keys.slice(4) : binding.keys;
-        if (key === "Ctrl-space") {
-          // The seam key is a toggle: from the roster it walks in, from
-          // a terminal it walks out. Both are the same binding.
-          return (
-            meaning(" ", "terminal", { ctrl: true, code: "Space" }) !==
-            binding.id
-          );
-        }
-        if (key.length > 1 && key !== "Enter") return false;
-        return meaning(key, "roster", alt ? { alt: true } : {}) !== binding.id;
+        const event = pressFor(binding.keys)!;
+        // The seam key is a toggle: pressed from a terminal it walks
+        // out, from the roster it walks in. Both are this binding.
+        const focus: Focus =
+          binding.keys === "Ctrl-space" ? "terminal" : "roster";
+        return match(event, focus, "")?.id !== binding.id;
       })
       .map((binding) => `${binding.id} (${binding.keys})`);
     expect(unreachable).toEqual([]);
+  });
+
+  // Tab is the browser's: taking it would leave a keyboard user unable
+  // to reach anything on the page.
+  test("Tab is left to the browser", () => {
+    expect(meaning("Tab", "roster")).toBeUndefined();
+    expect(unavailable.map((entry) => entry.keys)).toContain("Tab");
   });
 
   test("keys the browser made impossible are named, with a reason", () => {

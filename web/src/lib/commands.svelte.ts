@@ -114,15 +114,6 @@ function stepColumn(by: number): void {
   if (ui.column !== "spanreed") ui.walkedIn = false;
 }
 
-/** tab wraps where h and l clamp — the TUI binds both. */
-function cycleColumn(by: number): void {
-  if (ui.view !== "roster" || ui.zoomed) return;
-  const at = columns.indexOf(ui.column);
-  const next = (at + by + columns.length) % columns.length;
-  ui.column = columns[next];
-  if (ui.column !== "spanreed") ui.walkedIn = false;
-}
-
 /** j and k, meaning whatever the active column says they mean. */
 function stepInColumn(by: number): void {
   if (ui.view !== "roster") {
@@ -181,15 +172,21 @@ function selectWorkspace(id: string): void {
 /**
  * Whatever the aimed pane scrolls.
  *
- * The transcript and the diff are ordinary scrollers. The terminal's is
- * xterm's viewport, which scrolls its scrollback — the same thing the
- * TUI's j/k do in the interaction pane. Leaving it out meant four keys
- * did nothing at all on the tab people are on most.
+ * Asked by tab, not by selector list. querySelector with a list returns
+ * the first match in *document order*, and Spanreed keeps the terminal
+ * mounted ahead of the transcript and the diff so switching tabs does
+ * not churn the attachment — so a list quietly scrolled the hidden
+ * terminal whenever the transcript or diff was on screen. The tab is
+ * the thing that actually knows.
  */
 function paneScroller(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    ".transcript, .diff, [data-walk-target] .xterm-viewport",
-  );
+  const where =
+    ui.pane === "transcript"
+      ? ".transcript"
+      : ui.pane === "diff"
+        ? ".diff"
+        : "[data-walk-target] .xterm-viewport";
+  return document.querySelector<HTMLElement>(where);
 }
 
 /** j/k in the aimed pane scrolls it. */
@@ -286,12 +283,6 @@ export function run(id: string, argument?: string): void {
     case "pane-right":
       stepColumn(1);
       return;
-    case "column-next":
-      cycleColumn(1);
-      return;
-    case "column-previous":
-      cycleColumn(-1);
-      return;
 
     // The terminal
     case "walk-in":
@@ -310,14 +301,24 @@ export function run(id: string, argument?: string): void {
       ui.zoomed = false;
       ui.column = "agents";
       return;
-    case "zoom":
-      // Zoom hides the rail and the roster, so it has to bring the
-      // view that has a terminal and aim the keyboard at what is left
-      // — otherwise j moved a cursor nobody could see.
+    case "zoom": {
+      // Zoom hides the rail and the roster, so it brings the view that
+      // has a terminal and aims the keyboard at what is left —
+      // otherwise j moved a cursor nobody could see. And it walks in,
+      // because the TUI's zoom does (model.go sets the interaction
+      // pane with it): a terminal filling the body while ignoring what
+      // you type is the wrong half of the gesture.
+      if (fleet.selectedID === "") return;
+      const zooming = !(ui.zoomed && ui.view === "roster");
       ui.view = "roster";
-      ui.zoomed = !ui.zoomed;
-      if (ui.zoomed) ui.column = "spanreed";
+      ui.zoomed = zooming;
+      if (zooming) {
+        ui.column = "spanreed";
+        ui.pane = "terminal";
+        ui.walkedIn = true;
+      }
       return;
+    }
 
     // Views and panes
     case "view-roster":
@@ -331,19 +332,24 @@ export function run(id: string, argument?: string): void {
       ui.view = "canvas";
       ui.walkedIn = false;
       return;
+    // A pane key brings its view with it — setting a tab only the
+    // roster renders, from the wall, changed nothing anyone could see
+    // — but only when there is an agent whose pane it would be. The
+    // palette already refuses to offer these without one; the key has
+    // to refuse too, or it performs a navigation nobody asked for.
     case "pane-terminal":
-      // A pane key brings its view with it: setting a tab that only
-      // the roster renders, from the wall, changed nothing anyone
-      // could see.
+      if (fleet.selectedID === "") return;
       ui.view = "roster";
       ui.pane = "terminal";
       return;
     case "pane-transcript":
+      if (fleet.selectedID === "") return;
       ui.view = "roster";
       ui.pane = "transcript";
       ui.walkedIn = false;
       return;
     case "pane-diff":
+      if (fleet.selectedID === "") return;
       ui.view = "roster";
       ui.pane = "diff";
       ui.walkedIn = false;

@@ -13,7 +13,11 @@
   });
 </script>
 
+<!-- The viewport matters: xterm renders one, and j/k scroll it. A stub
+     without it let a page-level test assert the fall-through while
+     claiming to test the scroll. -->
 <div class="terminal" data-walk-target>
+  <div class="xterm-viewport"></div>
   <textarea bind:this={helper} aria-label="terminal"></textarea>
 </div>
 
