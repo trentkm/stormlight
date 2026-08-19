@@ -1,8 +1,14 @@
-/* Stormlight site — light trapped in ice.
-   Values from internal/theme's Light pairs: Text #24323A, Muted #70808A,
-   Working #26799D, Waiting #A86600, Accent #62AEEF, Band #B9D9EF,
-   Code #0E7C6B, PortalInk #0F2338 */
+/* Stormlight site — the terminal, published.
+   One family of type (the visitor's own terminal face), two palettes
+   from the product itself: light from internal/theme's Light pairs,
+   dark from web/src/lib/theme.ts — the dashboard's exact colors.
+   Light is the default; [data-theme="dark"] on <html> flips it, set
+   before first paint by the boot script in each page's head. */
+
 :root {
+  /* internal/theme Light: Text #24323A, Muted #70808A, Working #26799D,
+     Waiting #A86600, Done #257A4A, Accent #62AEEF, Band #B9D9EF,
+     Code #0E7C6B, PortalInk #0F2338, Border #AAB3B9 */
   --bg: #f2f6fa;
   --bg-raised: #ffffff;
   --bg-panel: #fbfdff;
@@ -12,10 +18,11 @@
   --ink-dim: #59707f;
   --ink-faint: #8ba1b4;
   --cyan: #26799d;
-  --cyan-deep: #1d6485;
+  --cyan-bright: #1d6485;
   --ice: #0f2338;
   --amber: #a86600;
   --amber-deep: #8f5800;
+  --green: #257a4a;
   --heading: #17262e;
   --lit: #0f2338;
   --prose: #35485a;
@@ -24,14 +31,67 @@
   --code-ink: #0e7c6b;
   --str: #a86600;
   --hover-bg: #eef4f9;
-  --sel-bg: #e1e9f0;
-  --sweep-hi: #26799d;
-  --sweep-hi-sel: #0f2338;
-  --term-ink: #3d5468;
-  --tool-ink: #7c93ab;
-  --ok-ink: #257a4a;
-  --serif: "Newsreader", "Iowan Old Style", Georgia, serif;
-  --mono: "Geist Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sel-bg: rgba(98, 174, 239, 0.3);
+  --sel-ink: #0f2338;
+  --code-bg: rgba(38, 121, 157, 0.07);
+  --code-line: rgba(38, 121, 157, 0.16);
+  --kbd-line: rgba(38, 121, 157, 0.22);
+  --glow: rgba(98, 174, 239, 0.4);
+  --glow-soft: rgba(98, 174, 239, 0.16);
+  --band-soft: rgba(185, 217, 239, 0.45);
+  --amber-soft: rgba(168, 102, 0, 0.05);
+  --amber-line: rgba(168, 102, 0, 0.3);
+  --shadow-ink: rgba(15, 35, 56, 0.06);
+  --shadow-deep: rgba(15, 35, 56, 0.28);
+  --card-line-hover: rgba(38, 121, 157, 0.35);
+  /* The terminal's own face, wherever the page is read: SF Mono on a
+     Mac, Consolas/Cascadia on Windows, whatever ui-monospace means
+     locally. No webfont — a terminal does not download its type. */
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, Menlo,
+    "DejaVu Sans Mono", monospace;
+}
+
+[data-theme="dark"] {
+  /* web/src/lib/theme.ts, verbatim where a slot exists: bg #171C20,
+     raised #1B2126, sunken #14181D, border #2A3138 / #3A4046,
+     text #D7DEE5 / #F3F5F6, muted #74818B, working #61AFEF,
+     waiting #E5C07B, done #72C087, band #C6E9FF, ice #7DCFFF,
+     code #8FDCCB */
+  --bg: #14181d;
+  --bg-raised: #1b2126;
+  --bg-panel: #171c20;
+  --line: #2a3138;
+  --line-soft: #232a31;
+  --ink: #d7dee5;
+  --ink-dim: #9aa8b2;
+  --ink-faint: #74818b;
+  --cyan: #61afef;
+  --cyan-bright: #7dcfff;
+  --ice: #7dcfff;
+  --amber: #e5c07b;
+  --amber-deep: #e5c07b;
+  --green: #72c087;
+  --heading: #f3f5f6;
+  --lit: #c6e9ff;
+  --prose: #b7c3cd;
+  --dot: #3a4046;
+  --pre-ink: #c9d4dd;
+  --code-ink: #8fdccb;
+  --str: #e5c07b;
+  --hover-bg: #1f262d;
+  --sel-bg: rgba(198, 233, 255, 0.25);
+  --sel-ink: #f3f5f6;
+  --code-bg: rgba(143, 220, 203, 0.08);
+  --code-line: rgba(143, 220, 203, 0.2);
+  --kbd-line: rgba(97, 175, 239, 0.35);
+  --glow: rgba(97, 175, 239, 0.35);
+  --glow-soft: rgba(97, 175, 239, 0.08);
+  --band-soft: rgba(125, 207, 255, 0.06);
+  --amber-soft: rgba(229, 192, 123, 0.04);
+  --amber-line: rgba(229, 192, 123, 0.35);
+  --shadow-ink: rgba(0, 0, 0, 0.3);
+  --shadow-deep: rgba(0, 0, 0, 0.55);
+  --card-line-hover: rgba(125, 207, 255, 0.4);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -41,14 +101,14 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
   color: var(--ink);
-  font-family: var(--serif);
-  font-size: 18px;
-  line-height: 1.65;
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.75;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
 
-::selection { background: rgba(98, 174, 239, 0.3); color: #0f2338; }
+::selection { background: var(--sel-bg); color: var(--sel-ink); }
 
 a { color: var(--cyan); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
@@ -60,9 +120,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(60rem 40rem at 85% -10%, rgba(98, 174, 239, 0.16), transparent 60%),
-    radial-gradient(50rem 36rem at -10% 20%, rgba(185, 217, 239, 0.45), transparent 60%),
-    radial-gradient(40rem 30rem at 70% 110%, rgba(168, 102, 0, 0.05), transparent 60%),
+    radial-gradient(60rem 40rem at 85% -10%, var(--glow-soft), transparent 60%),
+    radial-gradient(50rem 36rem at -10% 20%, var(--band-soft), transparent 60%),
+    radial-gradient(40rem 30rem at 70% 110%, var(--amber-soft), transparent 60%),
     var(--bg);
 }
 
@@ -75,6 +135,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.028 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
 }
+[data-theme="dark"] .grain { filter: none; opacity: 0.5; }
 
 /* ---------- layout ---------- */
 
@@ -88,7 +149,6 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   align-items: baseline;
   justify-content: space-between;
   padding: 1.6rem 0;
-  font-family: var(--mono);
   font-size: 0.78rem;
 }
 
@@ -105,25 +165,52 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nav-links a { color: var(--ink-dim); letter-spacing: 0.08em; }
 .nav-links a:hover { color: var(--cyan); text-decoration: none; }
 
+/* The theme switch, dressed as what it is: a flag. */
+.mode {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  background: none;
+  border: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+  padding: 0;
+}
+.mode:hover { color: var(--cyan); }
+
 /* ---------- type ---------- */
 
-h1, h2, h3 { font-weight: 400; letter-spacing: -0.01em; }
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 
+/* Kickers read as comments — the one line of a terminal that talks
+   about the rest. */
 .kicker {
-  font-family: var(--mono);
   font-size: 0.72rem;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--cyan-deep);
+  color: var(--cyan-bright);
   margin-bottom: 1.2rem;
 }
+.kicker::before { content: "# "; color: var(--ink-faint); letter-spacing: 0; }
 .kicker.amber { color: var(--amber-deep); }
 
 em.lit {
-  font-style: italic;
+  font-style: normal;
   color: var(--lit);
-  text-shadow: 0 0 24px rgba(98, 174, 239, 0.4);
+  text-shadow: 0 0 24px var(--glow);
 }
+
+/* The block cursor, resting where the shell would leave it. */
+.cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 0.12em;
+  vertical-align: -0.08em;
+  background: var(--cyan);
+  animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
 
 /* ---------- buttons / install ---------- */
 
@@ -131,11 +218,10 @@ em.lit {
   display: inline-flex;
   align-items: center;
   gap: 0.9rem;
-  font-family: var(--mono);
   font-size: 0.85rem;
   background: var(--bg-raised);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 0.75rem 1.1rem;
   color: var(--ink);
 }
@@ -146,25 +232,24 @@ em.lit {
   letter-spacing: 0.08em;
   background: none;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--ink-dim);
   padding: 0.25rem 0.55rem;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
-.install button:hover { color: var(--cyan); border-color: var(--cyan-deep); }
+.install button:hover { color: var(--cyan); border-color: var(--cyan-bright); }
 
 /* ---------- terminal chrome ---------- */
 
 .term {
   background: var(--bg-panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow:
-    0 1px 2px rgba(15, 35, 56, 0.06),
-    0 24px 60px -24px rgba(15, 35, 56, 0.28),
-    0 0 90px -30px rgba(98, 174, 239, 0.4);
-  font-family: var(--mono);
+    0 1px 2px var(--shadow-ink),
+    0 24px 60px -24px var(--shadow-deep),
+    0 0 90px -30px var(--glow);
   overflow: hidden;
 }
 
@@ -186,22 +271,20 @@ em.lit {
 /* ---------- code blocks (docs + landing) ---------- */
 
 pre {
-  font-family: var(--mono);
   font-size: 0.8rem;
   line-height: 1.7;
   background: var(--bg-raised);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 1rem 1.2rem;
   overflow-x: auto;
   color: var(--pre-ink);
 }
 code {
-  font-family: var(--mono);
-  font-size: 0.85em;
+  font-size: 0.9em;
   color: var(--code-ink);
-  background: rgba(38, 121, 157, 0.07);
-  border: 1px solid rgba(38, 121, 157, 0.16);
+  background: var(--code-bg);
+  border: 1px solid var(--code-line);
   border-radius: 4px;
   padding: 0.08em 0.35em;
 }
@@ -209,8 +292,8 @@ pre code { background: none; border: none; padding: 0; color: inherit; font-size
 kbd {
   font-family: var(--mono);
   color: var(--cyan);
-  background: rgba(38, 121, 157, 0.07);
-  border: 1px solid rgba(38, 121, 157, 0.22);
+  background: var(--code-bg);
+  border: 1px solid var(--kbd-line);
   border-radius: 4px;
   padding: 0.05em 0.45em;
   font-size: 0.8em;
@@ -226,7 +309,6 @@ pre .s { color: var(--str); }
   border-top: 1px solid var(--line-soft);
   margin-top: 8rem;
   padding: 3rem 0 4rem;
-  font-family: var(--mono);
   font-size: 0.78rem;
   color: var(--ink-faint);
 }
@@ -241,11 +323,12 @@ pre .s { color: var(--str); }
 
 @media (prefers-reduced-motion: reduce) {
   .reveal { opacity: 1; transform: none; transition: none; }
+  .cursor { animation: none; }
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 
 @media (max-width: 640px) {
-  body { font-size: 16px; }
+  body { font-size: 14px; }
   .wrap, .wrap-narrow { padding: 0 1.1rem; }
   .nav { flex-wrap: wrap; row-gap: 0.7rem; }
   .nav-links { gap: 1rem; flex-wrap: wrap; row-gap: 0.5rem; }

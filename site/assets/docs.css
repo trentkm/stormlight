@@ -41,8 +41,8 @@
 }
 .side > ul > li > a:hover { color: var(--cyan); background: var(--hover-bg); text-decoration: none; }
 .side > ul > li.current > a {
-  color: var(--cyan-deep);
-  background: rgba(98, 174, 239, 0.12);
+  color: var(--cyan-bright);
+  background: var(--code-bg);
   font-weight: 500;
 }
 
@@ -61,8 +61,8 @@
 }
 .side .sections li a:hover { color: var(--cyan); text-decoration: none; }
 .side .sections li a.active {
-  color: var(--cyan-deep);
-  border-left-color: var(--cyan-deep);
+  color: var(--cyan-bright);
+  border-left-color: var(--cyan-bright);
 }
 .side .sections li.sub a { padding-left: 2.2rem; font-size: 0.72rem; }
 
@@ -70,15 +70,15 @@
 
 .doc { padding: 2.8rem 0 2rem; min-width: 0; }
 
-.doc-title { font-size: clamp(1.9rem, 4vw, 2.6rem); color: var(--heading); margin: 0.5rem 0 0.8rem; }
-.doc-lede { color: var(--ink-dim); font-size: 1.08rem; max-width: 40em; }
+.doc-title { font-size: clamp(1.35rem, 3vw, 1.9rem); color: var(--heading); margin: 0.5rem 0 0.8rem; }
+.doc-lede { color: var(--ink-dim); font-size: 0.95rem; max-width: 40em; }
 
 article { padding-top: 1.8rem; max-width: 46rem; }
 
 article h2, article h3, article h4 { scroll-margin-top: 2rem; }
 
 article h2 {
-  font-size: 1.5rem;
+  font-size: 1.2rem;
   color: var(--heading);
   margin: 3rem 0 1rem;
   padding-top: 1.5rem;
@@ -167,7 +167,7 @@ article td {
   padding: 1.6rem 1.8rem;
   transition: border-color 0.2s, background 0.2s;
 }
-.doc-card:hover { border-color: rgba(38, 121, 157, 0.35); background: var(--hover-bg); text-decoration: none; }
-.doc-card h3 { font-size: 1.25rem; font-weight: 400; color: var(--heading); margin-bottom: 0.4rem; font-family: var(--serif); }
+.doc-card:hover { border-color: var(--card-line-hover); background: var(--hover-bg); text-decoration: none; }
+.doc-card h3 { font-size: 1.05rem; font-weight: 600; color: var(--heading); margin-bottom: 0.4rem; }
 .doc-card p { color: var(--ink-dim); font-size: 0.95rem; }
-.doc-card .go { font-family: var(--mono); font-size: 0.72rem; color: var(--cyan-deep); }
+.doc-card .go { font-family: var(--mono); font-size: 0.72rem; color: var(--cyan-bright); }
