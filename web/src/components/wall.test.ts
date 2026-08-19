@@ -7,7 +7,7 @@
 // agent *object* would tear down and re-attach its terminal at the
 // roster's cadence — a wall that quietly reconnects the entire fleet
 // every 700ms while looking perfectly calm.
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import type { Agent } from "../lib/types";
 
@@ -15,10 +15,27 @@ import type { Agent } from "../lib/types";
 // in every test below is not what the cells rendered but how many times
 // they reached for the daemon.
 const lifecycle: string[] = [];
+/** Every attach's contract, recorded so a refactor that drops
+ *  { watching: true } — or starts claiming layout — fails here instead
+ *  of resizing the fleet's shared terminals. */
+const contracts: Array<{ id: string; watching: boolean; laidOut: boolean }> =
+  [];
 
 vi.mock("../lib/terminal", () => ({
-  attach: (_term: unknown, _fit: unknown, id: string) => {
+  attach: (
+    _term: unknown,
+    _fit: unknown,
+    id: string,
+    isLaidOut: () => boolean,
+    _onConnection: unknown,
+    options?: { watching?: boolean },
+  ) => {
     lifecycle.push(`attach:${id}`);
+    contracts.push({
+      id,
+      watching: options?.watching === true,
+      laidOut: isLaidOut(),
+    });
     return {
       fit: () => {},
       close: () => lifecycle.push(`close:${id}`),
@@ -76,19 +93,33 @@ function push(...specs: Array<Partial<Agent> & { id: string }>) {
   flushSync();
 }
 
+/** Mounts still open when a test ends (its assertion threw before it
+ *  could clean up) are closed here — a leaked mount poisons every
+ *  following test's DOM queries, turning one failure into a cascade. */
+const leaked: Array<() => void> = [];
+afterEach(() => {
+  while (leaked.length) leaked.pop()!();
+});
+
 function mountWall(onopen: () => void = () => {}) {
   const target = document.createElement("div");
   document.body.append(target);
   const wall = mount(Wall, { target, props: { onopen } });
   flushSync();
-  return () => {
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
     unmount(wall);
     target.remove();
   };
+  leaked.push(close);
+  return close;
 }
 
 beforeEach(() => {
   lifecycle.length = 0;
+  contracts.length = 0;
   fleet.agents = [];
   fleet.selectedID = "";
   fleet.workspaceID = "";
@@ -155,6 +186,17 @@ describe("the wall against the roster", () => {
 
     expect(fleet.selectedID).toBe("b");
     expect(opened).toBe(1);
+    done();
+  });
+
+  test("every attachment watches, and claims no layout", () => {
+    const done = mountWall();
+    push({ id: "a" }, { id: "b" });
+
+    expect(contracts.length).toBeGreaterThan(0);
+    for (const contract of contracts) {
+      expect(contract).toMatchObject({ watching: true, laidOut: false });
+    }
     done();
   });
 
