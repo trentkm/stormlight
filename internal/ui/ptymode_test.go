@@ -57,6 +57,28 @@ func TestLeftLeavesDockedTerminalForAgentRoster(t *testing.T) {
 	}
 }
 
+func TestLeftLeavesDockedTerminalAtDraftBoundary(t *testing.T) {
+	model := Model{}
+	model.trackTerminalKey(runeKey("draft"))
+
+	for want := 4; want >= 0; want-- {
+		if model.dockedLeftExits() {
+			t.Fatalf("left exits before cursor reaches zero: cursor=%d",
+				model.ptyInput.cursor)
+		}
+		model.trackTerminalKey(tea.KeyPressMsg{Code: tea.KeyLeft})
+		if model.ptyInput.cursor != want {
+			t.Fatalf("tracked cursor = %d, want %d", model.ptyInput.cursor, want)
+		}
+	}
+	if !model.dockedLeftExits() {
+		t.Fatal("left stays in the terminal at the draft's left edge")
+	}
+	if model.ptyInput.length != 5 {
+		t.Fatal("moving focus discarded the tracked draft")
+	}
+}
+
 func TestGridCellMapsDockedAndZoomedOrigins(t *testing.T) {
 	model := Model{width: 121, height: 40, ptyEnabled: true}
 	workspaceWidth, agentWidth, _ := model.paneWidths(120)
