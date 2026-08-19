@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ui } from "../lib/commands.svelte";
   import { fleet, agentsIn, workspaceList } from "../lib/state.svelte";
   import { isUrgent } from "../lib/types";
 
@@ -11,7 +12,12 @@
   };
 </script>
 
-<nav class="rail">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<nav
+  class="rail"
+  class:aimed={ui.column === "workspaces" && ui.view === "roster"}
+  onclickcapture={() => (ui.column = "workspaces")}
+>
   <div class="heading">WORKSPACES</div>
   <button
     class="row"
@@ -44,6 +50,11 @@
 </nav>
 
 <style>
+  /* The column with the keyboard is lit along its inner edge, the way
+     the TUI marks its active pane. */
+  .rail.aimed {
+    border-right-color: var(--ice);
+  }
   .rail {
     width: 220px;
     flex: 0 0 auto;

@@ -14,6 +14,14 @@ import { isUrgent, type Agent } from "./types";
 export const ui = $state({
   /** Which of the three top-level views is showing. */
   view: "roster" as "roster" | "wall" | "canvas",
+  /**
+   * Which column the keyboard is aimed at, the way the TUI's three
+   * panes work: h and l step between them, and j/k act on whichever
+   * one is active — the workspace list, the roster, or the pane beside
+   * it. Without this, h and l had nothing to move and j/k could only
+   * ever mean "next agent".
+   */
+  column: "agents" as "workspaces" | "agents" | "spanreed",
   /** Which tab of the agent pane. */
   pane: "terminal" as "terminal" | "transcript" | "diff",
   /** Walked into the terminal: the agent has the keyboard. */
@@ -83,6 +91,94 @@ export function reconcileFocus(active: Element | null): void {
   else ui.walkedIn = false;
 }
 
+/** The columns, left to right, as the TUI orders its panes. */
+const columns = ["workspaces", "agents", "spanreed"] as const;
+
+/**
+ * h and l step between columns and stop at the ends — the TUI clamps
+ * rather than wrapping, so a person leaning on h lands on the
+ * workspaces and stays there.
+ */
+function stepColumn(by: number): void {
+  // A view without these columns has nothing to step through, and
+  // walking in means the keyboard belongs to the agent anyway.
+  if (ui.view !== "roster") return;
+  const at = columns.indexOf(ui.column);
+  const next = Math.min(columns.length - 1, Math.max(0, at + by));
+  ui.column = columns[next];
+  // Leaving the pane lets go of the terminal; arriving is not the same
+  // as walking in, which is Enter's job.
+  if (ui.column !== "spanreed") ui.walkedIn = false;
+}
+
+/** j and k, meaning whatever the active column says they mean. */
+function stepInColumn(by: number): void {
+  if (ui.view !== "roster") {
+    step(by);
+    return;
+  }
+  switch (ui.column) {
+    case "workspaces":
+      stepWorkspace(by);
+      return;
+    case "spanreed":
+      scrollPane(by);
+      return;
+    default:
+      step(by);
+  }
+}
+
+function toEnd(which: "first" | "last"): void {
+  if (ui.view === "roster" && ui.column === "spanreed") {
+    const scroller = paneScroller();
+    if (scroller) {
+      scroller.scrollTop = which === "first" ? 0 : scroller.scrollHeight;
+    }
+    return;
+  }
+  if (ui.view === "roster" && ui.column === "workspaces") {
+    const list = ["", ...workspaceList().map((workspace) => workspace.id)];
+    selectWorkspace(which === "first" ? list[0] : list[list.length - 1]);
+    return;
+  }
+  const list = visible();
+  if (list.length === 0) return;
+  fleet.selectedID =
+    which === "first" ? list[0].id : list[list.length - 1].id;
+}
+
+/** The workspace rail's own cursor: "" is the All agents row. */
+function stepWorkspace(by: number): void {
+  const ids = ["", ...workspaceList().map((workspace) => workspace.id)];
+  const at = ids.indexOf(fleet.workspaceID);
+  const next = Math.min(ids.length - 1, Math.max(0, (at === -1 ? 0 : at) + by));
+  selectWorkspace(ids[next]);
+}
+
+function selectWorkspace(id: string): void {
+  fleet.workspaceID = id;
+  // The TUI resets the agent cursor when the workspace moves, so the
+  // pane beside the roster never shows an agent from somewhere else.
+  const list = visible();
+  fleet.selectedID = list.length > 0 ? list[0].id : "";
+}
+
+/** Whatever the pane beside the roster is currently scrolling. */
+function paneScroller(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".transcript, .diff");
+}
+
+/**
+ * j/k in the pane scrolls it — the transcript and the diff are ordinary
+ * scrollers. The terminal is not: it has its own scrollback and its own
+ * keys, and reaching into it from here would fight the agent.
+ */
+function scrollPane(by: number): void {
+  const scroller = paneScroller();
+  if (scroller) scroller.scrollBy({ top: by * 80 });
+}
+
 /** The agents the roster is showing, in the order it shows them. */
 function visible(): Agent[] {
   return agentsIn(fleet.workspaceID);
@@ -132,23 +228,19 @@ function stepQueue(by: number): void {
  *  there should surface as a key that does nothing, not a broken page. */
 export function run(id: string, argument?: string): void {
   switch (id) {
-    // Movement
+    // Movement, aimed at whichever column has the keyboard.
     case "down":
-      step(1);
+      stepInColumn(1);
       return;
     case "up":
-      step(-1);
+      stepInColumn(-1);
       return;
-    case "first": {
-      const list = visible();
-      if (list.length > 0) fleet.selectedID = list[0].id;
+    case "first":
+      toEnd("first");
       return;
-    }
-    case "last": {
-      const list = visible();
-      if (list.length > 0) fleet.selectedID = list[list.length - 1].id;
+    case "last":
+      toEnd("last");
       return;
-    }
     case "agents-next":
       step(1);
       return;
@@ -162,16 +254,17 @@ export function run(id: string, argument?: string): void {
       stepQueue(-1);
       return;
     case "pane-left":
-      ui.walkedIn = false;
+      stepColumn(-1);
       return;
     case "pane-right":
-      ui.view = "roster";
+      stepColumn(1);
       return;
 
     // The terminal
     case "walk-in":
       if (fleet.selectedID === "") return;
       ui.view = "roster";
+      ui.column = "spanreed";
       ui.pane = "terminal";
       ui.walkedIn = true;
       return;
@@ -253,16 +346,14 @@ export function run(id: string, argument?: string): void {
       if (argument) {
         fleet.selectedID = argument;
         ui.view = "roster";
+        ui.column = "agents";
       }
       return;
     case "select-workspace":
       if (argument !== undefined) {
-        fleet.workspaceID = argument;
         ui.view = "roster";
-        // A workspace with agents selects its first, so the pane beside
-        // the roster is not left showing an agent from somewhere else.
-        const list = visible();
-        fleet.selectedID = list.length > 0 ? list[0].id : "";
+        ui.column = "agents";
+        selectWorkspace(argument);
       }
       return;
 

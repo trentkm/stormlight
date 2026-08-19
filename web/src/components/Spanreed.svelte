@@ -30,7 +30,12 @@
   }
 </script>
 
-<section class="pane">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<section
+  class="pane"
+  class:aimed={ui.column === "spanreed" && ui.view === "roster"}
+  onclickcapture={() => (ui.column = "spanreed")}
+>
   {#if agent}
     {@const status = statusVisual(agent.activity, agent.attention, agent.process_live)}
     <header>
@@ -114,6 +119,11 @@
 </section>
 
 <style>
+  /* Aimed, not walked in: the keyboard scrolls this pane, but the
+     agent is not listening yet — that is Enter. */
+  .pane.aimed {
+    box-shadow: inset 1px 0 0 var(--ice);
+  }
   .pane {
     flex: 1 1 auto;
     display: flex;

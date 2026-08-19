@@ -129,7 +129,9 @@ beforeEach(() => {
   fleet.agents = [agent("alpha"), agent("beta"), agent("gamma")];
   fleet.selectedID = "alpha";
   fleet.workspaceID = "";
-  fleet.workspaces = [];
+  fleet.workspaces = [
+    { id: "other", kind: "git", name: "other", root: "/o", execution_root: "/o" },
+  ];
   fleet.error = "";
   fleet.lost = "";
   Object.assign(ui, {
@@ -143,6 +145,7 @@ beforeEach(() => {
     confirmDelete: "",
     composing: false,
     pending: "",
+    column: "agents",
   });
 });
 
@@ -218,6 +221,67 @@ describe("the page's keyboard", () => {
     ui.keys = false;
     flushSync();
     expect(ui.pending).toBe("");
+    done();
+  });
+});
+
+/**
+ * h and l shipped bound, listed in `?`, and doing nothing — reported by
+ * the person using it. The unit tests cover the state; these cover the
+ * half that was actually missing, which is that something on screen
+ * moves and the mouse and the keys agree about where the keyboard is.
+ */
+describe("moving between columns", () => {
+  function aimed(): string {
+    if (document.querySelector(".rail.aimed")) return "workspaces";
+    if (document.querySelector(".roster.aimed")) return "agents";
+    if (document.querySelector(".pane.aimed")) return "spanreed";
+    return "none";
+  }
+
+  test("h and l move the mark, and stop at the ends", () => {
+    const done = page();
+    expect(aimed()).toBe("agents");
+
+    press("h");
+    expect(aimed()).toBe("workspaces");
+    press("h");
+    expect(aimed()).toBe("workspaces");
+
+    press("l");
+    expect(aimed()).toBe("agents");
+    press("l");
+    expect(aimed()).toBe("spanreed");
+    press("l");
+    expect(aimed()).toBe("spanreed");
+    done();
+  });
+
+  test("clicking a column aims the keyboard there", () => {
+    const done = page();
+    expect(aimed()).toBe("agents");
+
+    document
+      .querySelector(".rail")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flushSync();
+
+    expect(aimed()).toBe("workspaces");
+    // And j now means the workspace list, not the roster.
+    const before = fleet.workspaceID;
+    press("j");
+    expect(fleet.workspaceID).not.toBe(before);
+    done();
+  });
+
+  test("j in the rail changes workspace; in the roster, the agent", () => {
+    const done = page();
+    press("j");
+    expect(selected()).toBe("beta");
+
+    press("h");
+    press("j");
+    expect(fleet.workspaceID).not.toBe("");
     done();
   });
 });

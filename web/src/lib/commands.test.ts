@@ -68,6 +68,103 @@ beforeEach(() => {
   ui.confirmDelete = "";
   ui.composing = false;
   ui.pending = "";
+  ui.column = "agents";
+});
+
+/**
+ * h and l, which shipped bound, listed in `?`, and doing nothing.
+ *
+ * The test that was meant to catch it asked only whether a command
+ * moved *something*: `pane-left` passed by clearing walkedIn and
+ * `pane-right` by setting a view that was usually already set. So
+ * these name the movement rather than accepting any movement at all.
+ */
+describe("moving between columns", () => {
+  test("l walks right to the end and stops", () => {
+    ui.column = "workspaces";
+    run("pane-right");
+    expect(ui.column).toBe("agents");
+    run("pane-right");
+    expect(ui.column).toBe("spanreed");
+    run("pane-right");
+    expect(ui.column).toBe("spanreed");
+  });
+
+  test("h walks left to the end and stops", () => {
+    ui.column = "spanreed";
+    run("pane-left");
+    expect(ui.column).toBe("agents");
+    run("pane-left");
+    expect(ui.column).toBe("workspaces");
+    run("pane-left");
+    expect(ui.column).toBe("workspaces");
+  });
+
+  test("leaving the pane lets go of the terminal", () => {
+    run("walk-in");
+    expect(ui.walkedIn).toBe(true);
+    expect(ui.column).toBe("spanreed");
+    run("pane-left");
+    expect(ui.walkedIn).toBe(false);
+  });
+
+  test("the wall and the canvas have no columns to walk", () => {
+    ui.view = "wall";
+    ui.column = "agents";
+    run("pane-left");
+    expect(ui.column).toBe("agents");
+  });
+});
+
+describe("j and k mean what the aimed column says", () => {
+  test("in the roster they change the agent", () => {
+    ui.column = "agents";
+    run("down");
+    expect(fleet.selectedID).toBe("b");
+  });
+
+  test("in the rail they change the workspace, and reset the agent", () => {
+    fleet.agents = [
+      agent("here"),
+      agent("far", {
+        workspace: {
+          id: "other",
+          kind: "git",
+          name: "other",
+          root: "/o",
+          execution_root: "/o",
+        },
+      }),
+    ];
+    fleet.workspaces = [
+      { id: "other", kind: "git", name: "other", root: "/o", execution_root: "/o" },
+    ];
+    fleet.workspaceID = "";
+    fleet.selectedID = "here";
+    ui.column = "workspaces";
+
+    run("down");
+
+    expect(fleet.workspaceID).toBe("other");
+    // The pane beside the roster must not be left showing an agent from
+    // the workspace you just left.
+    expect(fleet.selectedID).toBe("far");
+  });
+
+  test("the rail stops at its ends", () => {
+    ui.column = "workspaces";
+    fleet.workspaceID = "";
+    run("up");
+    expect(fleet.workspaceID).toBe("");
+  });
+
+  test("gg and G reach the ends of the aimed column", () => {
+    ui.column = "agents";
+    run("last");
+    expect(fleet.selectedID).toBe("c");
+    run("first");
+    expect(fleet.selectedID).toBe("a");
+  });
 });
 
 describe("moving through the roster", () => {

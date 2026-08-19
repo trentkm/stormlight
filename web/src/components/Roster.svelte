@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ui } from "../lib/commands.svelte";
   import { fleet, agentsIn } from "../lib/state.svelte";
   import { statusVisual } from "../lib/theme";
   import { isUrgent, type Agent } from "../lib/types";
@@ -20,7 +21,12 @@
   };
 </script>
 
-<div class="roster">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="roster"
+  class:aimed={ui.column === "agents" && ui.view === "roster"}
+  onclickcapture={() => (ui.column = "agents")}
+>
   <div class="heading">
     <span>AGENTS</span>
     <span class="tally">{agentsIn(fleet.workspaceID).length}</span>
@@ -53,6 +59,9 @@
 </div>
 
 <style>
+  .roster.aimed {
+    border-right-color: var(--ice);
+  }
   .roster {
     width: 320px;
     flex: 0 0 auto;
