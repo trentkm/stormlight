@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f2f6fa">
 <title>Stormlight</title>
 <meta name="description" content="A control surface for coding agents. Stormlight dispatches Claude, Codex, and custom agent CLIs onto a daemon that owns each agent's PTY and terminal, with a dashboard that runs in yours.">
 <meta property="og:title" content="Stormlight">
@@ -10,27 +11,35 @@
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@300..600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
+<script>
+/* Theme, before first paint: light unless dark was chosen here before. */
+(function () {
+  var theme;
+  try { theme = localStorage.getItem("stormlight-theme"); } catch (e) {}
+  var dark = theme === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  var chrome = document.querySelector('meta[name="theme-color"]');
+  if (chrome) chrome.content = dark ? "#14181d" : "#f2f6fa";
+})();
+</script>
 <style>
 /* ---------- hero ---------- */
 
 .hero { padding-top: 6rem; padding-bottom: 4rem; }
 
 .hero h1 {
-  font-size: clamp(2.6rem, 6.5vw, 4.6rem);
-  line-height: 1.08;
-  max-width: 18em;
-  font-weight: 300;
+  font-size: clamp(1.7rem, 4.2vw, 2.8rem);
+  line-height: 1.2;
+  max-width: 24em;
+  font-weight: 600;
   color: var(--heading);
 }
 
 .hero .sub {
   margin-top: 1.6rem;
-  max-width: 36em;
-  font-size: 1.12rem;
+  max-width: 42em;
+  font-size: 0.95rem;
   color: var(--ink-dim);
 }
 .hero .sub strong { font-weight: 500; color: var(--ink); }
@@ -66,15 +75,15 @@ video.demo { display: block; width: 100%; height: auto; }
 section.wrap { padding-top: 6.5rem; }
 
 .section-head h2 {
-  font-size: clamp(1.9rem, 4vw, 2.7rem);
+  font-size: clamp(1.35rem, 3vw, 1.9rem);
   color: var(--heading);
-  max-width: 20em;
+  max-width: 26em;
 }
 .section-head p.lede {
   margin-top: 1.1rem;
   max-width: 38em;
   color: var(--ink-dim);
-  font-size: 1.08rem;
+  font-size: 0.95rem;
 }
 
 /* principle cards */
@@ -128,9 +137,9 @@ section.wrap { padding-top: 6.5rem; }
   display: block;
   margin-bottom: 0.7rem;
 }
-.signal.working .tag { color: var(--cyan-deep); text-shadow: 0 0 14px rgba(98,174,239,0.5); }
+.signal.working .tag { color: var(--cyan-bright); text-shadow: 0 0 14px var(--glow); }
 .signal.waiting .tag { color: var(--amber); }
-.signal.urgent { border-color: rgba(168, 102, 0, 0.3); }
+.signal.urgent { border-color: var(--amber-line); }
 .signal.urgent .tag { color: var(--amber); font-weight: 600; }
 @media (max-width: 900px) { .signals { grid-template-columns: 1fr; } }
 
@@ -140,7 +149,7 @@ section.wrap { padding-top: 6.5rem; }
   border: 1px solid var(--line);
   border-radius: 12px;
   background:
-    radial-gradient(40rem 20rem at 110% -30%, rgba(98, 174, 239, 0.14), transparent 60%),
+    radial-gradient(40rem 20rem at 110% -30%, var(--glow-soft), transparent 60%),
     var(--bg-raised);
   padding: 3rem;
   display: grid;
@@ -148,20 +157,20 @@ section.wrap { padding-top: 6.5rem; }
   gap: 3rem;
 }
 .engine h3 {
-  font-size: 1.7rem;
+  font-size: 1.25rem;
   color: var(--heading);
   margin-bottom: 1rem;
 }
 .engine p { color: var(--ink-dim); margin-bottom: 1rem; font-size: 1rem; }
 .engine .points { list-style: none; font-size: 0.92rem; color: var(--ink-dim); }
 .engine .points li { padding: 0.55rem 0; border-bottom: 1px solid var(--line-soft); }
-.engine .points li::before { content: "— "; color: var(--cyan-deep); }
+.engine .points li::before { content: "— "; color: var(--cyan-bright); }
 .engine .repo-link { font-family: var(--mono); font-size: 0.8rem; }
 @media (max-width: 900px) { .engine { grid-template-columns: 1fr; padding: 2rem 1.5rem; } }
 
 /* closing */
 .closing { text-align: center; padding-top: 8rem; }
-.closing h2 { font-size: clamp(2rem, 5vw, 3.2rem); color: var(--heading); }
+.closing h2 { font-size: clamp(1.4rem, 3.5vw, 2.1rem); color: var(--heading); }
 .closing .hero-actions { justify-content: center; }
 .closing .docrow {
   margin-top: 2.2rem;
@@ -185,13 +194,14 @@ section.wrap { padding-top: 6.5rem; }
     <a href="#windrunner">windrunner</a>
     <a href="docs/">docs</a>
     <a href="https://github.com/trentkm/stormlight">github</a>
+    <button class="mode" id="mode" type="button">[ dark ]</button>
   </nav>
 </header>
 
 <main>
   <div class="wrap hero">
     <p class="kicker">workspace-native · terminal-native</p>
-    <h1>A control surface for <em class="lit">coding agents</em>.</h1>
+    <h1>A control surface for <em class="lit">coding agents</em>.<span class="cursor" aria-hidden="true"></span></h1>
     <p class="sub">Dispatches <strong>Claude</strong>, <strong>Codex</strong>, and any agent CLI
     onto a daemon that owns each agent's PTY and terminal. The dashboard runs in yours.</p>
     <div class="hero-actions">
@@ -332,5 +342,6 @@ if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
   document.querySelectorAll("video.demo").forEach(v => { v.removeAttribute("autoplay"); v.pause(); });
 }
 </script>
+<script src="assets/theme.js"></script>
 </body>
 </html>

@@ -3,16 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f2f6fa">
 <title>Workspace resolvers · Stormlight</title>
 <meta name="description" content="How Stormlight resolves directories into workspace groups, and the executable resolver protocol.">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="../assets/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@300..600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 <link rel="stylesheet" href="../assets/docs.css">
+<script>
+/* Theme, before first paint: light unless dark was chosen here before. */
+(function () {
+  var theme;
+  try { theme = localStorage.getItem("stormlight-theme"); } catch (e) {}
+  var dark = theme === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  var chrome = document.querySelector('meta[name="theme-color"]');
+  if (chrome) chrome.content = dark ? "#14181d" : "#f2f6fa";
+})();
+</script>
 </head>
 <body>
 <div class="storm"></div>
@@ -25,6 +34,7 @@
     <a href="../#windrunner">windrunner</a>
     <a href="./">docs</a>
     <a href="https://github.com/trentkm/stormlight">github</a>
+    <button class="mode" id="mode" type="button">[ dark ]</button>
   </nav>
 </header>
 
@@ -153,5 +163,6 @@
   </div>
 </footer>
 <script src="../assets/docs.js"></script>
+<script src="../assets/theme.js"></script>
 </body>
 </html>
