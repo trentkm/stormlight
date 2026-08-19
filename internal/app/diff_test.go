@@ -148,11 +148,13 @@ func TestDiffBoundsUntrackedFileCount(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a diff")
 	}
-	if shown := strings.Count(diff, "diff --git"); shown > untrackedLimit {
-		t.Errorf("diffed %d untracked files, past the %d cap", shown, untrackedLimit)
+	if shown := strings.Count(diff, "diff --git"); shown != untrackedLimit {
+		t.Errorf("diffed %d untracked files, want exactly %d", shown, untrackedLimit)
 	}
-	if !strings.Contains(diff, "untracked files not shown") {
-		t.Error("elided files must be counted out loud")
+	// The count itself, not merely the sentence: a notice that says the
+	// wrong number is a notice nobody can act on.
+	if want := fmt.Sprintf("… +%d untracked files not shown", 25); !strings.Contains(diff, want) {
+		t.Errorf("missing %q:\n%s", want, diff[max(0, len(diff)-300):])
 	}
 }
 
@@ -263,5 +265,32 @@ func TestDiffDoesNotBufferWhatItWillNotShow(t *testing.T) {
 	if allocated > 10*diffLimit {
 		t.Errorf("diffing allocated %dMB for a %dMB answer — the read is not bounded",
 			allocated>>20, diffLimit>>20)
+	}
+}
+
+// A file big enough to fill the cap elides everything behind it just as
+// surely as the count running out does, and has to say so.
+func TestDiffCountsFilesLostToTheByteCap(t *testing.T) {
+	dir := repoWithCommit(t)
+	// Named so ls-files lists it first, with the rest behind it.
+	huge := bytes.Repeat([]byte("a line of perfectly ordinary text\n"), 100_000)
+	if err := os.WriteFile(filepath.Join(dir, "aaa-huge.txt"), huge, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("zzz-%d.txt", i))
+		if err := os.WriteFile(name, []byte("small\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := diffService(t, agent.Agent{ID: "a1", Cwd: dir})
+	diff, ok := service.Diff(context.Background(), "a1")
+	if !ok {
+		t.Fatal("expected a diff")
+	}
+	if want := "… +3 untracked files not shown"; !strings.Contains(diff, want) {
+		t.Errorf("missing %q — files behind the cap vanished silently:\n%s",
+			want, diff[max(0, len(diff)-300):])
 	}
 }

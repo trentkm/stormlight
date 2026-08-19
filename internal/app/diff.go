@@ -123,6 +123,9 @@ func appendUntracked(ctx context.Context, dir string, out *bytes.Buffer) {
 		if path == "" {
 			continue
 		}
+		// ctx.Err is an early exit rather than a bound: a dead context
+		// makes each remaining git fail immediately anyway, so this
+		// saves spawns rather than preventing an overrun.
 		if ctx.Err() != nil || out.Len() >= diffLimit || shown >= untrackedLimit {
 			skipped += len(paths) - index
 			break
@@ -146,6 +149,9 @@ func appendUntracked(ctx context.Context, dir string, out *bytes.Buffer) {
 		out.Write(body)
 		shown++
 		if truncated {
+			// This file filled the cap; the ones behind it are elided
+			// as surely as if the count had run out.
+			skipped += len(paths) - index - 1
 			break
 		}
 	}

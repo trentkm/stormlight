@@ -9,19 +9,26 @@ type View = { diff: string; ok: boolean };
 
 const responses: View[] = [];
 const gates: Array<Promise<void>> = [];
+const asked: string[] = [];
 let calls = 0;
 
 vi.mock("../lib/api", () => ({
   api: {
-    diff: async () => {
+    diff: async (id: string) => {
       calls++;
+      asked.push(id);
+      // Claim the answer before waiting: a gated call that shifted
+      // afterwards would hand its answer to whoever overtook it, and
+      // the test would be measuring the fake rather than the pane.
+      const answer = responses.length > 1 ? responses.shift()! : responses[0];
       if (gates.length > 0) await gates.shift();
-      return responses.length > 1 ? responses.shift()! : responses[0];
+      return answer;
     },
   },
 }));
 
 import Diff from "./Diff.svelte";
+import { reactive } from "./testing.svelte";
 
 const leaked: Array<() => void> = [];
 afterEach(() => {
@@ -29,10 +36,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function mountPane() {
+function mountPane(props: { id: string } = reactive({ id: "a1" })) {
   const target = document.createElement("div");
   document.body.append(target);
-  const pane = mount(Diff, { target, props: { id: "a1" } });
+  const pane = mount(Diff, { target, props });
   flushSync();
   let closed = false;
   const close = () => {
@@ -59,6 +66,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   responses.length = 0;
   gates.length = 0;
+  asked.length = 0;
   calls = 0;
 });
 
@@ -161,19 +169,37 @@ describe("the diff pane", () => {
     done();
   });
 
-  test("an answer arriving after unmount touches nothing", async () => {
+  // An answer for the agent you were looking at must not paint over
+  // the agent you are looking at now. Unmounting cannot show this —
+  // the DOM is gone either way — so the switch happens by prop, which
+  // is the same in-flight closure being abandoned.
+  test("a stale answer never paints over the current agent", async () => {
     let release!: () => void;
     gates.push(new Promise<void>((resolve) => (release = resolve)));
-    responses.push({ diff: sample + "\n", ok: true });
-    const done = mountPane();
+    responses.push(
+      { diff: sample + "\n", ok: true },
+      { diff: "diff --git a/second.go b/second.go\n", ok: true },
+    );
+    const props = reactive({ id: "first" });
+    const done = mountPane(props);
     await settle();
 
-    // The pane closes while its first fetch is still in flight.
-    done();
+    // Switch agents while the first answer is still in flight, let the
+    // second land, then release the stale one.
+    props.id = "second";
+    flushSync();
+    await settle();
     release();
     await settle();
 
-    expect(document.querySelector(".diff")).toBeNull();
+    const rendered = [...document.querySelectorAll(".diff pre span")]
+      .map((span) => span.textContent)
+      .join("\n");
+    expect(rendered).toContain("second.go");
+    expect(rendered).not.toContain("q.sql");
+    expect(rendered).not.toContain("f.go");
+    expect(asked).toEqual(["first", "second"]);
+    done();
   });
 
   test("a fetch that outlives the interval never stacks", async () => {
