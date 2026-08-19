@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -195,4 +196,123 @@ func readFull(conn net.Conn, buffer []byte) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// TestTheProvidersArgvIsNeverShellText: the launch goes through a shell
+// this machine did not choose, and a task is arbitrary text someone
+// typed. The two never meet — the argv travels as an environment value,
+// which no shell parses — and this is the round trip that says so.
+func TestTheProvidersArgvIsNeverShellText(t *testing.T) {
+	argv := []string{
+		"codex",
+		"a task with spaces",
+		`it's got a quote`,
+		`"double" and $HOME and ${BRACED}`,
+		"semi; colon && amp | pipe",
+		"back`tick` and $(command sub)",
+		`back\slash`,
+		"star * and glob ?",
+		"new\nline",
+		"", // an empty argument is still an argument
+	}
+	entry, err := ExecEnvFor(argv)
+	if err != nil {
+		t.Fatalf("ExecEnvFor: %v", err)
+	}
+	name, value, ok := strings.Cut(entry, "=")
+	if !ok || name != ExecEnv {
+		t.Fatalf("ExecEnvFor should produce a %s entry: %q", ExecEnv, entry)
+	}
+	// An environment value cannot carry a NUL, and nothing else needs
+	// escaping on the way — but a newline inside one would end the
+	// wrong thing if this were ever a line-based format.
+	if strings.ContainsRune(value, 0) {
+		t.Fatal("an environment value cannot contain NUL")
+	}
+	back, err := ExecArgv(value)
+	if err != nil {
+		t.Fatalf("ExecArgv: %v", err)
+	}
+	if !slices.Equal(back, argv) {
+		t.Fatalf("argv did not survive the round trip:\n got %q\nwant %q", back, argv)
+	}
+}
+
+// TestNothingToRunIsAnError: an empty or malformed handoff must not be
+// read as "run something plausible".
+func TestNothingToRunIsAnError(t *testing.T) {
+	for _, value := range []string{"", "[]", "not json", "{}", `"a string"`} {
+		if _, err := ExecArgv(value); err == nil {
+			t.Fatalf("ExecArgv(%q) should have failed", value)
+		}
+	}
+}
+
+// TestTheExecPreludeIsShellAgnostic: the prelude is POSIX and runs under
+// /bin/sh, but the one line it asks another shell to run is text that
+// sh, bash, zsh, ksh, and fish all read the same way. Anything more
+// expressive would work on the author's machine and not on a host whose
+// login shell is fish.
+func TestTheExecPreludeIsShellAgnostic(t *testing.T) {
+	handoff := ""
+	for _, line := range strings.Split(ExecPrelude, "\n") {
+		if strings.HasPrefix(line, "exec \"$shell\" -lc ") {
+			handoff = strings.TrimPrefix(line, "exec \"$shell\" -lc ")
+		}
+	}
+	if handoff == "" {
+		t.Fatalf("the prelude should hand off to the host's shell:\n%s", ExecPrelude)
+	}
+	// Only "$VAR" and plain words: no command substitution, no
+	// arithmetic, no arrays, no $0/$@ — the places the shells differ.
+	for _, forbidden := range []string{"$(", "`", "${", "$@", "$*", "$0", "[[", "=("} {
+		if strings.Contains(handoff, forbidden) {
+			t.Fatalf("the handoff uses %q, which is not the same in every shell: %s",
+				forbidden, handoff)
+		}
+	}
+	// And the argv is not in it, which is the point.
+	if strings.Contains(ExecPrelude, ExecEnv) {
+		t.Fatalf("the argv must not be shell text:\n%s", ExecPrelude)
+	}
+}
+
+// TestAConfiguredShellReachesTheScripts: the host's setting has to arrive
+// as an assignment the script can read, quoted, because it is a path
+// someone typed.
+func TestAConfiguredShellReachesTheScripts(t *testing.T) {
+	plain := Host{Name: "h"}
+	if got := plain.shellAssignment(); got != "" {
+		t.Fatalf("an unconfigured host should say nothing about a shell: %q", got)
+	}
+	if got := plain.shellDescription(""); got != "its login shell" {
+		t.Fatalf("shellDescription = %q", got)
+	}
+	// When the host said which shell it asked, the message names it
+	// rather than describing it.
+	if got := plain.shellDescription("/bin/zsh"); got != "/bin/zsh" {
+		t.Fatalf("shellDescription = %q", got)
+	}
+	if !strings.Contains(plain.shellHint(), "[hosts.h]") {
+		t.Fatalf("an unconfigured host should be told the setting exists: %q", plain.shellHint())
+	}
+	configured := Host{Name: "h", Shell: "/home/linuxbrew/.linuxbrew/bin/fish"}
+	want := ShellEnv + "='/home/linuxbrew/.linuxbrew/bin/fish'\n"
+	if got := configured.shellAssignment(); got != want {
+		t.Fatalf("shellAssignment = %q, want %q", got, want)
+	}
+	// A configured shell wins over whatever the host reported, and needs
+	// no hint: it has been told, so the answer is that the provider
+	// really is not on that shell's PATH.
+	if got := configured.shellDescription("/bin/zsh"); got != configured.Shell {
+		t.Fatalf("shellDescription = %q", got)
+	}
+	if got := configured.shellHint(); got != "" {
+		t.Fatalf("a configured host needs no hint: %q", got)
+	}
+	// A path with a quote in it is a path, not an injection.
+	odd := Host{Name: "h", Shell: `/opt/it's here/fish`}
+	if !strings.Contains(odd.shellAssignment(), `'\''`) {
+		t.Fatalf("a quote in the path should be quoted: %q", odd.shellAssignment())
+	}
 }

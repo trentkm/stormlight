@@ -117,9 +117,57 @@ provider = "claude"
 #                                       # non-interactive SSH shell often
 #                                       # has no ~/.local/bin
 # options      = ["-p", "2222"]    # extra ssh flags, before the destination
+# shell        = "/opt/homebrew/bin/fish"  # the shell whose environment
+#                                          # providers are found and run in;
+#                                          # defaults to the account's $SHELL
 # no_multiplex = false             # sharing is on: a dashboard opens
 #                                  # several connections per host
 ```
+
+### The host's execution shell
+
+`shell` is the one setting about a host that is not about reaching it. It
+names the login shell that defines what "installed" means there.
+
+The default is the account's own `$SHELL`, which is right whenever the shell
+someone works in is the shell their account records. It stops being right the
+moment those differ — an account whose `$SHELL` is `/bin/zsh` belonging to
+someone who has configured fish, whose `PATH` is the only one that finds
+`codex`. Nothing about the machine reveals which shell was meant, so the
+setting says it outright; Stormlight does not scan for installed shells and
+guess.
+
+The path must be absolute. The reason is the same one that makes the setting
+necessary: the `PATH` a non-interactive SSH session gets is exactly the `PATH`
+that will not find the shell by name.
+
+The shell is used for both halves of running a provider, because using it for
+only one is worse than using it for neither:
+
+- **Discovery.** "Is `codex` installed on this host" is asked of that shell,
+  so a provider present only on its `PATH` is found.
+- **Launch.** The provider is executed *through* that shell, so it inherits
+  the environment as well as the path. A provider found on a login shell's
+  `PATH` is regularly a shim — mise, asdf, a Homebrew wrapper — that needs
+  the rest of that shell's environment to work at all. Resolving it to an
+  absolute path and then running it under the daemon's bare environment
+  finds the right file and still fails.
+
+The launch is three `exec` calls and no wrapper process: the daemon starts
+`/bin/sh` with a fixed script, that script execs the host's shell, that shell
+execs `stormlight _exec`, and that becomes the provider. What the daemon
+supervises is the provider itself, so signals, exit status, and lifetime are
+untouched by the route taken to start it.
+
+The provider's argv never appears in shell text. It travels in an environment
+variable as JSON and is decoded on the far side, because task text and custom
+provider arguments are arbitrary input and the shell that would parse them is
+one this machine does not choose. The only shell syntax involved is a fixed
+string that `sh`, `bash`, `zsh`, `ksh`, and `fish` all read identically.
+
+A configured shell that is missing or not executable is reported as that —
+naming the setting and the host — rather than as every provider on the host
+having gone missing, which is what the symptom otherwise looks like.
 
 ## Wiring
 

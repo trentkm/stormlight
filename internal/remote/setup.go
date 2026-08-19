@@ -54,9 +54,10 @@ func (r Report) Ready() bool { return r.Stormlight.Present() }
 // is often the bare system one, so a login shell is the difference
 // between "not installed" and "not on this particular PATH".
 const probeScript = `
+shell=${STORMLIGHT_SHELL:-$SHELL}
 look() {
   command -v "$1" 2>/dev/null && return 0
-  [ -n "$SHELL" ] && "$SHELL" -lc "command -v $1" 2>/dev/null && return 0
+  [ -n "$shell" ] && "$shell" -lc "command -v $1" 2>/dev/null && return 0
   return 1
 }
 # A file that will not start is not an installed program. A binary built
@@ -104,7 +105,7 @@ func Probe(ctx context.Context, transport *Transport) (Report, error) {
 	// The configured binary travels as an environment variable rather
 	// than spliced into the script: it is a path someone typed, and a
 	// script is not the place to find out it had a quote in it.
-	script := probeScript
+	script := transport.Host().shellAssignment() + probeScript
 	if bin := transport.Host().Bin; bin != "" {
 		script = "STORMLIGHT_CONFIGURED_BIN=" +
 			shellQuote([]string{bin}) + "\n" + script
@@ -353,27 +354,50 @@ func localPlatform() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// LookPath finds a program on the host, the way a person would.
+// LookPath asks a host whether it has a program, in the environment that
+// would run it.
 //
 // A command run over ssh gets a non-interactive shell whose PATH is
-// often the bare system one, so the login shell is asked too — the
-// difference between finding a provider a machine plainly has and
-// reporting it absent. The binary is started once, because a name that
-// resolves to something that cannot run is not an answer.
+// often the bare system one, so what is asked is the host's login shell
+// — the configured one, or the account's own. That is the difference
+// between finding a provider a machine plainly has and reporting it
+// absent.
+//
+// This is a check, not a resolution: what the dispatch does with the
+// answer is report it. The path that actually runs is resolved on the
+// far side at launch, in that same shell, because that is the only
+// place the environment is real.
 func LookPath(ctx context.Context, transport *Transport, program string) (string, error) {
 	if strings.TrimSpace(program) == "" {
 		return "", fmt.Errorf("no program to look for")
 	}
-	host := transport.Host().Name
+	host := transport.Host()
 	// Ends with a plain exit 0: not finding the program is an answer,
 	// not a failure of the asking, and a script whose last command is a
 	// test would exit non-zero and be read as one.
-	script := "program=" + shellQuote([]string{program}) + `
-found=$(command -v "$program" 2>/dev/null)
-if [ -z "$found" ] && [ -n "$SHELL" ]; then
-  found=$("$SHELL" -lc "command -v $program" 2>/dev/null)
+	script := host.shellAssignment() +
+		"program=" + shellQuote([]string{program}) + `
+shell=${STORMLIGHT_SHELL:-$SHELL}
+if [ -n "$STORMLIGHT_SHELL" ] && [ ! -x "$STORMLIGHT_SHELL" ]; then
+  printf 'noshell=%s\n' "$STORMLIGHT_SHELL"
+  exit 0
 fi
-if [ -n "$found" ]; then printf '%s\n' "$found"; fi
+# The shell first, and not merely as a fallback. It is the environment
+# the provider will be launched in, so its answer is the true one — and
+# on a host where the bare SSH PATH holds a different build of the same
+# name, asking that one first is how the check passes and the launch
+# runs something else.
+found=""
+if [ -n "$shell" ]; then
+  found=$("$shell" -lc "command -v $program" 2>/dev/null)
+fi
+if [ -z "$found" ]; then
+  found=$(command -v "$program" 2>/dev/null)
+fi
+if [ -n "$found" ]; then printf 'found=%s\n' "$found"; fi
+# Named in the failure, so that "not installed" can point at the shell
+# that was asked rather than leaving that to be guessed at.
+printf 'asked=%s\n' "$shell"
 exit 0
 `
 	command := transport.ShellCommand(ctx, script)
@@ -385,15 +409,27 @@ exit 0
 			return "", ctx.Err()
 		}
 		if message := strings.TrimSpace(stderr.String()); message != "" {
-			return "", errors.New(Explain(host, message))
+			return "", errors.New(Explain(host.Name, message))
 		}
-		return "", fmt.Errorf("%s: %w", host, err)
+		return "", fmt.Errorf("%s: %w", host.Name, err)
 	}
-	found := strings.TrimSpace(stdout.String())
-	if found == "" {
+	answers := map[string]string{}
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			answers[key] = value
+		}
+	}
+	// A configured shell that is not there is its own failure, and one
+	// worth naming: every provider on the host would otherwise be
+	// reported missing, which points at the wrong thing entirely.
+	if bad, ok := answers["noshell"]; ok {
 		return "", fmt.Errorf(
-			"%s is not installed on %s, or not on the PATH its login shell sets",
-			program, host)
+			"%s: shell = %q in [hosts.%s] is not an executable file there",
+			host.Name, bad, host.Name)
 	}
-	return found, nil
+	if found := answers["found"]; found != "" {
+		return found, nil
+	}
+	return "", fmt.Errorf("%s is not installed on %s, or not on the PATH %s sets.%s",
+		program, host.Name, host.shellDescription(answers["asked"]), host.shellHint())
 }

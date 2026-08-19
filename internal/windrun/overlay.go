@@ -10,6 +10,7 @@ import (
 	"github.com/trentkm/windrunner/client"
 	"github.com/trentkm/windrunner/wire"
 
+	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/session"
 )
 
@@ -68,6 +69,13 @@ func (r *Runtime) StartOverlay(ctx context.Context, request session.OverlayReque
 	// its answer there. WINDRUNNER_SESSION names the session; this says
 	// which daemon to say it to.
 	spawn.EnvOverride = []string{"WINDRUNNER_DIR=" + socketDir}
+	// An overlay looks for its tools on the same host the providers run
+	// on, so it is told the same shell to look with.
+	if r.transport != nil {
+		if shell := r.transport.Host().Shell; shell != "" {
+			spawn.EnvOverride = append(spawn.EnvOverride, remote.ShellEnv+"="+shell)
+		}
+	}
 	info, err := r.client.Spawn(spawn)
 	if err != nil {
 		return nil, fmt.Errorf("spawn overlay %s: %w", command, err)

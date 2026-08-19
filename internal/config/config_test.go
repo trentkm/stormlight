@@ -243,3 +243,41 @@ func TestAnUnusableHostNameIsRefused(t *testing.T) {
 		t.Fatalf("an unusable host must not be configured: %+v", cfg.Hosts)
 	}
 }
+
+// TestAHostsShellMustBeAbsolute: the setting exists because the PATH a
+// non-interactive SSH session gets does not find the shell by name, so a
+// bare name is the one thing it cannot be.
+func TestAHostsShellMustBeAbsolute(t *testing.T) {
+	path := writeConfig(t, `
+[hosts.good]
+shell = "/home/linuxbrew/.linuxbrew/bin/fish"
+
+[hosts.bare]
+shell = "fish"
+`)
+	cfg, warnings, err := loadFrom(path)
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if got := cfg.Hosts["good"].Shell; got != "/home/linuxbrew/.linuxbrew/bin/fish" {
+		t.Fatalf("an absolute shell should be kept: %q", got)
+	}
+	if got := cfg.Hosts["bare"].Shell; got != "" {
+		t.Fatalf("a bare shell name should be dropped: %q", got)
+	}
+	// Dropped silently would leave the host quietly using the wrong
+	// shell, which is the failure this setting was added to end.
+	said := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "hosts.bare.shell") {
+			said = true
+		}
+	}
+	if !said {
+		t.Fatalf("dropping it should say so: %q", warnings)
+	}
+	// And the host itself survives: only the unusable setting goes.
+	if _, ok := cfg.Hosts["bare"]; !ok {
+		t.Fatal("a bad shell should not remove the host")
+	}
+}

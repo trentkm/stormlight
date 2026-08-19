@@ -41,6 +41,10 @@ type Host struct {
 	Bin string
 	// Options are extra ssh flags, spliced in ahead of the destination.
 	Options []string
+	// Shell is the login shell that defines this host's execution
+	// environment, absolute. Empty means the account's own $SHELL,
+	// resolved on the far side because that is where it is known.
+	Shell string
 	// SSHProgram is the client to run, for a host reached through a
 	// wrapper rather than the ssh on PATH.
 	SSHProgram string
@@ -70,6 +74,88 @@ func (h Host) bin() string {
 		return h.Bin
 	}
 	return defaultBin
+}
+
+// Env names the environment the far side reads. These are set on the
+// agent's process by the daemon there, so they are the one channel that
+// no shell parses: a value goes in as bytes and comes out as bytes,
+// whatever quoting rules the login shell has.
+const (
+	// ShellEnv names the login shell to run providers under, when a host
+	// has been configured with one.
+	ShellEnv = "STORMLIGHT_SHELL"
+	// ExecEnv carries the provider's argv, JSON-encoded, for `stormlight
+	// _exec` to decode and become.
+	ExecEnv = "STORMLIGHT_EXEC"
+)
+
+// ExecPrelude is what the daemon on a host actually spawns, with the
+// provider's argv waiting in ExecEnv.
+//
+// It is a POSIX script run by /bin/sh — the one shell every host has and
+// the only one whose syntax may be assumed — and its whole job is to
+// hand off to the shell that owns the host's environment. That shell
+// then execs Stormlight, which execs the provider. Three execs, one
+// process: what the daemon supervises is the provider itself, so signals,
+// exit status, and lifetime are unchanged by the detour.
+//
+// Nothing here is interpolated. The provider's argv never appears in
+// shell text at all — it travels in ExecEnv — because task text and
+// custom provider arguments are arbitrary input, and the shell that
+// would parse them is one this machine does not choose. The only
+// variable syntax used, "$VAR", means the same thing in sh, bash, zsh,
+// ksh, and fish alike.
+const ExecPrelude = `shell=${` + ShellEnv + `:-$SHELL}
+[ -n "$shell" ] || shell=/bin/sh
+if [ ! -x "$shell" ]; then
+  echo "stormlight: $shell is not an executable shell on $(hostname 2>/dev/null)" >&2
+  exit 127
+fi
+exec "$shell" -lc 'exec "$STORMLIGHT_BIN" _exec'
+`
+
+// shellAssignment prefixes a script with the shell this host runs things
+// under, for the scripts that ask questions about the host.
+//
+// It is an assignment rather than a substituted value because the
+// fallback is only knowable on the far side: $SHELL is that machine's
+// answer, and asking for it first would be a round trip to learn
+// something the script is about to be told anyway.
+func (h Host) shellAssignment() string {
+	if h.Shell == "" {
+		return ""
+	}
+	return ShellEnv + "=" + shellQuote([]string{h.Shell}) + "\n"
+}
+
+// shellHint is the sentence that turns "not installed" into something to
+// do about it.
+//
+// It is for the case that produced this setting: a provider that is
+// plainly there, on a host whose account shell is not the shell its
+// owner works in. Nothing about the machine reveals that, so the message
+// says the setting exists and lets the person say which. A host already
+// configured with a shell needs no hint — it has been told, and the
+// answer is that the provider really is not on that shell's PATH.
+func (h Host) shellHint() string {
+	if h.Shell != "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"\nIf providers live on another shell's PATH there, name it: "+
+			"shell = \"/path/to/shell\" under [hosts.%s]", h.Name)
+}
+
+// shellDescription names the shell in a sentence about it: the
+// configured one, or the account's own as the host reported it.
+func (h Host) shellDescription(asked string) string {
+	if h.Shell != "" {
+		return h.Shell
+	}
+	if asked != "" {
+		return asked
+	}
+	return "its login shell"
 }
 
 // Transport dials one host's daemon. It is the thing a windrunner client

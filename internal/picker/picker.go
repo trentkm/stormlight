@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/trentkm/stormlight/internal/remote"
 )
 
 // Choose runs the chooser over the caller's own terminal and reports the
@@ -91,7 +93,13 @@ func findYazi() (string, error) {
 			return beside, nil
 		}
 	}
-	shell := os.Getenv("SHELL")
+	// The configured shell first: on a host whose account shell and
+	// working shell differ, the account's answer is the wrong one, and
+	// this is the same question dispatch asks.
+	shell := os.Getenv(remote.ShellEnv)
+	if shell == "" {
+		shell = os.Getenv("SHELL")
+	}
 	if shell == "" {
 		shell = "/bin/sh"
 	}

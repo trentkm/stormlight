@@ -33,6 +33,16 @@ const (
 // its stdio onto the socket; here the daemon is already running and the
 // splice is the part under test.
 func TestMain(m *testing.M) {
+	// The far side's Stormlight, as the launch prelude invokes it: the
+	// login shell execs `$STORMLIGHT_BIN _exec`, and on this harness
+	// that binary is this one.
+	if len(os.Args) > 1 && os.Args[1] == "_exec" {
+		if err := remote.Exec(); err != nil {
+			fmt.Fprintln(os.Stderr, "exec:", err)
+			os.Exit(127)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv(helperSentinel) != "" {
 		hello := remote.Hello{
 			Protocol:  remote.Protocol,
@@ -48,6 +58,18 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// testBinary is this test binary, which the harness casts as the remote
+// host's Stormlight: the bridge reports it as $STORMLIGHT_BIN, and the
+// launch prelude runs it as `_exec`.
+func testBinary(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("executable: %v", err)
+	}
+	return self
 }
 
 // remoteRuntime stands a daemon up, points a fake ssh at this binary's
@@ -88,7 +110,7 @@ func remoteRuntime(t *testing.T) *Runtime {
 for last; do :; done
 if [ "$last" = "-s" ]; then exec /bin/sh -s; fi
 %s=1 %s=%q %s=%q exec %q -test.run=TestMainBridgeHelperNeverRuns
-`, helperSentinel, helperEnv, socket, helperBinEnv, "/remote/bin/stormlight", self)
+`, helperSentinel, helperEnv, socket, helperBinEnv, self, self)
 	if err := os.WriteFile(fakeSSH, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake ssh: %v", err)
 	}
@@ -98,6 +120,60 @@ if [ "$last" = "-s" ]; then exec /bin/sh -s; fi
 		t.Fatalf("NewRemoteRuntime: %v", err)
 	}
 	return runtime
+}
+
+// withShell re-points a runtime's host at a configured login shell,
+// which is the one thing about a host that changes how its providers are
+// found and run.
+func withShell(t *testing.T, runtime *Runtime, shell string) *Runtime {
+	t.Helper()
+	host := runtime.transport.Host()
+	host.Shell = shell
+	replaced, err := NewRemoteRuntime(host)
+	if err != nil {
+		t.Fatalf("NewRemoteRuntime: %v", err)
+	}
+	return replaced
+}
+
+// fakeLoginShell stands in for the shell a host is configured with — a
+// fish, a Homebrew zsh, whatever the person there actually works in. It
+// does what such a shell does that matters here: it answers to -lc, and
+// it brings an environment of its own that the daemon did not have.
+func fakeLoginShell(t *testing.T, providerDir string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "loginsh")
+	script := "#!/bin/sh\n" +
+		"PATH=" + providerDir + ":$PATH\n" +
+		"LOGIN_SHELL_ENV=only-this-shell-has-it\n" +
+		"export PATH LOGIN_SHELL_ENV\n" +
+		// -lc <command>: the one calling convention every shell shares.
+		"exec /bin/sh -c \"$2\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// providerOnly writes a provider that exists nowhere but the directory
+// returned, so that finding it proves which PATH was searched.
+func providerOnly(t *testing.T, name, body string) (dir, path string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "prov")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path = filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, path
 }
 
 // TestRemoteDispatchTellsTheAgentAboutItsOwnMachine is the whole point of
@@ -132,15 +208,19 @@ func TestRemoteDispatchTellsTheAgentAboutItsOwnMachine(t *testing.T) {
 	}
 
 	screen := waitForScreen(t, runtime, dispatched.ID, "end")
+	// The terminal is 80 columns and these values are longer, so what it
+	// printed is wrapped: the comparison is against the text, not the
+	// layout.
+	unwrapped := strings.NewReplacer("\r", "", "\n", "").Replace(screen)
 	for _, want := range []string{
 		"id=" + dispatched.ID,
 		// The bridge's answers, not this machine's.
-		"bin=/remote/bin/stormlight",
+		"bin=" + testBinary(t),
 		"dir=" + helperSocketDir,
 		// The daemon's own environment came through underneath.
 		"marker=from-the-far-side",
 	} {
-		if !strings.Contains(screen, want) {
+		if !strings.Contains(unwrapped, want) {
 			t.Fatalf("agent environment missing %q:\n%s", want, screen)
 		}
 	}
@@ -372,7 +452,10 @@ func TestTheProviderIsResolvedOnTheMachineThatRunsIt(t *testing.T) {
 
 	// A provider that exists on the far side under a path this machine
 	// has never had, dispatched with a local path that is nonsense there.
-	remoteOnly := filepath.Join(t.TempDir(), "codex")
+	// The name is its own: a provider anyone might actually have
+	// installed would make this pass or fail on the developer's machine
+	// rather than on the code.
+	remoteOnly := filepath.Join(t.TempDir(), "codex-under-test")
 	if err := os.WriteFile(remoteOnly, []byte(
 		"#!/bin/sh\nprintf 'ran %s\\nend\\n' \"$0\"; sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -383,8 +466,8 @@ func TestTheProviderIsResolvedOnTheMachineThatRunsIt(t *testing.T) {
 		Provider: agent.Provider("codex"),
 		Cwd:      t.TempDir(),
 		Launch: session.Launch{
-			Path:    "/Users/someone/.toolbox/bin/codex",
-			Program: "codex",
+			Path:    "/Users/someone/.toolbox/bin/codex-under-test",
+			Program: "codex-under-test",
 		},
 	})
 	if err != nil {
@@ -432,10 +515,162 @@ func TestAProviderMissingThereSaysSo(t *testing.T) {
 // the machine the dashboard is on, where the path was already right.
 func TestLocalDispatchStillUsesTheResolvedPath(t *testing.T) {
 	local := &Runtime{}
-	path, err := local.providerPath(context.Background(), session.Launch{
-		Path: "/usr/local/bin/codex", Program: "codex",
+	command, args, err := local.launchCommand(context.Background(), session.Launch{
+		Path: "/usr/local/bin/codex", Program: "codex", Args: []string{"--go"},
 	})
-	if err != nil || path != "/usr/local/bin/codex" {
-		t.Fatalf("providerPath = %q, %v", path, err)
+	if err != nil || command != "/usr/local/bin/codex" {
+		t.Fatalf("launchCommand = %q, %v", command, err)
+	}
+	// No shell in the middle either: the dashboard's own machine is
+	// already the environment the provider wants.
+	if len(args) != 1 || args[0] != "--go" {
+		t.Fatalf("local args should be the provider's own: %q", args)
+	}
+}
+
+// TestAConfiguredShellFindsAndRunsTheProvider is the whole of #185 in
+// one test.
+//
+// The host's account shell knows nothing about the provider; the shell
+// the person there actually works in has it on PATH. Both halves have to
+// follow from naming that shell: it is what the lookup asks, so the
+// provider is found, and it is what the launch goes through, so the
+// provider runs with that shell's environment rather than the daemon's.
+func TestAConfiguredShellFindsAndRunsTheProvider(t *testing.T) {
+	dir, _ := providerOnly(t, "codex", "#!/bin/sh\n"+
+		`printf 'env=%s\nend\n' "$LOGIN_SHELL_ENV"; sleep 60`+"\n")
+	runtime := withShell(t, remoteRuntime(t), fakeLoginShell(t, dir))
+
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("codex"),
+		Cwd:      t.TempDir(),
+		// A path from the dashboard's own machine, which is what the
+		// dashboard has and what the host has never had.
+		Launch: session.Launch{Path: "/Users/someone/.toolbox/bin/codex", Program: "codex"},
+	})
+	if err != nil {
+		t.Fatalf("a provider on the configured shell's PATH must dispatch: %v", err)
+	}
+	screen := waitForScreen(t, runtime, dispatched.ID, "end")
+	// Resolving it was never the whole job: a provider found on a login
+	// shell's PATH is regularly a shim that needs the rest of that
+	// shell's environment to work.
+	if !strings.Contains(screen, "env=only-this-shell-has-it") {
+		t.Fatalf("the provider should have the configured shell's environment:\n%s", screen)
+	}
+}
+
+// TestProviderArgumentsAreNotShellText: the launch goes through a shell,
+// and a task is arbitrary text someone typed. If the two ever meet, a
+// quote in a task becomes syntax on a machine whose shell this one does
+// not choose. They must not meet.
+func TestProviderArgumentsAreNotShellText(t *testing.T) {
+	// Echoes each argument on its own line, bracketed, so that a lost
+	// one, a split one, and a mangled one all look different.
+	dir, _ := providerOnly(t, "codex", "#!/bin/sh\n"+
+		`for a in "$@"; do printf '[%s]\n' "$a"; done; printf 'end\n'; sleep 60`+"\n")
+	runtime := withShell(t, remoteRuntime(t), fakeLoginShell(t, dir))
+
+	hostile := []string{
+		"a task with spaces",
+		`it's got a quote`,
+		`"double" and $HOME and ${BRACED}`,
+		"semi; colon && amp | pipe",
+		"back`tick` and $(command sub)",
+		`back\slash`,
+		"star * and glob ?",
+		"new\nline",
+	}
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("codex"),
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Program: "codex", Args: hostile},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	screen := waitForScreen(t, runtime, dispatched.ID, "end")
+	// The terminal wraps at 80 columns, and a newline inside an argument
+	// is a real line break in the output — so the comparison is against
+	// the run of characters, not the lines.
+	flat := strings.NewReplacer("\r", "", "\n", "").Replace(screen)
+	for _, arg := range hostile {
+		want := "[" + strings.ReplaceAll(arg, "\n", "") + "]"
+		if !strings.Contains(flat, want) {
+			t.Fatalf("argument %q did not arrive intact (wanted %q):\n%s", arg, want, screen)
+		}
+	}
+}
+
+// TestAShellThatIsNotThereSaysWhichSetting: with a bad shell configured,
+// every provider on the host looks missing. That points at the wrong
+// thing entirely, so the shell is named as the fault instead.
+func TestAShellThatIsNotThereSaysWhichSetting(t *testing.T) {
+	runtime := withShell(t, remoteRuntime(t), "/opt/nothing/here/fish")
+	_, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("codex"),
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Program: "codex"},
+	})
+	if err == nil {
+		t.Fatal("a configured shell that is not there must not dispatch")
+	}
+	for _, want := range []string{"/opt/nothing/here/fish", "shell", "testhost"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the error should name %q: %v", want, err)
+		}
+	}
+}
+
+// TestWithNoConfiguredShellTheAccountsOwnIsUsed: naming a shell is how a
+// host differs from its default, not a thing every host must do.
+func TestWithNoConfiguredShellTheAccountsOwnIsUsed(t *testing.T) {
+	dir, _ := providerOnly(t, "codex", "#!/bin/sh\n"+
+		`printf 'env=%s\nend\n' "$LOGIN_SHELL_ENV"; sleep 60`+"\n")
+	// $SHELL is what an unconfigured host falls back to, and here it is
+	// the same stand-in — reached by the other route.
+	t.Setenv("SHELL", fakeLoginShell(t, dir))
+
+	runtime := remoteRuntime(t)
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("codex"),
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Program: "codex"},
+	})
+	if err != nil {
+		t.Fatalf("the account's own shell should still be used: %v", err)
+	}
+	screen := waitForScreen(t, runtime, dispatched.ID, "end")
+	if !strings.Contains(screen, "env=only-this-shell-has-it") {
+		t.Fatalf("the account's shell should have supplied the environment:\n%s", screen)
+	}
+}
+
+// TestAMissingProviderPointsAtTheSetting: the message someone gets when
+// their provider is installed and Stormlight says it is not. It has to
+// carry the way out, because nothing about the machine reveals that the
+// shell it was asked about is not the shell its owner works in.
+func TestAMissingProviderPointsAtTheSetting(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	runtime := remoteRuntime(t)
+	_, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("codex"),
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Program: "a-provider-no-machine-has"},
+	})
+	if err == nil {
+		t.Fatal("a provider nothing has must not dispatch")
+	}
+	t.Logf("the message is:\n%s", err)
+	for _, want := range []string{
+		"a-provider-no-machine-has", // what
+		"testhost",                  // where
+		"/bin/zsh",                  // what was asked
+		"shell =",                   // and what to do about it
+		"[hosts.testhost]",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the message should carry %q:\n%s", want, err)
+		}
 	}
 }
