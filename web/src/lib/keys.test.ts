@@ -32,6 +32,7 @@ function press(
     alt?: boolean;
     ctrl?: boolean;
     meta?: boolean;
+    altGraph?: boolean;
     code?: string;
   } = {},
 ): KeyboardEvent {
@@ -42,7 +43,9 @@ function press(
     altKey: alt,
     ctrlKey: modifiers.ctrl ?? false,
     metaKey: modifiers.meta ?? false,
-  } as KeyboardEvent;
+    getModifierState: (name: string) =>
+      name === "AltGraph" ? (modifiers.altGraph ?? false) : false,
+  } as unknown as KeyboardEvent;
 }
 
 function meaning(
@@ -125,6 +128,18 @@ describe("a walked-in terminal", () => {
   test("Ctrl-Alt-K opens the palette where there is no ⌘", () => {
     expect(meaning("k", "terminal", { ctrl: true, alt: true })).toBe("palette");
     expect(meaning("k", "field", { ctrl: true, alt: true })).toBe("palette");
+  });
+
+  // Windows and Linux report AltGr as ctrl+alt — on exactly the
+  // platforms this chord exists for. A layout where AltGr+K types a
+  // character has to be able to type it.
+  test("AltGr+K is a character, not the palette", () => {
+    expect(
+      meaning("k", "field", { ctrl: true, alt: true, altGraph: true }),
+    ).toBeUndefined();
+    expect(
+      meaning("k", "terminal", { ctrl: true, alt: true, altGraph: true }),
+    ).toBeUndefined();
   });
 
   test("Ctrl-K belongs to whoever is typing, ⌘K to the page", () => {

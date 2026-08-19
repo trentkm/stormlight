@@ -362,8 +362,19 @@ export function match(
   if (event.code === "KeyK" && event.metaKey) return { id: "palette" };
   // Ctrl-Alt-K is the way in from a terminal on the platforms where
   // there is no ⌘: Super never reaches the page, and plain Ctrl-K
-  // belongs to the agent.
-  if (event.code === "KeyK" && event.ctrlKey && event.altKey) {
+  // belongs to the agent. (Emacs binds C-M-k to kill-sexp; an agent
+  // running emacs in its terminal loses that one.)
+  //
+  // AltGr is reported as ctrl+alt on exactly those platforms, so the
+  // chord has to say it does not mean AltGr — otherwise a layout where
+  // AltGr+K types a character could not type it at all, in the
+  // composer or in the agent.
+  if (
+    event.code === "KeyK" &&
+    event.ctrlKey &&
+    event.altKey &&
+    !event.getModifierState?.("AltGraph")
+  ) {
     return { id: "palette" };
   }
   // Ctrl-K is readline's kill-to-end-of-line. A terminal's agent has

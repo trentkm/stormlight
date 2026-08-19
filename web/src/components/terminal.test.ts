@@ -116,6 +116,21 @@ beforeEach(() => {
 });
 
 describe("who holds the keyboard", () => {
+  // The focus rules find the walked-in terminal by this hook. Every
+  // other test in the suite supplies its own markup, so without this
+  // one the attribute could be deleted from the shipping component
+  // with all 169 tests green — and every walk would end on the first
+  // focusout, because the query would find nothing.
+  test("the terminal carries the hook the walk is found by", () => {
+    const { close } = show({ agentID: "a1", focused: false });
+
+    const hook = document.querySelector("[data-walk-target]");
+    expect(hook).not.toBeNull();
+    expect(hook!.querySelector("textarea")).not.toBeNull();
+    close();
+  });
+
+
   test("a terminal nobody walked into does not keep focus when clicked", () => {
     const { close } = show({ agentID: "a1", focused: false });
 

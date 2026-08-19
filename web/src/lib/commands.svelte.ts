@@ -50,6 +50,10 @@ export function reconcileFocus(active: Element | null): void {
   if (!ui.walkedIn) return;
   // An overlay's own focus is the overlay's business; the walk waits.
   if (active instanceof HTMLElement && active.closest("dialog")) return;
+  // The hook, not `.terminal`: a watching wall cell carries xterm's own
+  // class, and reading one as the walk would keep the walk alive over a
+  // terminal that cannot hear it. Unreachable today — walking in forces
+  // the roster view — but the cost of being right is one selector.
   if (active instanceof HTMLElement && active.closest("[data-walk-target]")) {
     return;
   }
