@@ -136,12 +136,17 @@ func (m Model) handleOverlayExited(msg overlayExitedMsg) (tea.Model, tea.Cmd) {
 		// the session is where the answer is.
 		answer, answerErr := view.session.Result(context.Background())
 		view.widget.Close()
+		// The program's own account of what went wrong outranks its exit
+		// status, and it is written precisely when the status is not zero
+		// — checking the status first threw away the only message worth
+		// reading, leaving "exited with status 1" to explain a missing
+		// yazi.
+		if answerErr != nil {
+			return view.spec.result("", answerErr)
+		}
 		if msg.code != 0 {
 			return view.spec.result("", fmt.Errorf(
 				"%s exited with status %d", strings.TrimSpace(view.spec.title), msg.code))
-		}
-		if answerErr != nil {
-			return view.spec.result("", answerErr)
 		}
 		return view.spec.result(answer, nil)
 	}

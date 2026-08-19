@@ -15,10 +15,11 @@ import (
 // fakeOverlaySession scripts one overlay program: a seeded terminal, a
 // recordable input side, and an exit the test fires by hand.
 type fakeOverlaySession struct {
-	seed   string
-	output chan pty.Message
-	exited chan int
-	answer string
+	seed      string
+	output    chan pty.Message
+	exited    chan int
+	answer    string
+	answerErr error
 
 	mu     sync.Mutex
 	writes []byte
@@ -34,7 +35,7 @@ func (f *fakeOverlaySession) Result(context.Context) (string, error) {
 	if f.closed {
 		return "", errClosedBeforeRead
 	}
-	return f.answer, nil
+	return f.answer, f.answerErr
 }
 
 var errClosedBeforeRead = errors.New("session was closed before its answer was read")
@@ -192,5 +193,62 @@ func TestOverlayExitReadsTheAnswerBack(t *testing.T) {
 	}
 	if !session.isClosed() {
 		t.Fatal("exit did not close the session")
+	}
+}
+
+// TestTheProgramsOwnReasonOutranksItsExitStatus: a picker that could not
+// find yazi writes why, and exits non-zero doing it. Reporting the status
+// instead threw away the only message worth reading — "Yazi exited with
+// status 1" explains nothing, and it was the first thing a real remote
+// host said.
+func TestTheProgramsOwnReasonOutranksItsExitStatus(t *testing.T) {
+	model := flowModelFixture(t, stubBackend{})
+	session := newFakeOverlaySession("seed")
+	session.answerErr = errors.New("yazi is not installed on devbox")
+	model = openFakeOverlay(t, model, session, overlaySpec{
+		title:   "Yazi",
+		cleanup: func() {},
+		result: func(answer string, err error) tea.Msg {
+			return directoryPickedMsg{path: answer, err: err}
+		},
+	})
+
+	updated, cmd := model.handleOverlayExited(overlayExitedMsg{
+		generation: model.overlay.generation,
+		code:       1,
+	})
+	_ = updated
+	picked, ok := cmd().(directoryPickedMsg)
+	if !ok || picked.err == nil {
+		t.Fatalf("exit result = %#v", picked)
+	}
+	if !strings.Contains(picked.err.Error(), "not installed on devbox") {
+		t.Fatalf("want the program's own reason, got %v", picked.err)
+	}
+	if strings.Contains(picked.err.Error(), "status 1") {
+		t.Fatalf("the status should not stand in for a reason: %v", picked.err)
+	}
+}
+
+// TestAFailureWithNothingToSayStillReports: a program that died without
+// writing a reason has only its status to offer.
+func TestAFailureWithNothingToSayStillReports(t *testing.T) {
+	model := flowModelFixture(t, stubBackend{})
+	session := newFakeOverlaySession("seed")
+	model = openFakeOverlay(t, model, session, overlaySpec{
+		title:   "Yazi",
+		cleanup: func() {},
+		result: func(answer string, err error) tea.Msg {
+			return directoryPickedMsg{path: answer, err: err}
+		},
+	})
+
+	_, cmd := model.handleOverlayExited(overlayExitedMsg{
+		generation: model.overlay.generation,
+		code:       1,
+	})
+	picked, ok := cmd().(directoryPickedMsg)
+	if !ok || picked.err == nil || !strings.Contains(picked.err.Error(), "status 1") {
+		t.Fatalf("exit result = %#v", picked)
 	}
 }

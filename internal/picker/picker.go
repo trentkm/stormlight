@@ -80,6 +80,17 @@ func findYazi() (string, error) {
 	if resolved, err := exec.LookPath("yazi"); err == nil {
 		return resolved, nil
 	}
+	// Beside this binary. `remote setup` installs both into the same
+	// directory, and that directory is regularly on no PATH at all: a
+	// fresh machine's ~/.local/bin is missing from the non-interactive
+	// environment and often from the login one too, because the profile
+	// that would add it checked for the directory before it existed.
+	if self, err := os.Executable(); err == nil {
+		beside := filepath.Join(filepath.Dir(self), "yazi")
+		if info, err := os.Stat(beside); err == nil && !info.IsDir() {
+			return beside, nil
+		}
+	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
