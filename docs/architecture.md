@@ -113,6 +113,20 @@ to come up. The daemon outlives every dashboard: agents, their terminals,
 and their scrollback persist across dashboard restarts, and the daemon's
 sessions are the roster — there is no second record to reconcile.
 
+Outliving the dashboard means outliving the binary, so a daemon can be
+running code from a release nobody has installed for months. That is
+harmless until a dispatch needs the daemon to do something a daemon that
+old cannot: an unknown field in a spawn request is not refused, it is
+dropped, and the agent starts anyway — missing the environment its whole
+lifecycle depends on, and failing somewhere that never mentions the
+daemon. So `stormlight _wrdaemon` writes `daemon.json` beside its socket
+before it listens, naming what it can be asked to do and the process
+saying so, and removes it when it goes. `_wrbridge` reads that file
+rather than reporting its own version, because the daemon it splices onto
+is whatever was already listening. A daemon too old to carry an agent is
+refused a new one — and only a new one, since the agents it already holds
+list and attach perfectly well.
+
 The daemon never learns what an agent is; that is the library's boundary.
 Agent identity and state ride in the session's opaque metadata as one JSON
 document under the `stormlight_agent` key — the serialized `agent.Agent`:
