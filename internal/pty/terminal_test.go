@@ -462,3 +462,54 @@ func goroutinesAtRest() int {
 	}
 	return runtime.NumGoroutine()
 }
+
+// The seed names the size its bytes were wrapped for, and the replica has
+// to be that size or it renders a snapshot mangled before it arrived.
+// This is the case the size exists for: a viewer that asserted no
+// geometry of its own, because its pane had not been laid out and the
+// terminal is shared with a dashboard that had.
+func TestTheSeedsSizeIsAdopted(t *testing.T) {
+	transport := newFakeTransport("wrapped for a wide terminal")
+	transport.seedSize = &Size{Cols: 132, Rows: 43}
+
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+
+	if cols, rows := terminal.TerminalSize(); cols != 132 || rows != 43 {
+		t.Fatalf("emulator is %dx%d, want the seed's 132x43", cols, rows)
+	}
+	// The box belongs to the pane, not to the seed: View clips or pads
+	// the difference.
+	if cols, rows := terminal.Size(); cols != 80 || rows != 24 {
+		t.Fatalf("box became %dx%d; the pane owns the box", cols, rows)
+	}
+}
+
+// A transport that cannot say — one with no daemon behind it to ask —
+// must leave the caller's size alone rather than have one invented.
+func TestASeedWithNoSizeKeepsTheCallersOwn(t *testing.T) {
+	transport := newFakeTransport("no size to report")
+
+	terminal := New(transport, NewGate(), 100, 30)
+	defer terminal.Close()
+
+	if cols, rows := terminal.TerminalSize(); cols != 100 || rows != 30 {
+		t.Fatalf("emulator is %dx%d, want the caller's 100x30", cols, rows)
+	}
+}
+
+// A size no terminal can be is refused, not corrected. Clamping a zero
+// into a legal 2x2 is how a pane collapses to a ribbon: the rest of this
+// codebase refuses such sizes rather than rounding them up, and the seed
+// is the last place a bad one can enter.
+func TestADegenerateSeedSizeIsIgnored(t *testing.T) {
+	transport := newFakeTransport("state from somewhere confused")
+	transport.seedSize = &Size{Cols: 0, Rows: 0}
+
+	terminal := New(transport, NewGate(), 120, 40)
+	defer terminal.Close()
+
+	if cols, rows := terminal.TerminalSize(); cols != 120 || rows != 40 {
+		t.Fatalf("a 0x0 seed size produced a %dx%d replica", cols, rows)
+	}
+}

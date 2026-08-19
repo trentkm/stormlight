@@ -147,12 +147,17 @@ describe("state and output", () => {
     const { term, socket } = setup({ laidOut: false });
     socket().open();
 
+    // Output first, so the size has something to be ordered against: a
+    // resize applied in front of the queue would reflow this, and the
+    // assertion would see it land before rather than after.
+    socket().deliverBytes("from the old size");
     socket().deliverControl({ type: "resize", cols: 132, rows: 43 });
     socket().deliverControl({ type: "seed" });
     socket().deliverBytes("wrapped for 132 columns");
     term.drain();
 
     expect(term.calls).toEqual([
+      'write:"from the old size"',
       "resize:132x43",
       'write:"\\u001bc"',
       'write:"wrapped for 132 columns"',
