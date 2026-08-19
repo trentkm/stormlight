@@ -4,15 +4,33 @@
 // this layer: reactivity wiring (the wall's attach storm, which no unit
 // test of attach() could see) and gesture bookkeeping (a drag that
 // commits a click, a click that commits a drag, a layout that forgets).
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import type { Agent } from "../lib/types";
 
 const lifecycle: string[] = [];
+/** Every attach's contract: did it watch, and did it claim layout?
+ *  Recorded so a refactor that quietly drops { watching: true } — or
+ *  starts answering isLaidOut with true — fails a test instead of
+ *  resizing the fleet's shared terminals. */
+const contracts: Array<{ id: string; watching: boolean; laidOut: boolean }> =
+  [];
 
 vi.mock("../lib/terminal", () => ({
-  attach: (_term: unknown, _fit: unknown, id: string) => {
+  attach: (
+    _term: unknown,
+    _fit: unknown,
+    id: string,
+    isLaidOut: () => boolean,
+    _onConnection: unknown,
+    options?: { watching?: boolean },
+  ) => {
     lifecycle.push(`attach:${id}`);
+    contracts.push({
+      id,
+      watching: options?.watching === true,
+      laidOut: isLaidOut(),
+    });
     return {
       fit: () => {},
       close: () => lifecycle.push(`close:${id}`),
@@ -81,15 +99,28 @@ function push(...specs: Array<Partial<Agent> & { id: string }>) {
   flushSync();
 }
 
+/** Mounts still open when a test ends (its assertion threw before it
+ *  could clean up) are closed here — a leaked mount poisons every
+ *  following test's DOM queries, turning one failure into a cascade. */
+const leaked: Array<() => void> = [];
+afterEach(() => {
+  while (leaked.length) leaked.pop()!();
+});
+
 function mountCanvas(onopen: () => void = () => {}) {
   const target = document.createElement("div");
   document.body.append(target);
   const canvas = mount(Canvas, { target, props: { onopen } });
   flushSync();
-  return () => {
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
     unmount(canvas);
     target.remove();
   };
+  leaked.push(close);
+  return close;
 }
 
 /** A pointer event jsdom can dispatch. jsdom has no PointerEvent, but
@@ -130,6 +161,7 @@ function boxOf(tile: HTMLElement) {
 
 beforeEach(() => {
   lifecycle.length = 0;
+  contracts.length = 0;
   localStorage.clear();
   fleet.agents = [];
   fleet.selectedID = "";
@@ -198,15 +230,62 @@ describe("the canvas against the roster", () => {
     done();
   });
 
-  test("a departed agent's spot is freed for the next arrival", () => {
+  // An unreachable SSH host is simply omitted from pushes while its
+  // agents keep running, and their ids come back verbatim on
+  // reconnect. One dropped poll must not cost anyone their
+  // arrangement.
+  test("an agent that vanishes and returns keeps its spot", () => {
     const done = mountCanvas();
     push({ id: "a" }, { id: "b" });
-    const vacated = boxOf(tileFor("b"));
+    const tile = tileFor("b");
+    tile.dispatchEvent(pointer("pointerdown", 100, 100));
+    tile.dispatchEvent(pointer("pointermove", 420, 280));
+    tile.dispatchEvent(pointer("pointerup", 420, 280));
+    flushSync();
+    const kept = boxOf(tileFor("b"));
+
+    push({ id: "a" });
+    push({ id: "a" }, { id: "b" });
+
+    expect(boxOf(tileFor("b"))).toEqual(kept);
+    done();
+  });
+
+  test("a newcomer never lands on an absent agent's remembered spot", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const remembered = boxOf(tileFor("b"));
 
     push({ id: "a" });
     push({ id: "a" }, { id: "late" });
 
-    expect(boxOf(tileFor("late"))).toEqual(vacated);
+    expect(boxOf(tileFor("late"))).not.toEqual(remembered);
+    done();
+  });
+
+  test("every attachment watches, and claims no layout", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+
+    expect(contracts.length).toBeGreaterThan(0);
+    for (const contract of contracts) {
+      expect(contract).toMatchObject({ watching: true, laidOut: false });
+    }
+    done();
+  });
+
+  test("a poisoned store neither hangs placement nor kills the camera", () => {
+    localStorage.setItem(
+      "stormlight.canvas.all",
+      '{"ghost":{"x":0,"y":0,"w":1e999,"h":1e999}}',
+    );
+    const done = mountCanvas();
+    push({ id: "a" });
+
+    // Not merely finite: the ghost must have been discarded at load,
+    // so the newcomer takes the default first slot. Anything else means
+    // an absurd box was believed and only papered over downstream.
+    expect(boxOf(tileFor("a"))).toEqual({ x: 0, y: 0, w: 440, h: 300 });
     done();
   });
 });
@@ -291,6 +370,90 @@ describe("gestures", () => {
     after = boxOf(tileFor("a"));
     expect(after.w).toBe(tileMin.w);
     expect(after.h).toBe(tileMin.h);
+    done();
+  });
+
+  test("a second pointer landing mid-drag changes nothing", () => {
+    let opened = 0;
+    const done = mountCanvas(() => opened++);
+    push({ id: "a" });
+    const tile = tileFor("a");
+    const before = boxOf(tile);
+
+    tile.dispatchEvent(pointer("pointerdown", 100, 100, 1));
+    tile.dispatchEvent(pointer("pointermove", 160, 100, 1));
+    // A palm lands and lifts. Its down must not hijack the gesture and
+    // its up must not read as a click.
+    tile.dispatchEvent(pointer("pointerdown", 300, 300, 2));
+    tile.dispatchEvent(pointer("pointerup", 300, 300, 2));
+    tile.dispatchEvent(pointer("pointermove", 200, 100, 1));
+    tile.dispatchEvent(pointer("pointerup", 200, 100, 1));
+    flushSync();
+
+    expect(opened).toBe(0);
+    expect(boxOf(tileFor("a")).x).toBeCloseTo(before.x + 100);
+    done();
+  });
+
+  test("a foreign pointer's cancel does not kill the drag", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const tile = tileFor("a");
+    const before = boxOf(tile);
+
+    tile.dispatchEvent(pointer("pointerdown", 100, 100, 1));
+    tile.dispatchEvent(pointer("pointermove", 180, 100, 1));
+    // The browser claims a *secondary* touch for a native gesture.
+    tile.dispatchEvent(pointer("pointercancel", 0, 0, 2));
+    tile.dispatchEvent(pointer("pointermove", 260, 100, 1));
+    tile.dispatchEvent(pointer("pointerup", 260, 100, 1));
+    flushSync();
+
+    expect(boxOf(tileFor("a")).x).toBeCloseTo(before.x + 160);
+    done();
+  });
+
+  test("zooming mid-drag does not teleport the tile", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const surface = document.querySelector<HTMLElement>(".canvas")!;
+    const tile = tileFor("a");
+    const before = boxOf(tile);
+
+    tile.dispatchEvent(pointer("pointerdown", 100, 100));
+    tile.dispatchEvent(pointer("pointermove", 200, 100));
+    // A reflexive pinch mid-drag: zoom doubles. The 100px already
+    // travelled must stay 100 stage units; only pixels moved from here
+    // convert at the new zoom.
+    surface.dispatchEvent(
+      new WheelEvent("wheel", {
+        bubbles: true,
+        ctrlKey: true,
+        deltaY: -Math.log(2) * 100,
+      }),
+    );
+    flushSync();
+    tile.dispatchEvent(pointer("pointermove", 210, 100));
+    tile.dispatchEvent(pointer("pointerup", 210, 100));
+    flushSync();
+
+    expect(boxOf(tileFor("a")).x).toBeCloseTo(before.x + 100 + 10 / 2, 3);
+    done();
+  });
+
+  test("a drag that wanders back over its origin is still not a click", () => {
+    let opened = 0;
+    const done = mountCanvas(() => opened++);
+    push({ id: "a" });
+    const tile = tileFor("a");
+
+    tile.dispatchEvent(pointer("pointerdown", 100, 100));
+    tile.dispatchEvent(pointer("pointermove", 160, 140));
+    tile.dispatchEvent(pointer("pointermove", 100, 100));
+    tile.dispatchEvent(pointer("pointerup", 100, 100));
+    flushSync();
+
+    expect(opened).toBe(0);
     done();
   });
 

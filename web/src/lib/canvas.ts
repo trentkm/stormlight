@@ -72,27 +72,36 @@ export function zoomAt(
 
 /**
  * A view that shows every box, centered, with breathing room — the way
- * home after panning off into empty space. Zoom is capped at 1: fitting
- * two tiles should not mean blowing them up past legibility.
+ * home after panning off into empty space. Zoom is capped at 1 above
+ * (fitting two tiles should not blow them up past legibility) but has
+ * NO floor below: fit's one promise is that everything is on screen,
+ * and a tile flung ten screens away breaks that promise at any clamped
+ * zoom — centering a bounding box whose middle is empty space. Tiny
+ * and visible beats clamped and lost; the user zooms back in from
+ * there. Non-finite boxes (a poisoned store) are ignored rather than
+ * allowed to turn the camera to NaN.
  */
 export function fitView(
   boxes: Box[],
   viewport: { w: number; h: number },
   padding = 48,
 ): View {
-  if (boxes.length === 0) return homeView;
-  const left = Math.min(...boxes.map((b) => b.x));
-  const top = Math.min(...boxes.map((b) => b.y));
-  const right = Math.max(...boxes.map((b) => b.x + b.w));
-  const bottom = Math.max(...boxes.map((b) => b.y + b.h));
-  const z = clamp(
-    Math.min(
-      (viewport.w - padding * 2) / (right - left),
-      (viewport.h - padding * 2) / (bottom - top),
-      1,
-    ),
-    minZoom,
-    maxZoom,
+  const sound = boxes.filter(
+    (b) =>
+      Number.isFinite(b.x) &&
+      Number.isFinite(b.y) &&
+      Number.isFinite(b.w) &&
+      Number.isFinite(b.h),
+  );
+  if (sound.length === 0) return homeView;
+  const left = Math.min(...sound.map((b) => b.x));
+  const top = Math.min(...sound.map((b) => b.y));
+  const right = Math.max(...sound.map((b) => b.x + b.w));
+  const bottom = Math.max(...sound.map((b) => b.y + b.h));
+  const z = Math.min(
+    (viewport.w - padding * 2) / Math.max(1, right - left),
+    (viewport.h - padding * 2) / Math.max(1, bottom - top),
+    1,
   );
   return {
     x: (viewport.w - (right - left) * z) / 2 - left * z,
@@ -119,7 +128,12 @@ function overlaps(a: Box, b: Box): boolean {
 export function place(existing: Box[], size = tileSize): Box {
   const stepX = size.w + placeGap;
   const stepY = size.h + placeGap;
-  for (let slot = 0; ; slot++) {
+  // Bounded, because this loop runs synchronously on the UI thread and
+  // its exit depends on data from localStorage: one absurd stored box
+  // that overlaps every slot would otherwise hang the tab the moment a
+  // new agent needs a spot. Past the cap, below everything is always
+  // free.
+  for (let slot = 0; slot < 4096; slot++) {
     const candidate: Box = {
       x: (slot % placeColumns) * stepX,
       y: Math.floor(slot / placeColumns) * stepY,
@@ -127,6 +141,11 @@ export function place(existing: Box[], size = tileSize): Box {
     };
     if (!existing.some((box) => overlaps(candidate, box))) return candidate;
   }
+  const bottom = Math.max(
+    0,
+    ...existing.filter((b) => Number.isFinite(b.y + b.h)).map((b) => b.y + b.h),
+  );
+  return { x: 0, y: bottom + placeGap, ...size };
 }
 
 /** A resize clamped to the smallest tile still worth drawing. */

@@ -64,6 +64,41 @@ describe("fitting", () => {
     }
   });
 
+  // Fit's one promise is that everything is on screen. A tile flung
+  // ten screens away must not break it: there is no zoom floor here,
+  // because a floor centres a bounding box whose middle is empty
+  // space — a "fit" showing zero tiles.
+  test("shows a far-flung outlier, however far", () => {
+    const boxes: Box[] = [
+      { x: 0, y: 0, w: 440, h: 300 },
+      { x: 100_000, y: 0, w: 440, h: 300 },
+    ];
+    const viewport = { w: 1000, h: 700 };
+
+    const view = fitView(boxes, viewport);
+
+    for (const box of boxes) {
+      const left = box.x * view.z + view.x;
+      const right = (box.x + box.w) * view.z + view.x;
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(right).toBeLessThanOrEqual(viewport.w);
+    }
+  });
+
+  test("ignores a poisoned box instead of going NaN", () => {
+    const view = fitView(
+      [
+        { x: 0, y: 0, w: 440, h: 300 },
+        { x: Infinity, y: 0, w: Infinity, h: Infinity },
+      ],
+      { w: 1000, h: 700 },
+    );
+
+    expect(Number.isFinite(view.x)).toBe(true);
+    expect(Number.isFinite(view.y)).toBe(true);
+    expect(Number.isFinite(view.z)).toBe(true);
+  });
+
   test("never magnifies past life size", () => {
     const view = fitView([{ x: 0, y: 0, w: 100, h: 80 }], { w: 2000, h: 2000 });
     expect(view.z).toBe(1);
@@ -108,6 +143,29 @@ describe("placement", () => {
     const vacated = placed.splice(1, 1)[0];
 
     expect(place(placed)).toEqual(vacated);
+  });
+
+  // Bounded, because the loop's exit depends on localStorage: one
+  // absurd box overlapping every slot must degrade to below-everything
+  // placement, not a hung tab.
+  test("an absurd box cannot hang placement", () => {
+    const absurd: Box = { x: -5_000_000, y: -5_000_000, w: 10_000_000, h: 10_000_000 };
+
+    const next = place([absurd]);
+
+    expect(Number.isFinite(next.x)).toBe(true);
+    expect(Number.isFinite(next.y)).toBe(true);
+  });
+
+  test("keeps the gap even against a hand-parked flush neighbour", () => {
+    // Parked exactly where slot zero ends: with no gap in the overlap
+    // test, slot zero is "free" and the newcomer lands flush against
+    // this tile.
+    const parked: Box = { x: tileSize.w, y: 0, w: 100, h: 300 };
+
+    const next = place([parked]);
+
+    expect(next.x).not.toBe(0);
   });
 
   test("steps around a tile someone dragged into the grid's path", () => {

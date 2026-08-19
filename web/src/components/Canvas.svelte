@@ -10,6 +10,7 @@
     type View,
   } from "../lib/canvas";
   import CanvasTile from "./CanvasTile.svelte";
+  import { isUrgent } from "../lib/types";
 
   let { onopen }: { onopen: () => void } = $props();
 
@@ -20,15 +21,6 @@
 
   let clip = $state<HTMLDivElement>();
   let view = $state<View>(homeView);
-
-  // Forget tiles for agents the roster no longer knows — but never on
-  // an empty roster, which is what the first moments of a session look
-  // like; wiping every saved layout because the event socket has not
-  // spoken yet would make persistence a rumor.
-  $effect(() => {
-    if (agents.length === 0) return;
-    layout.prune(new Set(agents.map((a) => a.id)));
-  });
 
   // Placement is minted here, in an effect, never from the template:
   // boxFor writes state for an agent it has not seen, and Svelte
@@ -55,13 +47,16 @@
     });
   };
 
-  // Open on the whole fleet. Waiting for the roster matters: the canvas
-  // usually mounts before the first push, and fitting zero boxes is
-  // just the home view.
-  let fitted = false;
+  // Open on the whole fleet — once per workspace, not once per mount:
+  // switching workspaces in the rail swaps the whole arrangement, and a
+  // camera still aimed at the previous one shows empty space. Waiting
+  // for the roster matters too: the canvas usually mounts before the
+  // first push, and fitting zero boxes is just the home view.
+  let fittedFor: string | null = null;
   $effect(() => {
-    if (fitted || agents.length === 0 || !clip) return;
-    fitted = true;
+    const workspace = fleet.workspaceID;
+    if (fittedFor === workspace || agents.length === 0 || !clip) return;
+    fittedFor = workspace;
     fit();
   });
 
@@ -69,9 +64,7 @@
    * The wheel is the pan, and pinch is the zoom. Trackpads report a
    * pinch as a wheel event with ctrlKey set — the same convention
    * Figma, Excalidraw, and every other canvas rely on — so both
-   * gestures arrive through one handler. The view is written directly;
-   * no layout is read, so a fast scroll costs one style recalculation
-   * per frame.
+   * gestures arrive through one handler.
    */
   const wheel = (event: WheelEvent) => {
     event.preventDefault();
@@ -112,6 +105,26 @@
   let stage = $state<HTMLDivElement>();
 
   const zoomLabel = $derived(`${Math.round(view.z * 100)}%`);
+
+  // The wall sorts urgent agents to the front; a canvas cannot — the
+  // user owns placement, and an urgent tile may sit ten screens away.
+  // This is the signal that survives that: a count that is always in
+  // the corner, and a jump that centres each urgent tile in turn.
+  const urgent = $derived(agents.filter(isUrgent));
+  let jumpAt = 0;
+  const jump = () => {
+    if (urgent.length === 0 || !clip) return;
+    const target = urgent[jumpAt % urgent.length];
+    jumpAt += 1;
+    const box = layout.tiles[target.id];
+    if (!box) return;
+    const z = Math.max(view.z, 0.5);
+    view = {
+      x: clip.clientWidth / 2 - (box.x + box.w / 2) * z,
+      y: clip.clientHeight / 2 - (box.y + box.h / 2) * z,
+      z,
+    };
+  };
 </script>
 
 <!-- role=application: the surface really is one — every pointer and
@@ -153,6 +166,11 @@
     <p class="empty">No agents to arrange.</p>
   {/if}
   <div class="controls">
+    {#if urgent.length > 0}
+      <button class="urgent" onclick={jump} title="Jump to the next agent that needs input">
+        ! {urgent.length} need{urgent.length === 1 ? "s" : ""} input
+      </button>
+    {/if}
     <button onclick={fit} title="Fit every tile in view">fit</button>
     <span class="zoom">{zoomLabel}</span>
   </div>
@@ -217,6 +235,10 @@
   }
   .controls button:hover {
     color: var(--band);
+  }
+  .controls button.urgent {
+    color: var(--waiting);
+    font-weight: 600;
   }
   .zoom {
     min-width: 4ch;

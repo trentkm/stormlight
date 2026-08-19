@@ -18,6 +18,33 @@ function storageKey(workspaceID: string): string {
   return storagePrefix + (workspaceID || "all");
 }
 
+/** The bounds a stored box must live inside to be believed. Storage is
+ *  a trust boundary: `1e999` parses to Infinity, and one absurd box is
+ *  enough to turn the camera to NaN or wedge placement — so anything
+ *  outside these is discarded, not repaired. */
+const positionLimit = 1_000_000;
+const extentLimit = 10_000;
+
+function sound(candidate: Partial<Box>): candidate is Box {
+  const { x, y, w, h } = candidate;
+  return (
+    typeof x === "number" &&
+    typeof y === "number" &&
+    typeof w === "number" &&
+    typeof h === "number" &&
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    Number.isFinite(w) &&
+    Number.isFinite(h) &&
+    Math.abs(x) <= positionLimit &&
+    Math.abs(y) <= positionLimit &&
+    w > 0 &&
+    h > 0 &&
+    w <= extentLimit &&
+    h <= extentLimit
+  );
+}
+
 function load(workspaceID: string): Layout {
   try {
     const raw = localStorage.getItem(storageKey(workspaceID));
@@ -29,12 +56,7 @@ function load(workspaceID: string): Layout {
     const layout: Layout = {};
     for (const [id, box] of Object.entries(parsed)) {
       const candidate = box as Partial<Box>;
-      if (
-        typeof candidate.x === "number" &&
-        typeof candidate.y === "number" &&
-        typeof candidate.w === "number" &&
-        typeof candidate.h === "number"
-      ) {
+      if (sound(candidate)) {
         layout[id] = {
           x: candidate.x,
           y: candidate.y,
@@ -87,20 +109,16 @@ export function canvasLayout(workspaceID: string) {
       tiles[id] = box;
       save(workspaceID, tiles);
     },
-    /**
-     * Forget agents the roster no longer knows. Ids never recur, so a
-     * dead agent's spot is genuinely free — without this, every fleet
-     * ever run keeps a ghost tile's worth of reserved space forever.
-     */
-    prune(liveIDs: Set<string>): void {
-      let dropped = false;
-      for (const id of Object.keys(tiles)) {
-        if (!liveIDs.has(id)) {
-          delete tiles[id];
-          dropped = true;
-        }
-      }
-      if (dropped) save(workspaceID, tiles);
-    },
   };
 }
+
+/*
+ * Deliberately absent: pruning. An agent missing from a roster push is
+ * not gone — an unreachable SSH host is simply omitted while its
+ * agents keep running, and their ids come back verbatim on reconnect.
+ * A prune keyed on absence turned one dropped poll into a wiped
+ * arrangement. A remembered box costs ~90 bytes and is exactly what
+ * lets a returning agent find its spot; minting collides against all
+ * remembered boxes, so nothing ever lands on a spot that might come
+ * back.
+ */

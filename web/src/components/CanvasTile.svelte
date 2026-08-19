@@ -61,25 +61,35 @@
    * the grip. A press that never travels is a click, and a click opens
    * the agent in the roster — a watching tile takes no keystrokes, so
    * the click a hand makes on "their" terminal has to lead somewhere.
+   *
+   * Deltas accumulate step by step at whatever the zoom is at that
+   * step, rather than dividing one grand total by the current zoom —
+   * a pinch mid-drag (reflexive on a trackpad) would otherwise rescale
+   * the whole journey so far and teleport the tile. Travel accumulates
+   * monotonically, so a drag that wanders back over its origin can
+   * never turn back into a click.
    */
   let gesture: {
     kind: "move" | "resize";
     pointer: number;
-    startX: number;
-    startY: number;
-    from: Box;
-    travelled: boolean;
+    lastX: number;
+    lastY: number;
+    travel: number;
   } | null = null;
 
   const begin = (event: PointerEvent, kind: "move" | "resize") => {
     if (event.button !== 0) return;
+    // One gesture at a time. A second pointer landing mid-drag — a
+    // palm, a stray finger — must not hijack the tile: its down is
+    // ignored, and its later up fails the pointerId check below, so
+    // the first hand keeps its grip.
+    if (gesture) return;
     gesture = {
       kind,
       pointer: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      from: shown,
-      travelled: false,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      travel: 0,
     };
     // Capture so a fast hand that leaves the tile keeps its grip.
     // Guarded: jsdom mounts this component without implementing it.
@@ -96,27 +106,29 @@
 
   const move = (event: PointerEvent) => {
     if (!gesture || event.pointerId !== gesture.pointer) return;
-    const px = event.clientX - gesture.startX;
-    const py = event.clientY - gesture.startY;
+    const px = event.clientX - gesture.lastX;
+    const py = event.clientY - gesture.lastY;
+    gesture.lastX = event.clientX;
+    gesture.lastY = event.clientY;
     // The click threshold is in screen pixels — a hand is steady in
     // pixels, however far the canvas is zoomed out.
-    if (Math.abs(px) + Math.abs(py) > 4) gesture.travelled = true;
-    if (!gesture.travelled) return;
-    // Stage units from here on: a drag of 30 pixels at half zoom moves
-    // the tile 60 stage units, so it tracks the cursor exactly.
+    gesture.travel += Math.abs(px) + Math.abs(py);
+    if (gesture.travel <= 4) return;
+    // Stage units from here on: this step's pixels at this moment's
+    // zoom, so the tile tracks the cursor exactly.
     const dx = px / zoom;
     const dy = py / zoom;
     inFlight =
       gesture.kind === "move"
-        ? { ...gesture.from, x: gesture.from.x + dx, y: gesture.from.y + dy }
-        : resized(gesture.from, gesture.from.w + dx, gesture.from.h + dy);
+        ? { ...shown, x: shown.x + dx, y: shown.y + dy }
+        : resized(shown, shown.w + dx, shown.h + dy);
   };
 
   const up = (event: PointerEvent) => {
     if (!gesture || event.pointerId !== gesture.pointer) return;
-    const { kind, travelled } = gesture;
+    const { kind, travel } = gesture;
     gesture = null;
-    if (!travelled) {
+    if (travel <= 4) {
       inFlight = null;
       if (kind === "move") onopen();
       return;
@@ -125,7 +137,11 @@
     inFlight = null;
   };
 
-  const cancel = () => {
+  const cancel = (event: PointerEvent) => {
+    // Only the gesture's own pointer can cancel it: browsers cancel a
+    // *secondary* touch when they claim it for a native gesture, and
+    // that must not cost the first hand its drag.
+    if (!gesture || event.pointerId !== gesture.pointer) return;
     gesture = null;
     inFlight = null;
   };
