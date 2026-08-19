@@ -10,16 +10,19 @@ import type { TranscriptEntry } from "../lib/types";
 type View = { entries: TranscriptEntry[]; total: number; ok: boolean };
 
 /** The next responses the fake server will give, in order; the last
- *  one repeats. Each call records the cursor it was asked for. */
+ *  one repeats. Each call records the cursor it was asked for, and
+ *  waits on the next gate if a test queued one — a slow tunnel in
+ *  miniature. */
 const responses: View[] = [];
 const cursors: number[] = [];
+const gates: Array<Promise<void>> = [];
 
 vi.mock("../lib/api", () => ({
   api: {
-    transcript: (_id: string, after = 0) => {
+    transcript: async (_id: string, after = 0) => {
       cursors.push(after);
-      const next = responses.length > 1 ? responses.shift()! : responses[0];
-      return Promise.resolve(next);
+      if (gates.length > 0) await gates.shift();
+      return responses.length > 1 ? responses.shift()! : responses[0];
     },
   },
 }));
@@ -71,6 +74,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   responses.length = 0;
   cursors.length = 0;
+  gates.length = 0;
 });
 
 describe("the transcript pane", () => {
@@ -169,6 +173,35 @@ describe("the transcript pane", () => {
     // the same tick.
     await pollTick();
     expect(texts()).toEqual(["fresh start"]);
+    done();
+  });
+
+  test("a fetch that outlives the poll interval never doubles the conversation", async () => {
+    // The first fetch crosses a slow tunnel: two whole poll intervals
+    // pass before it resolves. The ticks that land mid-flight must be
+    // skipped — an overlapping poll would capture the same cursor,
+    // receive the same delta, and append the conversation twice.
+    let release!: () => void;
+    gates.push(new Promise<void>((resolve) => (release = resolve)));
+    responses.push({
+      entries: [
+        { kind: "prompt", text: "ask" },
+        { kind: "reply", text: "answer" },
+      ],
+      total: 2,
+      ok: true,
+    });
+    const done = mountPane();
+    await settle();
+    await pollTick();
+    await pollTick();
+
+    release();
+    await settle();
+
+    expect(texts()).toEqual(["ask", "answer"]);
+    // Exactly one request went out while the slow one was in flight.
+    expect(cursors).toEqual([0]);
     done();
   });
 

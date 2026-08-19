@@ -27,8 +27,25 @@
   $effect(() => {
     const agentID = id;
     let cancelled = false;
+    // One fetch in flight, ever. The interval fires on the clock, not
+    // on completion, and a 14MB transcript on a slow tunnel outlives
+    // 3 seconds — two overlapping polls would both capture the same
+    // cursor, both receive the same delta, and both append: the
+    // conversation rendered twice. A tick that lands mid-fetch is
+    // skipped; the next one carries the news.
+    let fetching = false;
 
     const fetchOnce = async () => {
+      if (fetching) return;
+      fetching = true;
+      try {
+        await pull();
+      } finally {
+        fetching = false;
+      }
+    };
+
+    const pull = async () => {
       try {
         // untrack: the first poll runs synchronously inside the effect,
         // and a tracked read of `entries` here would make the effect
@@ -47,9 +64,11 @@
           return;
         }
         if (transcript.total < held) {
-          // The file shrank — replaced or compacted. Start over.
+          // The file shrank — replaced or compacted. Start over. The
+          // recursion stays inside this fetch's flight, so no tick can
+          // interleave with it.
           entries = [];
-          void fetchOnce();
+          await pull();
           return;
         }
         if (transcript.entries.length > 0) {
