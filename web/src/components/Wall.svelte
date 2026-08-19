@@ -5,6 +5,12 @@
 
   let { onopen }: { onopen: () => void } = $props();
 
+  // Handed to every cell as its IntersectionObserver root: this is the
+  // element that scrolls, and observing against the viewport instead
+  // would make rootMargin inert. $state so cells created before the
+  // element binds pick it up when it does.
+  let scroller = $state<HTMLDivElement>();
+
   // Whoever needs a person comes first. The wall's whole claim is that
   // you can find that agent without reading the grid, and sorting is the
   // half of that which survives having twenty cells.
@@ -22,9 +28,9 @@
   };
 </script>
 
-<div class="wall">
+<div class="wall" bind:this={scroller}>
   {#each agents as agent (agent.id)}
-    <WallCell {agent} onopen={() => open(agent.id)} />
+    <WallCell {agent} {scroller} onopen={() => open(agent.id)} />
   {:else}
     <p class="empty">No agents to watch.</p>
   {/each}

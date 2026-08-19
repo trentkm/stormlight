@@ -87,12 +87,14 @@ function fakeTerminal() {
   };
 }
 
-const fitAddon = { fit: () => {} };
-
 function setup(options: { laidOut?: boolean; watching?: boolean } = {}) {
   const term = fakeTerminal();
   const states: Connection[] = [];
   const layout = { laidOut: options.laidOut ?? true };
+  // Counted rather than ignored: a fit() the code should never make is
+  // exactly the kind of call a silent stub would absolve.
+  const measures = { count: 0 };
+  const fitAddon = { fit: () => measures.count++ };
   const attachment = attach(
     term as never,
     fitAddon as never,
@@ -106,6 +108,7 @@ function setup(options: { laidOut?: boolean; watching?: boolean } = {}) {
     attachment,
     states,
     layout,
+    measures,
     socket: () => FakeSocket.live.at(-1)!,
   };
 }
@@ -321,6 +324,20 @@ describe("watching", () => {
   test("takes no keyboard at all", () => {
     const { term } = setup({ watching: true });
     expect(term.handlers).toEqual([]);
+  });
+
+  // The stray call this pins is the one in open(): a watcher that
+  // measured before attaching would base term.cols on its own tile, one
+  // step from announcing it.
+  test("never measures the pane, even one that claims layout", () => {
+    const { measures, attachment, socket } = setup({
+      watching: true,
+      laidOut: true,
+    });
+    socket().open();
+    attachment.fit();
+
+    expect(measures.count).toBe(0);
   });
 
   test("still paints what the terminal sends", () => {

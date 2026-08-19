@@ -1,13 +1,30 @@
 <script lang="ts">
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  // Imported here as well as in Terminal.svelte: this component renders
+  // xterm too, and must not depend on sharing a chunk with the roster's
+  // pane to be styled.
+  import "@xterm/xterm/css/xterm.css";
   import { attach, type Attachment } from "../lib/terminal";
   import { statusVisual, theme } from "../lib/theme";
   import { isUrgent, type Agent } from "../lib/types";
 
-  let { agent, onopen }: { agent: Agent; onopen: () => void } = $props();
+  let {
+    agent,
+    scroller,
+    onopen,
+  }: { agent: Agent; scroller: HTMLElement | undefined; onopen: () => void } =
+    $props();
+
+  // The id, held apart from the object it came from. Every roster push
+  // re-proxies every agent, so an effect that read `agent.id` directly
+  // would depend on the object and re-run on every push — tearing down
+  // and re-attaching every cell's terminal at the roster's cadence. A
+  // derived string only changes when the id itself does.
+  const id = $derived(agent.id);
 
   let host: HTMLDivElement;
+  let viewport: HTMLDivElement;
   let screen: HTMLDivElement;
   // Attached until something says otherwise. The observer below turns
   // cells off when they scroll away, but a callback that never arrives —
@@ -16,6 +33,8 @@
   // right beats cheap and blank.
   let visible = $state(true);
   let scale = $state(1);
+  let shiftX = $state(0);
+  let shiftY = $state(0);
 
   const status = $derived(
     statusVisual(agent.activity, agent.attention, agent.process_live),
@@ -25,9 +44,15 @@
   // otherwise hold thirty daemon attachments and thirty terminals to
   // paint pixels nobody is looking at.
   $effect(() => {
+    // The root must be the element that actually scrolls. Against the
+    // default (viewport) root, rootMargin inflates a rectangle the wall
+    // never leaves, while the .wall scroller clips unenlarged — so cells
+    // would detach the instant they crossed its edge and reattach, seed
+    // and all, the instant they returned.
+    if (!scroller) return;
     const watcher = new IntersectionObserver(
       ([entry]) => (visible = entry.isIntersecting),
-      { rootMargin: "200px" },
+      { root: scroller, rootMargin: "200px" },
     );
     watcher.observe(host);
     return () => watcher.disconnect();
@@ -35,15 +60,19 @@
 
   $effect(() => {
     if (!visible || !screen) return;
-    const id = agent.id;
+    // Bind the id before anything async: `id` is what this effect keys
+    // on, deliberately not `agent`.
+    const agentID = id;
 
     const term = new Terminal({
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: 12,
       lineHeight: 1.1,
-      // Canvas, not WebGL: browsers allow only a handful of WebGL
-      // contexts at once, and a wall wants more cells than that. The
-      // cells are small and mostly idle, which is what canvas is fine at.
+      // The DOM renderer, not WebGL: browsers allow only a handful of
+      // WebGL contexts at once, and a wall wants more cells than that.
+      // No scrollback — a cell cannot be scrolled, so history would be
+      // rows of DOM kept for nobody, multiplied by the fleet.
+      scrollback: 0,
       allowProposedApi: true,
       disableStdin: true,
       cursorBlink: false,
@@ -63,7 +92,7 @@
     const attachment: Attachment = attach(
       term,
       fitAddon,
-      id,
+      agentID,
       () => false,
       () => {},
       { watching: true },
@@ -80,10 +109,22 @@
       // rather than sit small in a corner — and the cap that prevented
       // that bought nothing, since scaled text re-rasterizes rather than
       // blurring.
+      //
+      // Scale about the top-left and centre by hand. transform doesn't
+      // shrink the layout box, so a terminal wider than the tile hangs
+      // out past the box's right edge — and scaling about the *box*
+      // centre leaves the shrunken content parked around the overflow's
+      // centre, off to the bottom-right and clipped. Anchoring at the
+      // corner makes the maths honest: content lands at natural × scale,
+      // and the translate splits the remaining slack evenly.
+      const width = viewport.clientWidth;
+      const height = viewport.clientHeight;
       scale = Math.min(
-        host.clientWidth / natural.offsetWidth,
-        (host.clientHeight - labelHeight) / natural.offsetHeight,
+        width / natural.offsetWidth,
+        height / natural.offsetHeight,
       );
+      shiftX = (width - natural.offsetWidth * scale) / 2;
+      shiftY = (height - natural.offsetHeight * scale) / 2;
     };
     const sizes = new ResizeObserver(rescale);
     sizes.observe(host);
@@ -111,7 +152,25 @@
     <span class="name">{agent.name || agent.task || agent.id.slice(0, 8)}</span>
     <span class="where">{agent.workspace?.name ?? ""}</span>
   </button>
-  <div class="screen" bind:this={screen} style:transform="scale({scale})"></div>
+  <!-- Two elements where one looks like enough. The outer clips; the
+       inner holds the terminal at its natural size and carries the
+       transform. Collapse them and the clip runs at layout size, before
+       the transform — a terminal wider than the tile loses its right and
+       bottom edges first, and the scale then shrinks the surviving crop:
+       a corner, smaller, instead of the whole screen. -->
+  <div class="screen" bind:this={viewport}>
+    <div
+      class="frame"
+      bind:this={screen}
+      style:transform="translate({shiftX}px, {shiftY}px) scale({scale})"
+    ></div>
+  </div>
+  <!-- The whole screen is the way in, not just the label. A watching
+       cell takes no keystrokes by design — the shared terminal must not
+       hear from a tile — so the click anyone's hand actually makes on
+       "their" terminal has to lead somewhere: to the roster, focused on
+       this agent, where typing works. -->
+  <button class="reach" onclick={onopen} aria-label="Open {agent.name || agent.task || agent.id}"></button>
   {#if isUrgent(agent)}
     <p class="needs">needs input</p>
   {/if}
@@ -129,6 +188,11 @@
     border: 1px solid var(--border);
     border-radius: 6px;
   }
+  .cell:hover {
+    border-color: var(--band);
+  }
+  /* After :hover on purpose: equal specificity, so order keeps the
+     urgent band from being repainted by a passing pointer. */
   .cell.urgent {
     border-color: var(--waiting);
     box-shadow: 0 0 14px rgba(229, 192, 123, 0.18);
@@ -176,13 +240,31 @@
     color: #4a3e1e;
   }
   .screen {
+    position: relative;
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
-    /* Grown from the middle: aspect ratio is fixed by the terminal, so
-       one axis always has slack, and slack split evenly reads as a
-       framed screen rather than as content that failed to fill. */
-    transform-origin: center center;
+  }
+  .frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Shrink-wrap the terminal rather than inheriting the tile's width:
+       xterm's screen is explicitly sized in pixels, and the frame must
+       be that size for the clip above to contain all of it. */
+    width: max-content;
+    transform-origin: top left;
+  }
+  .reach {
+    position: absolute;
+    top: 26px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
   }
   .needs {
     position: absolute;
