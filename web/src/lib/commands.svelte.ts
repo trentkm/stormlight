@@ -21,7 +21,7 @@ export const ui = $state({
    * it. Without this, h and l had nothing to move and j/k could only
    * ever mean "next agent".
    */
-  column: "agents" as "workspaces" | "agents" | "spanreed" | "composer",
+  column: "agents" as "workspaces" | "agents" | "spanreed",
   /** Which tab of the agent pane. */
   pane: "terminal" as "terminal" | "transcript" | "diff",
   /** Walked into the terminal: the agent has the keyboard. */
@@ -91,12 +91,8 @@ export function reconcileFocus(active: Element | null): void {
   else ui.walkedIn = false;
 }
 
-/**
- * The columns, left to right. The first three are the TUI's panes; the
- * composer is a fourth stop because in a browser it is a real place the
- * keyboard can be, and walking right ought to end where you type.
- */
-const columns = ["workspaces", "agents", "spanreed", "composer"] as const;
+/** The columns, left to right, as the TUI orders its panes. */
+const columns = ["workspaces", "agents", "spanreed"] as const;
 
 /**
  * h and l step between columns and stop at the ends — the TUI clamps
@@ -111,20 +107,18 @@ function stepColumn(by: number): void {
   // one would move a cursor nobody can see.
   if (ui.zoomed) return;
   const at = columns.indexOf(ui.column);
+  // Walking right off the end walks *in*. The pane's terminal is where
+  // you type to the agent, so "keep going right" ending one step short
+  // of it — at a column you can look at but not type in — was the
+  // wrong place to stop.
+  if (by > 0 && at === columns.length - 1) {
+    if (fleet.selectedID !== "" && ui.pane === "terminal") ui.walkedIn = true;
+    return;
+  }
   const next = Math.min(columns.length - 1, Math.max(0, at + by));
   ui.column = columns[next];
-  // Leaving the pane lets go of the terminal; arriving is not the same
-  // as walking in, which is Enter's job.
+  // Leaving the pane lets go of the terminal.
   if (ui.column !== "spanreed") ui.walkedIn = false;
-  // The composer is a place the keyboard can actually be, so landing
-  // on it means landing *in* it — a column you cannot type in would be
-  // a stop that does nothing.
-  if (ui.column === "composer") {
-    document.querySelector<HTMLElement>("[data-composer]")?.focus();
-  } else {
-    const box = document.querySelector<HTMLElement>("[data-composer]");
-    if (box && document.activeElement === box) box.blur();
-  }
 }
 
 /** j and k, meaning whatever the active column says they mean. */
@@ -138,12 +132,6 @@ function stepInColumn(by: number): void {
       stepWorkspace(by);
       return;
     case "spanreed":
-      scrollPane(by);
-      return;
-    case "composer":
-      // Unreachable while the box has focus — every letter belongs to
-      // the message then — so this is the moment after it was blurred
-      // without the column following. Scroll what is above it.
       scrollPane(by);
       return;
     default:
@@ -395,7 +383,7 @@ export function run(id: string, argument?: string): void {
       if (fleet.selectedID === "") return;
       ui.view = "roster";
       ui.walkedIn = false;
-      ui.column = "composer";
+      ui.column = "spanreed";
       ui.composing = true;
       return;
 

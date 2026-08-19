@@ -235,7 +235,6 @@ describe("moving between columns", () => {
   function aimed(): string {
     if (document.querySelector(".rail.aimed")) return "workspaces";
     if (document.querySelector(".roster.aimed")) return "agents";
-    if (document.querySelector(".composer.aimed")) return "composer";
     if (document.querySelector(".pane.aimed")) return "spanreed";
     return "none";
   }
@@ -253,40 +252,51 @@ describe("moving between columns", () => {
     expect(aimed()).toBe("agents");
     press("l");
     expect(aimed()).toBe("spanreed");
+    // Once more walks *into* the terminal rather than onto a fourth
+    // column: the terminal is where you type to the agent.
     press("l");
-    expect(aimed()).toBe("composer");
-    press("l");
-    expect(aimed()).toBe("composer");
+    expect(ui.walkedIn).toBe(true);
     done();
   });
 
-  // Walking right ends in the box you type in, and the box hands the
-  // keyboard back rather than trapping it — h cannot leave a text
-  // field, so Escape has to.
-  test("l walks into the composer, and Escape walks back out", () => {
+  // The message box exists only where there is no terminal to type in.
+  // On the terminal tab the agent's own prompt is the input box.
+  test("the message box appears only off the terminal tab", () => {
     const done = page();
-    press("l");
-    press("l");
+    expect(document.querySelector("[data-composer]")).toBeNull();
 
+    press("T");
+    flushSync();
+
+    expect(document.querySelector("[data-composer]")).not.toBeNull();
+    done();
+  });
+
+  test("Escape and empty-Backspace both leave the box", () => {
+    const done = page();
+    press("T");
+    press("i");
+    flushSync();
     const box = document.querySelector<HTMLInputElement>("[data-composer]")!;
     expect(document.activeElement).toBe(box);
 
-    box.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "Escape",
-        code: "Escape",
-        bubbles: true,
-      }),
-    );
-    flushSync();
-
-    expect(document.activeElement).not.toBe(box);
-    expect(aimed()).toBe("spanreed");
+    for (const key of ["Escape", "Backspace"]) {
+      box.focus();
+      flushSync();
+      box.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, bubbles: true }),
+      );
+      flushSync();
+      expect(document.activeElement, key).not.toBe(box);
+    }
     done();
   });
 
-  test("a Backspace with nothing to delete leaves too, as in the TUI", () => {
+  // The seam key claims to be the way out from anywhere, and the
+  // message box is a somewhere.
+  test("Ctrl-space leaves the box as well as the terminal", () => {
     const done = page();
+    press("T");
     press("i");
     flushSync();
     const box = document.querySelector<HTMLInputElement>("[data-composer]")!;
@@ -294,8 +304,9 @@ describe("moving between columns", () => {
 
     box.dispatchEvent(
       new KeyboardEvent("keydown", {
-        key: "Backspace",
-        code: "Backspace",
+        key: " ",
+        code: "Space",
+        ctrlKey: true,
         bubbles: true,
       }),
     );

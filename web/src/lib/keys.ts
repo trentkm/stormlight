@@ -57,7 +57,7 @@ export const bindings: Binding[] = [
   {
     id: "pane-left",
     keys: "h",
-    what: "move between columns: workspaces, agents, the pane",
+    what: "move between columns; from the pane, into the terminal",
     group: "Navigate",
   },
   {
@@ -290,6 +290,20 @@ export const unavailable: Array<{ keys: string; why: string }> = [
  * with the muscle memory is owed the difference between "cannot" and
  * "not yet".
  */
+/**
+ * Keys that belong to the message box while it has the keyboard. They
+ * are not in `bindings` because the page deliberately hears nothing
+ * while you are typing — but a way out that is documented nowhere is
+ * a trap, and the hint beside the box is only readable once you are
+ * already in it.
+ */
+export const inTheBox: Array<{ keys: string; what: string }> = [
+  { keys: "Enter", what: "send the message" },
+  { keys: "Esc", what: "leave the box, keeping what you typed" },
+  { keys: "Backspace", what: "on an empty line, leave the box" },
+  { keys: "Ctrl-space", what: "leave the box" },
+];
+
 export const notYet: Array<{ keys: string; what: string }> = [
   { keys: "R", what: "rename an agent or workspace" },
   { keys: "n on workspaces", what: "add a workspace" },
@@ -398,15 +412,15 @@ export function match(
   if (event.code === "KeyK" && event.ctrlKey && focus === "roster") {
     return { id: "palette" };
   }
-  if (focus === "field") return undefined;
-  if (browserOwned(event)) return undefined;
-
   // The seam key, symmetric the way the TUI's is: out from inside, in
-  // from outside. Checked before anything else, because from inside a
-  // full-screen TUI it is the only way back.
+  // from outside — and ahead of the field guard, because "the way out"
+  // has to mean out of the message box too, not only out of a
+  // terminal.
   if (event.ctrlKey && event.code === "Space") {
     return { id: focus === "terminal" ? "walk-out" : "walk-in" };
   }
+  if (focus === "field") return undefined;
+  if (browserOwned(event)) return undefined;
 
   if (event.altKey) {
     // Keyed on physical position, not on the character produced.

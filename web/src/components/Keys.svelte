@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { bindings, notYet, unavailable } from "../lib/keys";
+  import { bindings, inTheBox, notYet, unavailable } from "../lib/keys";
 
   /**
    * `?`. What this client actually binds, read from the same table the
@@ -60,6 +60,15 @@
         </section>
       {/if}
     {/each}
+    <section>
+      <h3>In the message box</h3>
+      {#each inTheBox as entry (entry.keys)}
+        <p class="row">
+          <kbd>{entry.keys}</kbd>
+          <span class="what">{entry.what}</span>
+        </p>
+      {/each}
+    </section>
     <section class="gone">
       <h3>Not here yet</h3>
       {#each notYet as entry (entry.keys)}

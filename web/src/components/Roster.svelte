@@ -59,9 +59,25 @@
 </div>
 
 <style>
+  /* The aimed column carries the mark on its own edge and lights its
+     heading; its cursor is filled rather than tinted. A column you are
+     not in keeps a dim memory of where you were. */
   .roster.aimed {
     border-right-color: var(--aim);
-    box-shadow: inset -2px 0 0 -1px var(--aim);
+    box-shadow: inset -3px 0 0 -1px var(--aim);
+  }
+  .roster.aimed .heading {
+    color: var(--aim);
+  }
+  .roster.aimed .row.selected {
+    background: var(--band);
+    border-left-color: var(--band);
+    color: var(--band-ink);
+  }
+  .roster.aimed .row.selected .detail,
+  .roster.aimed .row.selected .age {
+    color: var(--band-ink);
+    opacity: 0.75;
   }
   .roster {
     width: 320px;

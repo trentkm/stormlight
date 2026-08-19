@@ -52,8 +52,23 @@
      */
     built.attachCustomWheelEventHandler((event) => {
       if (built.buffer.active.type === "alternate") return true;
-      const lines = event.deltaY > 0 ? 3 : -3;
-      built.scrollLines(lines);
+      // A horizontal swipe or a shift-wheel carries no vertical
+      // intention; xterm's own handler bails on it, and this one runs
+      // ahead of that guard, so it has to bail too — otherwise sideways
+      // scrolled the transcript upward.
+      if (event.deltaY === 0) return false;
+      // Proportional to what the device actually reported. A fixed
+      // three lines turned one trackpad flick — sixty momentum events
+      // of two pixels — into ninety lines.
+      const lines =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * built.rows
+            : event.deltaY / 20;
+      // Never round a real movement away to nothing.
+      const whole = Math.trunc(lines);
+      built.scrollLines(whole === 0 ? Math.sign(lines) : whole);
       return false;
     });
 

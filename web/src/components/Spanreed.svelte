@@ -34,7 +34,6 @@
     event.preventDefault();
     event.stopPropagation();
     composer?.blur();
-    ui.column = "spanreed";
   }
 
   const agent = $derived(selected());
@@ -119,31 +118,28 @@
       {/if}
     {/key}
 
-    <!-- A prompt, not a form field. This is where you talk to the
-         agent, and the agent lives one line above it in the same
-         typeface — a rounded input with a send button beside it read
-         like a chat app bolted to a terminal. -->
-    <form
-      class="composer"
-      class:aimed={ui.column === "composer" && ui.view === "roster"}
-      onsubmit={send}
-    >
-      <span class="prompt" aria-hidden="true">›</span>
-      <input
-        bind:this={composer}
-        bind:value={message}
-        data-composer
-        placeholder="message this agent"
-        aria-label="Message this agent"
-        spellcheck="false"
-        autocomplete="off"
-        onfocus={() => (ui.column = "composer")}
-        onkeydown={composerKey}
-      />
-      <span class="hint" aria-hidden="true">
-        {message.trim() ? "enter to send" : "esc to leave"}
-      </span>
-    </form>
+    <!-- Only where there is no terminal to type into. On the terminal
+         tab the agent's own prompt is the input box: walking in puts
+         the keyboard there, and a second box below it asking the same
+         question was the thing that made this feel like a chat app
+         wearing a terminal. -->
+    {#if ui.pane !== "terminal"}
+      <form class="composer" onsubmit={send}>
+        <span class="prompt" aria-hidden="true">›</span>
+        <input
+          bind:this={composer}
+          bind:value={message}
+          data-composer
+          aria-label="Message this agent"
+          spellcheck="false"
+          autocomplete="off"
+          onkeydown={composerKey}
+        />
+        <span class="hint">
+          {message.trim() ? "enter sends · esc leaves it here" : "esc leaves"}
+        </span>
+      </form>
+    {/if}
   {:else}
     <div class="empty">
       <p>No agent selected.</p>
@@ -155,8 +151,17 @@
 <style>
   /* Aimed, not walked in: the keyboard scrolls this pane, but the
      agent is not listening yet — that is Enter. */
+  /* The pane's mark is on the side it meets the roster, and its header
+     lights the way the other columns' headings do — the pane has no
+     cursor of its own, so the bar has to carry it. */
   .pane.aimed {
-    box-shadow: inset 2px 0 0 -1px var(--aim);
+    box-shadow: inset 3px 0 0 -1px var(--aim);
+  }
+  .pane.aimed header {
+    border-bottom-color: var(--aim);
+  }
+  .pane.aimed .title {
+    color: var(--aim);
   }
   .pane {
     flex: 1 1 auto;
@@ -232,10 +237,6 @@
     background: var(--bg-sunken);
     border-top: 1px solid var(--border);
   }
-  .composer.aimed {
-    border-top-color: var(--aim);
-    box-shadow: inset 0 2px 0 -1px var(--aim);
-  }
   .prompt {
     flex: 0 0 auto;
     color: var(--working);
@@ -255,7 +256,9 @@
   input:focus {
     outline: none;
   }
-  .hint {
+  /* Scoped to the composer: `.hint` is also the empty pane's second
+     line, and an unscoped opacity:0 hid it entirely. */
+  .composer .hint {
     flex: 0 0 auto;
     color: var(--muted);
     font-size: 11px;

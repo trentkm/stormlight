@@ -54,7 +54,19 @@
      the TUI marks its active pane. */
   .rail.aimed {
     border-right-color: var(--aim);
-    box-shadow: inset -2px 0 0 -1px var(--aim);
+    box-shadow: inset -3px 0 0 -1px var(--aim);
+  }
+  .rail.aimed .heading {
+    color: var(--aim);
+  }
+  .rail.aimed .row.selected {
+    background: var(--band);
+    border-left-color: var(--band);
+    color: var(--band-ink);
+  }
+  .rail.aimed .row.selected .count {
+    color: var(--band-ink) !important;
+    opacity: 0.8;
   }
   .rail {
     width: 220px;
