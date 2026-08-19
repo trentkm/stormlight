@@ -13,6 +13,8 @@ export const fleet = $state({
   selectedID: "",
   workspaceID: "",
   error: "",
+  /** Set when the server stopped accepting this tab's token. */
+  lost: "",
 });
 
 export function start(): () => void {
@@ -27,6 +29,8 @@ export function start(): () => void {
     if (!fleet.selectedID && agents.length > 0) {
       fleet.selectedID = agents[0].id;
     }
+  }, (reason) => {
+    fleet.lost = reason;
   });
 }
 

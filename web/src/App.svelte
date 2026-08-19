@@ -21,12 +21,12 @@
   );
 </script>
 
-{#if !authorized}
+{#if !authorized || fleet.lost}
   <main class="gate">
     <h1>Stormlight</h1>
     <p>
-      This page needs the token <code>stormlight serve</code> printed. Open the
-      URL it gave you.
+      {fleet.lost ||
+        "This page needs the token stormlight serve printed. Open the URL it gave you."}
     </p>
   </main>
 {:else}

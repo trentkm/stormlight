@@ -100,36 +100,74 @@ export const api = {
     call<void>("DELETE", "/api/workspaces", { workspace }),
 };
 
+/** How long to wait before reconnecting the roster, and the ceiling. */
+const rosterRetryFloor = 500;
+const rosterRetryCeiling = 10_000;
+
 /**
  * roster pushes the whole roster whenever it changes. The server never
- * expects a reply, so the only thing to handle is the socket going away:
- * reconnect, and it sends the current roster again on connect.
+ * expects a reply, so the only thing to handle is the socket going away.
+ *
+ * Which it will: the server is local, and the ordinary reason is that it
+ * restarted. That case deserves care rather than a retry loop, because
+ * the token is minted per run — the old one is now wrong, and retrying it
+ * forever would leave an empty roster, no error, and no hint that the
+ * answer is to open the new URL. So a failed reconnect asks the API what
+ * it thinks, and a refusal is reported rather than retried.
  */
-export function roster(onRoster: (agents: Agent[]) => void): () => void {
+export function roster(
+  onRoster: (agents: Agent[]) => void,
+  onLost: (reason: string) => void = () => {},
+): () => void {
   let socket: WebSocket | null = null;
-  let retry: number | undefined;
+  let timer: number | undefined;
+  let retry = rosterRetryFloor;
   let stopped = false;
 
   const connect = () => {
     if (stopped) return;
-    socket = new WebSocket(socketURL("/api/events"));
-    socket.onmessage = (event) => {
+    const live = new WebSocket(socketURL("/api/events"));
+    socket = live;
+    live.onopen = () => {
+      retry = rosterRetryFloor;
+    };
+    live.onmessage = (event) => {
       const payload = JSON.parse(event.data);
       if (payload.type === "agents") {
         onRoster(payload.agents ?? []);
       }
     };
-    socket.onclose = () => {
-      if (stopped) return;
-      // The server is local; a close means it restarted or the tab slept.
-      retry = window.setTimeout(connect, 1000);
+    live.onclose = async () => {
+      if (stopped || socket !== live) return;
+      // A WebSocket close says nothing about why the handshake failed,
+      // so ask over HTTP, where the status is legible.
+      if (await tokenRejected()) {
+        forgetToken();
+        onLost("This token is no longer accepted — the server restarted. " +
+          "Open the URL it printed.");
+        return;
+      }
+      timer = window.setTimeout(connect, retry);
+      retry = Math.min(retry * 2, rosterRetryCeiling);
     };
   };
   connect();
 
   return () => {
     stopped = true;
-    window.clearTimeout(retry);
+    window.clearTimeout(timer);
     socket?.close();
   };
+}
+
+/** tokenRejected reports whether the server is up and refusing us. */
+async function tokenRejected(): Promise<boolean> {
+  try {
+    const response = await fetch(tokened("/api/agents"));
+    return response.status === 401;
+  } catch {
+    // Unreachable is not refused: the server is down, and waiting is the
+    // right answer.
+    return false;
+  }
 }
