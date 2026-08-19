@@ -2,6 +2,7 @@
   import { claimToken } from "./lib/api";
   import { fleet, start } from "./lib/state.svelte";
   import { isUrgent } from "./lib/types";
+  import Canvas from "./components/Canvas.svelte";
   import Dispatch from "./components/Dispatch.svelte";
   import Wall from "./components/Wall.svelte";
   import Roster from "./components/Roster.svelte";
@@ -10,7 +11,7 @@
 
   const authorized = claimToken();
   let dispatching = $state(false);
-  let view = $state<"roster" | "wall">("roster");
+  let view = $state<"roster" | "wall" | "canvas">("roster");
 
   $effect(() => {
     if (!authorized) return;
@@ -42,6 +43,9 @@
         <button class:on={view === "wall"} onclick={() => (view = "wall")}>
           wall
         </button>
+        <button class:on={view === "canvas"} onclick={() => (view = "canvas")}>
+          canvas
+        </button>
       </div>
       <button onclick={() => (dispatching = true)}>dispatch</button>
       <span class="spacer"></span>
@@ -55,6 +59,8 @@
       <WorkspaceRail />
       {#if view === "wall"}
         <Wall onopen={() => (view = "roster")} />
+      {:else if view === "canvas"}
+        <Canvas onopen={() => (view = "roster")} />
       {:else}
         <Roster />
         <Spanreed />
