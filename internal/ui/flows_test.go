@@ -232,8 +232,8 @@ func TestComposerRefusesToSendIntoAnActivePrompt(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("send fired into an active prompt")
 	}
-	if model.err == nil || !strings.Contains(model.err.Error(), "terminal") {
-		t.Fatalf("guard err = %v", model.err)
+	if model.alert.err == nil || !strings.Contains(model.alert.message(), "terminal") {
+		t.Fatalf("guard err = %v", model.alert.err)
 	}
 	if model.sendInput.Value() != "oranges" {
 		t.Fatal("guard discarded the typed message")

@@ -36,10 +36,10 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// (Text paste still arrives through the terminal's own paste.)
 		path, err := pasteClipboardImage()
 		if err != nil {
-			m.err = err
+			m.complain(err)
 			return m, nil
 		}
-		m.err = nil
+		m.clearComplaint(modeCompose)
 		m.insertComposerToken(path)
 		m.syncComposerSize()
 		return m, nil
@@ -53,17 +53,19 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// The agent is showing a prompt or picker; a pasted message
 			// would type into it and Enter would pick whatever is
 			// highlighted. Answer where the prompt lives.
-			m.err = fmt.Errorf(
-				"agent is showing a prompt — Esc, then Enter opens its terminal")
+			m.complain(fmt.Errorf(
+				"agent is showing a prompt — Esc, then Enter opens its terminal"))
 			return m, nil
 		}
 		text := strings.TrimSpace(m.sendInput.Value())
 		if text == "" {
-			m.err = fmt.Errorf("message cannot be empty")
+			m.complain(fmt.Errorf("message cannot be empty"))
 			return m, nil
 		}
 		// The composer stays open for the next message; one i enters the
-		// conversation, Esc leaves it.
+		// conversation, Esc leaves it. Which is why the send has to
+		// retract the objection it disproves — the box outlives it.
+		m.clearComplaint(modeCompose)
 		m.sendInput.SetValue("")
 		m.syncComposerSize()
 		return m, actionCmd("Message sent", func(ctx context.Context) error {

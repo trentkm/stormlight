@@ -164,6 +164,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			{"< / >", "narrow or widen the focused pane"},
 			{"z", "toggle compact and expanded rows"},
 			{"r / Ctrl-l", "refresh"},
+			{"e", "read a failure in full; y copies it"},
 			{"?", "this help"},
 			{"q", "quit the dashboard"},
 		}},
@@ -211,7 +212,7 @@ func (m Model) beginRename() (tea.Model, tea.Cmd) {
 	m.renameInput.SetValue(current)
 	m.renameInput.Focus()
 	m.mode = modeRename
-	m.err = nil
+	m.clearComplaint(modeRename)
 	return m, nil
 }
 
@@ -223,7 +224,7 @@ func (m Model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		name := strings.TrimSpace(m.renameInput.Value())
 		if name == "" {
-			m.err = fmt.Errorf("name cannot be empty")
+			m.complain(fmt.Errorf("name cannot be empty"))
 			return m, nil
 		}
 		m.mode = modeNormal

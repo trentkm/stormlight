@@ -33,16 +33,12 @@ func (m Model) renderFooter() string {
 			// the footer matches whichever side of the seam is lit.
 			hintStyle = lipgloss.NewStyle().Foreground(colorBand())
 		}
-		hints := renderHints(m.commandHints(), hintStyle)
-		content = ansi.Truncate(hints, inner, "…")
-		if m.err != nil {
-			content = renderFooterError(inner, m.err.Error(), hints)
-		} else {
-			// The portal is the right pane, so its controls sit under it:
-			// the footer's alignment follows the seam the same way its
-			// color does.
-			rightAligned = m.terminalFocused()
-		}
+		content = ansi.Truncate(
+			renderHints(m.commandHints(), hintStyle), inner, "…")
+		// The portal is the right pane, so its controls sit under it:
+		// the footer's alignment follows the seam the same way its
+		// color does.
+		rightAligned = m.terminalFocused()
 	}
 	glintStyle := lipgloss.NewStyle().
 		Foreground(theme.Color(theme.Pair{
@@ -169,22 +165,6 @@ func renderHints(items []string, style lipgloss.Style) string {
 	return strings.Join(rendered, separator)
 }
 
-// renderFooterError lets an error talk over the left end of the hint row.
-// Errors are the one message that still shares the row — everything else
-// the footer used to announce either shows where it happens or rides in
-// the hints — and the hints keep their own ink beside it rather than
-// fading to gray.
-func renderFooterError(width int, message, hints string) string {
-	available := max(1, width)
-	messageWidth := clamp(available/3, 8, 28)
-	hintWidth := available - messageWidth - 2
-	if hintWidth < 12 {
-		return errorStyle().Render(truncate(message, available))
-	}
-	return errorStyle().Render(truncate(message, messageWidth)) +
-		"  " + ansi.Truncate(hints, hintWidth, "…")
-}
-
 // searchMatchLabel is the live position among search matches; it rides in
 // the hint row because the search has no other place to answer "which of
 // how many".
@@ -267,6 +247,13 @@ func (m Model) commandHints() []string {
 		return []string{"Enter apply", "Esc cancel"}
 	case modeMark:
 		return []string{"w in progress", "a needs attention", "c clear", "Esc cancel"}
+	case modeAlert:
+		// Only when there is something to scroll, exactly as the view's
+		// own key line decides it.
+		if m.alertDetailScrolls() {
+			return []string{"j/k scroll", "y copy", "Esc close"}
+		}
+		return []string{"y copy", "Esc close"}
 	}
 	rowMode := "z expand rows"
 	if m.rowsExpanded {

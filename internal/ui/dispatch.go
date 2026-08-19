@@ -492,10 +492,26 @@ func (m Model) dispatchNameVisible() bool {
 	return m.dispatchLayout(m.dispatchContentDimensions()).density.showsName()
 }
 
+// dispatchNameVisibleIn answers the same question for a region the modal is
+// not being drawn in yet — what the form would look like if it were given
+// this much room.
+func (m Model) dispatchNameVisibleIn(region int) bool {
+	width, _ := m.bodyDimensions()
+	modalWidth, modalHeight := m.dispatchModalDimensions(width, region)
+	return m.dispatchLayout(
+		max(1, modalWidth-2), max(1, modalHeight-2)).density.showsName()
+}
+
 // dispatchContentDimensions is the modal's interior for the terminal as it
 // stands, matching what renderBody hands renderDispatchModal.
 func (m Model) dispatchContentDimensions() (int, int) {
-	modalWidth, modalHeight := m.dispatchModalDimensions(m.bodyDimensions())
+	// The region the modal is drawn in, not the whole body: the task
+	// composer is persistent state sized from this, and a textarea sized
+	// for a taller box than the one it is drawn into scrolls itself and
+	// stays scrolled. See resetTextareaScroll.
+	width, height := m.bodyDimensions()
+	modalWidth, modalHeight := m.dispatchModalDimensions(
+		width, m.modalRegion(width, height))
 	return max(1, modalWidth-2), max(1, modalHeight-2)
 }
 
@@ -1039,20 +1055,23 @@ func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 	case "enter":
 		if attempted, ok := m.pathNav.jump(); attempted {
 			if !ok {
-				m.err = fmt.Errorf(
+				m.complain(fmt.Errorf(
 					"no such directory: %s",
 					strings.TrimSpace(m.pathNav.filter.Value()),
-				)
+				))
 			} else {
-				m.err = nil
+				// m.mode, not the dispatch form: this navigator is the
+				// add-workspace picker too, and a hardcoded surface makes
+				// the clear a no-op there.
+				m.clearComplaint(m.mode)
 			}
 			return false
 		}
 		if m.pathNav.chosen() == "" {
-			m.err = fmt.Errorf("no matching directory")
+			m.complain(fmt.Errorf("no matching directory"))
 			return false
 		}
-		m.err = nil
+		m.clearComplaint(m.mode)
 		return true
 	}
 	m.pathNav.update(msg)
@@ -1496,7 +1515,7 @@ func (m *Model) moveDispatchFocus(delta int) {
 
 func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	if len(m.providers) == 0 {
-		m.err = fmt.Errorf("no providers configured")
+		m.complain(fmt.Errorf("no providers configured"))
 		return m, nil
 	}
 	request := app.DispatchRequest{
@@ -1508,7 +1527,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 		Host:     m.dispatchHost,
 	}
 	if request.Task == "" {
-		m.err = fmt.Errorf("task cannot be empty")
+		m.complain(fmt.Errorf("task cannot be empty"))
 		return m, nil
 	}
 	// Only this machine's directories can be checked here. On another
@@ -1516,7 +1535,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	// path that happens to exist here too would pass for the wrong
 	// reason. That host resolves it, and says so if it cannot.
 	if request.Host == "" && !isDirectory(request.Cwd) {
-		m.err = fmt.Errorf("working directory is unavailable: %s", request.Cwd)
+		m.complain(fmt.Errorf("working directory is unavailable: %s", request.Cwd))
 		return m, nil
 	}
 	m.mode = modeNormal
@@ -1569,7 +1588,7 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	m.dispatchPrefix = ""
 	m.focusForm()
 	m.syncTaskComposerSize()
-	m.err = nil
+	m.clearComplaint(modeDispatch)
 	return m, nil
 }
 

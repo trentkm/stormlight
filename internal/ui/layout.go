@@ -73,70 +73,61 @@ func (m Model) renderBody() string {
 		// The floating program draws over everything, the mode's own
 		// modal included — Yazi opened from the dispatch form floats
 		// above the form it will answer.
-		return overlayCentered(
+		body = overlayCentered(
 			body,
 			m.renderOverlayPopup(),
 			width,
 			contentHeight,
 		)
 	}
-	return body
+	// The failure card sits above even that: whatever is on screen, a
+	// thing that just went wrong is the most important thing on it. With
+	// no card there is nothing to composite, and the body goes out as the
+	// mode drew it — compositing anyway would crop every frame to
+	// bodyDimensions and cost the pane titles their last column.
+	card := m.renderAlertCard(width, contentHeight)
+	if card == "" {
+		return body
+	}
+	// Composited at the body's own width rather than the nominal one:
+	// a row the mode drew wider than bodyDimensions — the pane titles
+	// run to the screen's edge — would otherwise lose its last column
+	// for as long as a card stands.
+	return overlayBottomLeft(
+		body, card, max(width, blockWidth(body)), contentHeight, 1,
+		m.inputStripRows(),
+	)
 }
 
 func (m Model) renderModeBody(width, contentHeight int) string {
 	dashboard := m.renderDashboardBody(width, contentHeight)
+	// A modal centers in what the failure card leaves, not under it. The
+	// card is anchored to the foot of the body and the two would otherwise
+	// want the same rows — and the card would win, covering the form's
+	// last lines while the only key it named cancelled that form.
+	region := m.modalRegion(width, contentHeight)
+	var modal string
 	switch m.mode {
 	case modeDispatch:
-		return overlayCentered(
-			dashboard,
-			m.renderDispatchModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderDispatchModal(width, region)
 	case modeAddWorkspace:
-		return overlayCentered(
-			dashboard,
-			m.renderAddWorkspaceModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderAddWorkspaceModal(width, region)
 	case modeRename:
-		return overlayCentered(
-			dashboard,
-			m.renderRenameModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderRenameModal(width, region)
 	case modeMark:
-		return overlayCentered(
-			dashboard,
-			m.renderMarkModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderMarkModal(width, region)
 	case modeInfo:
-		return overlayCentered(
-			dashboard,
-			m.renderInfoModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderInfoModal(width, region)
 	case modeHelp:
-		return overlayCentered(
-			dashboard,
-			m.renderHelpModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderHelpModal(width, region)
 	case modeHistory:
-		return overlayCentered(
-			dashboard,
-			m.renderHistoryModal(width, contentHeight),
-			width,
-			contentHeight,
-		)
+		modal = m.renderHistoryModal(width, region)
+	case modeAlert:
+		modal = m.renderAlertModal(width, region)
+	default:
+		return dashboard
 	}
-	return dashboard
+	return overlayCenteredIn(dashboard, modal, width, contentHeight, region)
 }
 
 func (m Model) renderDashboardBody(width, contentHeight int) string {
@@ -454,6 +445,46 @@ func renderModal(content string, width, height int) string {
 }
 
 func overlayCentered(background, foreground string, width, height int) string {
+	return overlayCenteredIn(background, foreground, width, height, height)
+}
+
+// overlayCenteredIn centers a block horizontally across the background and
+// vertically within its top region rows — the whole height, unless
+// something else has claimed the rows below it.
+func overlayCenteredIn(
+	background, foreground string,
+	width, height, region int,
+) string {
+	return overlayComposite(background, foreground, width, height,
+		func(foregroundWidth, foregroundHeight int) (int, int) {
+			return max(0, (width-foregroundWidth)/2),
+				max(0, (min(region, height)-foregroundHeight)/2)
+		})
+}
+
+// overlayBottomLeft floats a block against the foot of the body, indented
+// from the left edge — where a message about what just happened belongs,
+// near the footer that answers for it, and out of the way of the rows the
+// cursor is working in.
+func overlayBottomLeft(
+	background, foreground string,
+	width, height, indent, lift int,
+) string {
+	return overlayComposite(background, foreground, width, height,
+		func(foregroundWidth, foregroundHeight int) (int, int) {
+			return clamp(indent, 0, max(0, width-foregroundWidth)),
+				max(0, height-foregroundHeight-max(0, lift))
+		})
+}
+
+// overlayComposite paints foreground over background at the position the
+// placer picks for its measured size. Nothing reflows: the background keeps
+// its dimensions and the block covers what it covers.
+func overlayComposite(
+	background, foreground string,
+	width, height int,
+	place func(foregroundWidth, foregroundHeight int) (int, int),
+) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -471,8 +502,7 @@ func overlayCentered(background, foreground string, width, height int) string {
 		return strings.Join(backgroundLines, "\n")
 	}
 
-	left := max(0, (width-foregroundWidth)/2)
-	top := max(0, (height-len(foregroundLines))/2)
+	left, top := place(foregroundWidth, len(foregroundLines))
 	for index, foregroundLine := range foregroundLines {
 		row := top + index
 		if row >= len(backgroundLines) {
@@ -491,6 +521,15 @@ func overlayCentered(background, foreground string, width, height int) string {
 			fitLine(after, width-rightStart)
 	}
 	return strings.Join(backgroundLines, "\n")
+}
+
+// blockWidth is the widest row of a rendered block.
+func blockWidth(block string) int {
+	widest := 0
+	for _, line := range strings.Split(block, "\n") {
+		widest = max(widest, ansi.StringWidth(line))
+	}
+	return widest
 }
 
 func fitBlock(content string, width, height int) string {

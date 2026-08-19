@@ -347,10 +347,21 @@ func (m Model) ptyCursor() *tea.Cursor {
 	if !visible {
 		return nil
 	}
+	return m.gridCursorAt(x, y)
+}
+
+// gridCursorAt places a cursor sitting at the terminal grid's (x, y), or
+// answers that it has nowhere to go.
+func (m Model) gridCursorAt(x, y int) *tea.Cursor {
 	width := max(1, m.width-1)
 	if width < 72 {
 		// The narrow single-pane layout draws no Spanreed grid to anchor
 		// a cursor to.
+		return nil
+	}
+	if m.alertCoversRow(ptyGridTop + y) {
+		// The card is composited over the cell the cursor names, and the
+		// cursor is hardware: it would blink inside the error box.
 		return nil
 	}
 	if m.ptyZoom {

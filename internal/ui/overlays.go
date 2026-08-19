@@ -96,7 +96,7 @@ func (m *Model) openOverlay(spec overlaySpec) tea.Cmd {
 func (m Model) handleOverlayOpened(msg overlayOpenedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		msg.spec.cleanup()
-		m.err = msg.err
+		m.raise(msg.err)
 		return m, nil
 	}
 	if msg.generation != m.overlayGeneration || m.overlay != nil {
@@ -202,7 +202,7 @@ func (m Model) overlayCursor() *tea.Cursor {
 
 func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	if m.nvimPath == "" {
-		m.err = fmt.Errorf("Neovim is not installed or not on PATH")
+		m.complain(fmt.Errorf("Neovim is not installed or not on PATH"))
 		return m, nil
 	}
 	cwd := strings.TrimSpace(m.cwdInput.Value())
@@ -211,7 +211,7 @@ func (m Model) openTaskEditor() (tea.Model, tea.Cmd) {
 	}
 	spec, err := taskEditorSpec(m.nvimPath, cwd, m.taskInput.Value())
 	if err != nil {
-		m.err = err
+		m.raise(err)
 		return m, nil
 	}
 	return m, m.openOverlay(spec)
@@ -273,7 +273,7 @@ func (m Model) openYazi() (tea.Model, tea.Cmd) {
 	// A missing Yazi here says nothing about another machine, which has
 	// its own PATH and answers for itself.
 	if m.yaziPath == "" && m.addWorkspaceHostName() == "" && m.dispatchHost == "" {
-		m.err = fmt.Errorf("yazi is not installed or not on PATH")
+		m.complain(fmt.Errorf("yazi is not installed or not on PATH"))
 		return m, nil
 	}
 	// The picker browses the machine the form is already aimed at.

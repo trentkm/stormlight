@@ -795,14 +795,16 @@ func TestAddWorkspaceOnlyOffersNewDirectoryActions(t *testing.T) {
 	assertViewFitsPane(t, model, 100, 28)
 }
 
-func TestFooterKeepsCommandsVisibleWithError(t *testing.T) {
+func TestFooterLeavesFailuresToTheCard(t *testing.T) {
 	model := NewModel(stubBackend{})
 	model.width = 100
-	model.err = errors.New("attach failed")
+	model.raise(errors.New("attach failed"))
 
 	footer := ansi.Strip(model.renderFooter())
-	if !strings.Contains(footer, "attach failed") ||
-		!strings.Contains(footer, "j/k select") ||
+	if strings.Contains(footer, "attach failed") {
+		t.Fatalf("the hint row is still carrying the error: %q", footer)
+	}
+	if !strings.Contains(footer, "j/k select") ||
 		!strings.Contains(footer, "n add") {
 		t.Fatalf("error displaced contextual commands: %q", footer)
 	}
@@ -2410,20 +2412,28 @@ func TestDirectoryPickerIncludesDiscoveredExecutionRoots(t *testing.T) {
 	}
 }
 
-func TestActionErrorSurvivesSuccessfulRefresh(t *testing.T) {
+func TestActionErrorSurvivesRefreshAndKeystrokes(t *testing.T) {
 	model := NewModel(stubBackend{})
-	model.err = errors.New("attach failed")
+	model.raise(errors.New("attach failed"))
 
 	updated, _ := model.Update(dashboardMsg{})
 	model = updated.(Model)
-	if model.err == nil || model.err.Error() != "attach failed" {
-		t.Fatalf("refresh cleared action error: %#v", model.err)
+	if model.alert.err == nil || model.alert.message() != "attach failed" {
+		t.Fatalf("refresh cleared action error: %#v", model.alert.err)
 	}
 
+	// Moving the cursor is not an answer to a failure: the card stays
+	// until it is read, dismissed, or replaced.
 	updated, _ = model.Update(runeKey("j"))
 	model = updated.(Model)
-	if model.err != nil {
-		t.Fatalf("key did not clear action error: err=%v", model.err)
+	if model.alert.err == nil {
+		t.Fatalf("a keystroke swept the failure away")
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.alert.err != nil {
+		t.Fatalf("Esc did not dismiss the failure: %v", model.alert.err)
 	}
 }
 
