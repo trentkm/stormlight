@@ -1,28 +1,109 @@
 <script lang="ts">
   import { claimToken } from "./lib/api";
+  import { reconcileFocus, run, ui } from "./lib/commands.svelte";
+  import { focusOf, match } from "./lib/keys";
   import { fleet, start } from "./lib/state.svelte";
   import { isUrgent } from "./lib/types";
   import Canvas from "./components/Canvas.svelte";
   import Dispatch from "./components/Dispatch.svelte";
+  import Confirm from "./components/Confirm.svelte";
+  import Keys from "./components/Keys.svelte";
+  import Palette from "./components/Palette.svelte";
   import Wall from "./components/Wall.svelte";
   import Roster from "./components/Roster.svelte";
   import Spanreed from "./components/Spanreed.svelte";
   import WorkspaceRail from "./components/WorkspaceRail.svelte";
 
   const authorized = claimToken();
-  let dispatching = $state(false);
-  let view = $state<"roster" | "wall" | "canvas">("roster");
 
   $effect(() => {
     if (!authorized) return;
     return start();
   });
 
+  /**
+   * One listener for the whole page.
+   *
+   * It runs in the capture phase so the page's keys are decided before
+   * anything nested can swallow them — but it takes only what the
+   * keymap claims, and preventDefault fires only for a key that
+   * actually meant something. Everything else reaches whatever it was
+   * going to reach, which is how a walked-in terminal keeps its
+   * keystrokes and the browser keeps its chords.
+   */
+  /** Anything with its own keyboard: while one is open the page's keys
+   *  wait, including inside the dispatch form, whose selects and
+   *  buttons are not text fields and would otherwise be typing
+   *  commands at the roster behind the modal. */
+  const overlaid = $derived(
+    ui.palette || ui.keys || ui.dispatching || ui.confirmDelete !== "",
+  );
+
+  /**
+   * Walking in is a claim about where the keyboard is, and the DOM can
+   * disagree — so the claim is checked after focus settles, wherever it
+   * landed. focusout rather than focusin, because focus can leave the
+   * terminal for nothing at all (a click on the host's padding blurs
+   * the agent's textarea to the body, and no focusin fires anywhere).
+   */
+  function focusLeft() {
+    // After this event, not during it: relatedTarget lies about
+    // programmatic moves, and by the next tick activeElement is simply
+    // the answer.
+    queueMicrotask(() => reconcileFocus(document.activeElement));
+  }
+
+  // An overlay closing is the other half of the walk's bookkeeping.
+  // focusout alone cannot do it: when the dialog goes, focus is still
+  // inside it as the event fires, so the reconcile sees an overlay and
+  // waits — correctly — and nothing looks again once the dialog is
+  // gone. This looks again.
+  let wasOverlaid = false;
+  $effect(() => {
+    const now = overlaid;
+    const closing = wasOverlaid && !now;
+    wasOverlaid = now;
+    if (closing) queueMicrotask(() => reconcileFocus(document.activeElement));
+  });
+
+  // A half-typed sequence does not survive an overlay opening, however
+  // it was opened: coming back to a roster that has moved and finishing
+  // "m" on whatever is selected now is how the wrong agent gets marked.
+  // An effect rather than a keydown check, because the mouse can open
+  // and close an overlay without a key ever being pressed.
+  $effect(() => {
+    if (overlaid) ui.pending = "";
+  });
+
+  function key(event: KeyboardEvent) {
+    if (overlaid) return;
+    const found = match(
+      event,
+      focusOf(document.activeElement, ui.walkedIn),
+      ui.pending,
+    );
+    if (!found) {
+      ui.pending = "";
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    ui.pending = found.pending ?? "";
+    if (found.id !== "") run(found.id);
+  }
+
+  const agentName = (id: string) => {
+    const found = fleet.agents.find((agent) => agent.id === id);
+    return found ? found.name || found.task || id.slice(0, 8) : "this agent";
+  };
+
   const urgent = $derived(fleet.agents.filter(isUrgent).length);
   const working = $derived(
     fleet.agents.filter((a) => a.process_live && !isUrgent(a)).length,
   );
 </script>
+
+<svelte:window onkeydowncapture={key} onfocusout={focusLeft} />
 
 {#if !authorized || fleet.lost}
   <main class="gate">
@@ -37,17 +118,31 @@
     <header class="top">
       <span class="wordmark">Stormlight</span>
       <div class="views">
-        <button class:on={view === "roster"} onclick={() => (view = "roster")}>
+        <button
+          class:on={ui.view === "roster"}
+          onclick={() => run("view-roster")}
+          title="1"
+        >
           roster
         </button>
-        <button class:on={view === "wall"} onclick={() => (view = "wall")}>
+        <button
+          class:on={ui.view === "wall"}
+          onclick={() => run("view-wall")}
+          title="2"
+        >
           wall
         </button>
-        <button class:on={view === "canvas"} onclick={() => (view = "canvas")}>
+        <button
+          class:on={ui.view === "canvas"}
+          onclick={() => run("view-canvas")}
+          title="3"
+        >
           canvas
         </button>
       </div>
-      <button onclick={() => (dispatching = true)}>dispatch</button>
+      <button onclick={() => run("dispatch")} title="n">dispatch</button>
+      <button class="ghost" onclick={() => run("palette")} title="⌘K">⌘K</button>
+      <button class="ghost" onclick={() => run("help")} title="?">?</button>
       <span class="spacer"></span>
       {#if urgent}
         <span class="tally waiting">◆ {urgent} needs input</span>
@@ -55,12 +150,12 @@
       <span class="tally working">● {working} working</span>
     </header>
 
-    <div class="body">
+    <div class="body" class:zoomed={ui.zoomed && ui.view === "roster"}>
       <WorkspaceRail />
-      {#if view === "wall"}
-        <Wall onopen={() => (view = "roster")} />
-      {:else if view === "canvas"}
-        <Canvas onopen={() => (view = "roster")} />
+      {#if ui.view === "wall"}
+        <Wall onopen={() => run("view-roster")} />
+      {:else if ui.view === "canvas"}
+        <Canvas onopen={() => run("view-roster")} />
       {:else}
         <Roster />
         <Spanreed />
@@ -75,8 +170,25 @@
     {/if}
   </div>
 
-  {#if dispatching}
-    <Dispatch onclose={() => (dispatching = false)} />
+  {#if ui.dispatching}
+    <Dispatch onclose={() => (ui.dispatching = false)} />
+  {/if}
+  {#if ui.palette}
+    <Palette
+      onrun={(id, argument) => run(id, argument)}
+      onclose={() => (ui.palette = false)}
+    />
+  {/if}
+  {#if ui.keys}
+    <Keys onclose={() => (ui.keys = false)} />
+  {/if}
+  {#if ui.confirmDelete}
+    <Confirm
+      what="Delete {agentName(ui.confirmDelete)}?"
+      detail="The agent's process stops and its session is removed."
+      onconfirm={() => run("delete-confirmed")}
+      oncancel={() => (ui.confirmDelete = "")}
+    />
   {/if}
 {/if}
 
@@ -129,6 +241,14 @@
   .views button:hover:not(.on) {
     color: var(--band);
   }
+  .ghost {
+    padding: 2px 8px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .ghost:hover {
+    color: var(--band);
+  }
   .tally {
     font-size: 12px;
   }
@@ -142,6 +262,12 @@
     display: flex;
     flex: 1 1 auto;
     min-height: 0;
+  }
+  /* alt+z: the terminal takes the body, the way the TUI's zoom drops
+     the roster and rail to give the agent the room. */
+  .body.zoomed :global(.rail),
+  .body.zoomed :global(.roster) {
+    display: none;
   }
   .error {
     display: flex;

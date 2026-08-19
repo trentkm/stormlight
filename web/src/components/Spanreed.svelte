@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "../lib/api";
+  import { run, ui } from "../lib/commands.svelte";
   import { act, fleet, selected } from "../lib/state.svelte";
   import { statusVisual } from "../lib/theme";
   import Terminal from "./Terminal.svelte";
@@ -7,7 +8,16 @@
   import Transcript from "./Transcript.svelte";
 
   let message = $state("");
-  let pane = $state<"terminal" | "transcript" | "diff">("terminal");
+  let composer = $state<HTMLInputElement>();
+
+  // `i` asks for the reply box; honouring it here keeps the key's
+  // meaning in the dispatcher and the focus where the box is.
+  $effect(() => {
+    if (ui.composing && composer) {
+      composer.focus();
+      ui.composing = false;
+    }
+  });
 
   const agent = $derived(selected());
 
@@ -28,23 +38,29 @@
       <span class="title">{agent.name || agent.task}</span>
       <nav class="panes">
         <button
-          class:on={pane === "terminal"}
-          onclick={() => (pane = "terminal")}
+          class:on={ui.pane === "terminal"}
+          onclick={() => run("pane-terminal")}
+          title="t"
         >
           terminal
         </button>
         <button
-          class:on={pane === "transcript"}
-          onclick={() => (pane = "transcript")}
+          class:on={ui.pane === "transcript"}
+          onclick={() => run("pane-transcript")}
+          title="alt+t"
         >
           transcript
         </button>
-        <button class:on={pane === "diff"} onclick={() => (pane = "diff")}>
+        <button
+          class:on={ui.pane === "diff"}
+          onclick={() => run("pane-diff")}
+          title="d"
+        >
           diff
         </button>
       </nav>
       <span class="spacer"></span>
-      <button onclick={() => act(() => api.interrupt(agent.id))}>interrupt</button>
+      <button onclick={() => run("interrupt")} title="x">interrupt</button>
       {#if agent.attention}
         <button onclick={() => act(() => api.clearAttention(agent.id))}>clear</button>
       {/if}
@@ -66,18 +82,23 @@
          tearing it down on every tab switch would churn seed and
          geometry for a keystroke's worth of reading. -->
     {#key agent.id}
-      <div class="stack" class:hidden={pane !== "terminal"}>
-        <Terminal agentID={agent.id} />
+      <div
+        class="stack"
+        class:hidden={ui.pane !== "terminal"}
+        class:walked={ui.walkedIn}
+      >
+        <Terminal agentID={agent.id} focused={ui.walkedIn} />
       </div>
-      {#if pane === "transcript"}
+      {#if ui.pane === "transcript"}
         <Transcript id={agent.id} />
-      {:else if pane === "diff"}
+      {:else if ui.pane === "diff"}
         <Diff id={agent.id} />
       {/if}
     {/key}
 
     <form onsubmit={send}>
       <input
+        bind:this={composer}
         bind:value={message}
         placeholder="Message this agent…"
         aria-label="Message this agent"
@@ -143,6 +164,11 @@
   }
   .stack {
     display: contents;
+  }
+  /* Walked in, the terminal says so: the seam the TUI paints in accent
+     when the portal has the keyboard. */
+  .stack.walked :global(.terminal) {
+    box-shadow: inset 0 0 0 1px var(--ice);
   }
   .stack.hidden {
     display: none;

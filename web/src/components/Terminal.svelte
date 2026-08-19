@@ -6,10 +6,19 @@
   import { attach, type Attachment, type Connection } from "../lib/terminal";
   import { theme } from "../lib/theme";
 
-  let { agentID }: { agentID: string } = $props();
+  /**
+   * `focused` is the walked-in state: when it is true the agent has the
+   * keyboard, so xterm takes focus and every keystroke the page did not
+   * claim goes down the socket. When it is false the terminal is a
+   * picture — it still paints, but it must not hold focus, or the
+   * roster's own keys would be typed into someone's agent.
+   */
+  let { agentID, focused = false }: { agentID: string; focused?: boolean } =
+    $props();
 
   let host: HTMLDivElement;
   let connection = $state<Connection>("live");
+  let term = $state<Terminal>();
 
   $effect(() => {
     // Re-runs when the selected agent changes: one terminal per agent,
@@ -18,7 +27,7 @@
     const id = agentID;
     if (!id || !host) return;
 
-    const term = new Terminal({
+    const built = new Terminal({
       fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: 13,
       lineHeight: 1.2,
@@ -31,12 +40,13 @@
       },
     });
     const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(host);
+    built.loadAddon(fitAddon);
+    built.open(host);
+    term = built;
     try {
       // The GPU renderer is what makes many live terminals affordable.
       // It is not available everywhere, and the canvas fallback is fine.
-      term.loadAddon(new WebglAddon());
+      built.loadAddon(new WebglAddon());
     } catch {
       // Fallback renderer; nothing to do.
     }
@@ -45,7 +55,7 @@
     const laidOut = () => host.offsetWidth > 0 && host.offsetHeight > 0;
     if (laidOut()) fitAddon.fit();
     let attachment: Attachment | undefined = attach(
-      term,
+      built,
       fitAddon,
       id,
       laidOut,
@@ -58,12 +68,43 @@
       observer.disconnect();
       attachment?.close();
       attachment = undefined;
-      term.dispose();
+      term = undefined;
+      built.dispose();
     };
+  });
+
+  // Focus follows the walked-in state rather than the mouse.
+  $effect(() => {
+    if (!term) return;
+    if (focused) term.focus();
+    else term.blur();
+  });
+
+  /**
+   * xterm focuses itself on mousedown, unconditionally and from its own
+   * listener. Reacting to the `focused` prop cannot undo that — the
+   * prop did not change — so a click on a terminal nobody walked into
+   * left it holding the keyboard, and every key the page does not claim
+   * went down the socket to a live agent. Watching focusin is what
+   * actually catches it.
+   */
+  $effect(() => {
+    if (!host) return;
+    const stolen = () => {
+      if (!focused) term?.blur();
+    };
+    host.addEventListener("focusin", stolen);
+    return () => host.removeEventListener("focusin", stolen);
   });
 </script>
 
-<div class="terminal" bind:this={host}>
+<!-- data-walk-target is the walked-in keyboard's anchor, and it is a
+     data attribute rather than a class because `.terminal` is not ours
+     alone: xterm adds that class to its own container, so every
+     watching wall cell answers to it too. Focus rules that keyed on the
+     class were one shared view away from handing an agent's keyboard to
+     a cell that only wanted to be looked at. -->
+<div class="terminal" data-walk-target bind:this={host}>
   {#if connection === "reconnecting"}
     <!-- Said out loud, because the alternative is a frozen pane that
          looks like an agent gone quiet. -->

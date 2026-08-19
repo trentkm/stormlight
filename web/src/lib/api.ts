@@ -1,4 +1,10 @@
-import type { Agent, Provider, TranscriptEntry, Workspace } from "./types";
+import type {
+  Agent,
+  Mark,
+  Provider,
+  TranscriptEntry,
+  Workspace,
+} from "./types";
 
 // The token is shell access to every workspace the catalog knows. It
 // arrives in the URL because that is the only way `stormlight serve` can
@@ -126,6 +132,8 @@ export const api = {
   send: (id: string, message: string) =>
     call<void>("POST", `/api/agents/${id}/message`, { message }),
   interrupt: (id: string) => call<void>("POST", `/api/agents/${id}/interrupt`),
+  mark: (id: string, mark: Mark) =>
+    call<void>("POST", `/api/agents/${id}/mark`, { mark }),
   clearAttention: (id: string) =>
     call<void>("POST", `/api/agents/${id}/clear-attention`),
   rename: (id: string, name: string) =>
