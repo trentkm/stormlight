@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -44,6 +45,78 @@ type Report struct {
 	// Musl says the host links against musl rather than glibc, which is
 	// a different binary rather than a slower one.
 	Musl bool
+	// AccountShell is the shell the host's account records — the default
+	// providers are looked for and launched under.
+	AccountShell string
+	// Shells is what each of the host's login shells can see, in a
+	// stable order with the account's own first. Empty when the probe
+	// was not asked about any providers.
+	Shells []ShellReport
+	// Asked are the providers the survey asked about, which is what
+	// "this shell sees everything" is measured against.
+	Asked []string
+}
+
+// ShellReport is one login shell on a host, and which of the providers
+// asked about its login PATH can find.
+//
+// It is evidence rather than advice. A machine cannot say which shell
+// its owner meant to work in — that is why [hosts.*].shell exists — but
+// it can say which shells can see the programs, and that turns an
+// unanswerable question into a list.
+type ShellReport struct {
+	Path string
+	// Finds are the providers this shell's login PATH can see, named as
+	// they were asked about.
+	Finds []string
+}
+
+// Sees reports whether this shell can find a provider.
+func (s ShellReport) Sees(program string) bool {
+	return slices.Contains(s.Finds, program)
+}
+
+// Account is the report for the shell this host's account records, which
+// is the one Stormlight uses when nothing says otherwise.
+func (r Report) Account() (ShellReport, bool) {
+	for _, shell := range r.Shells {
+		if shell.Path == r.AccountShell {
+			return shell, true
+		}
+	}
+	return ShellReport{}, false
+}
+
+// SuggestedShell is the shell worth naming in [hosts.*], if any.
+//
+// The rule is narrow on purpose. The account's own shell is the default
+// and stays the default whenever it can see everything — a host that
+// works is not improved by being configured. A suggestion is made only
+// when some other shell can see strictly more, which is the situation
+// the setting exists for and the one nothing else can diagnose: the
+// provider is installed, it works when its owner runs it, and the
+// account shell cannot find it.
+//
+// Nothing here decides anything. What it returns is the shell that saw
+// the most, for a caller to act on or offer.
+func (r Report) SuggestedShell() (ShellReport, bool) {
+	if len(r.Asked) == 0 || len(r.Shells) == 0 {
+		return ShellReport{}, false
+	}
+	account, known := r.Account()
+	if known && len(account.Finds) == len(r.Asked) {
+		return ShellReport{}, false
+	}
+	best := ShellReport{}
+	for _, shell := range r.Shells {
+		if shell.Path == r.AccountShell || len(shell.Finds) <= len(account.Finds) {
+			continue
+		}
+		if len(shell.Finds) > len(best.Finds) {
+			best = shell
+		}
+	}
+	return best, best.Path != ""
 }
 
 // Ready reports whether the host can host agents at all.
@@ -98,10 +171,60 @@ for manager in brew apt-get dnf pacman apk; do
 done
 `
 
+// shellSurveyScript asks the host which of its shells can see the
+// providers. It runs only when there are providers to ask about, because
+// it starts a login shell per candidate and a login shell is not cheap —
+// the dashboard's own reachability check has no use for the answer.
+//
+// Candidates are the account's own shell, whatever /etc/shells
+// registers, and a short list of names that may be installed without
+// being registered. Nothing here picks one: the answer is a list of
+// shells and what each can see, and choosing is somebody else's job.
+const shellSurveyScript = `
+NL='
+'
+shells="$NL"
+add_shell() {
+  [ -n "$1" ] || return 0
+  [ -x "$1" ] || return 0
+  case "$shells" in *"$NL$1$NL"*) return 0 ;; esac
+  shells="$shells$1$NL"
+}
+add_shell "$SHELL"
+if [ -r /etc/shells ]; then
+  while IFS= read -r line; do
+    case "$line" in ''|\#*) continue ;; esac
+    add_shell "$line"
+  done < /etc/shells
+fi
+for name in fish zsh bash ksh dash sh; do
+  add_shell "$(command -v "$name" 2>/dev/null)"
+done
+printf 'account_shell=%s\n' "$SHELL"
+# One invocation per shell, asking about every provider at once. The
+# query is "command -v x >/dev/null 2>&1 && echo ..." repeated, which is
+# the same program in sh, bash, zsh, ksh, and fish alike — a loop or an
+# if would not be.
+query=""
+for program in $providers; do
+  query="$query command -v $program >/dev/null 2>&1 && echo shell_found=$program;"
+done
+printf '%s' "$shells" | while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  printf 'shell=%s\n' "$candidate"
+  [ -n "$query" ] || continue
+  # A login shell may greet, print a motd, or complain; only the lines
+  # this asked for are read, and the rest is noise by construction.
+  "$candidate" -lc "$query" 2>/dev/null | while IFS= read -r line; do
+    case "$line" in shell_found=*) printf '%s\n' "$line" ;; esac
+  done
+done
+`
+
 // Probe asks a host what it has. It is the first thing that touches a
 // machine, so its errors are the ones that have to be legible: an
 // unaccepted host key, a refused login, a name that does not resolve.
-func Probe(ctx context.Context, transport *Transport) (Report, error) {
+func Probe(ctx context.Context, transport *Transport, providers ...string) (Report, error) {
 	// The configured binary travels as an environment variable rather
 	// than spliced into the script: it is a path someone typed, and a
 	// script is not the place to find out it had a quote in it.
@@ -109,6 +232,13 @@ func Probe(ctx context.Context, transport *Transport) (Report, error) {
 	if bin := transport.Host().Bin; bin != "" {
 		script = "STORMLIGHT_CONFIGURED_BIN=" +
 			shellQuote([]string{bin}) + "\n" + script
+	}
+	// The survey costs a login shell per candidate, so it is asked for
+	// rather than assumed: the dashboard's reachability check wants an
+	// answer in a frame and has no use for this one.
+	asked := plainWords(providers)
+	if len(asked) > 0 {
+		script += "providers='" + strings.Join(asked, " ") + "'\n" + shellSurveyScript
 	}
 	command := transport.ShellCommand(ctx, script)
 	var stdout, stderr bytes.Buffer
@@ -121,12 +251,20 @@ func Probe(ctx context.Context, transport *Transport) (Report, error) {
 		return Report{}, fmt.Errorf("%s: %w", transport.Host().Name, err)
 	}
 
+	report := parseReport(stdout.String())
+	report.Host = transport.Host().Name
+	report.Asked = asked
+	return report, nil
+}
+
+// parseReport reads back what the probe printed: one key=value per line,
+// and for the survey a shell followed by what it found.
+func parseReport(answered string) Report {
 	report := Report{
-		Host:       transport.Host().Name,
 		Stormlight: Requirement{Name: "stormlight", Required: true},
 		Yazi:       Requirement{Name: "yazi"},
 	}
-	for _, line := range strings.Split(stdout.String(), "\n") {
+	for _, line := range strings.Split(answered, "\n") {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
 		if !ok {
 			continue
@@ -146,9 +284,38 @@ func Probe(ctx context.Context, transport *Transport) (Report, error) {
 			report.PackageManager = value
 		case "libc":
 			report.Musl = value == "musl"
+		case "account_shell":
+			report.AccountShell = value
+		case "shell":
+			report.Shells = append(report.Shells, ShellReport{Path: value})
+		case "shell_found":
+			// Belongs to the shell most recently named: the survey walks
+			// one shell at a time and says so before it answers.
+			if last := len(report.Shells) - 1; last >= 0 {
+				report.Shells[last].Finds = append(report.Shells[last].Finds, value)
+			}
 		}
 	}
-	return report, nil
+	return report
+}
+
+// plainWords keeps the provider names that can be asked about without
+// quoting, and drops the rest.
+//
+// A name with a space or a quote in it would have to survive being read
+// by a shell this machine does not choose, and there is no spelling that
+// means the same thing in POSIX and in fish. Rather than guess, such a
+// provider is simply not surveyed — the host is still probed, and the
+// answer is silent about that one rather than wrong about it.
+func plainWords(names []string) []string {
+	plain := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" || strings.ContainsAny(name, " \t\n\r'\"$`\\;&|<>()*?[]{}#~!") {
+			continue
+		}
+		plain = append(plain, name)
+	}
+	return plain
 }
 
 // InstallPath is where Stormlight puts itself on a host that has none.

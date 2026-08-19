@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -287,5 +288,123 @@ func TestAnArchiveGetsLongerThanAQuestion(t *testing.T) {
 	if archiveTimeout < 5*time.Minute {
 		t.Fatalf("archiveTimeout = %v; a slow link should be waited out, not failed",
 			archiveTimeout)
+	}
+}
+
+// TestTheSurveyIsOnlyAskedForWhenItIsWanted: it costs a login shell per
+// candidate, and the dashboard's reachability check has no use for the
+// answer.
+func TestTheSurveyIsOnlyAskedForWhenItIsWanted(t *testing.T) {
+	if strings.Contains(probeScript, "/etc/shells") {
+		t.Fatal("the survey must not be part of every probe")
+	}
+	if !strings.Contains(shellSurveyScript, "/etc/shells") {
+		t.Fatal("the survey should read the host's registered shells")
+	}
+}
+
+// TestTheSurveyAsksEveryShellTheSameWay: the query runs inside a shell
+// this machine did not choose, so it may only use syntax they all share.
+// A loop or an `if` would work everywhere except fish, which is the one
+// host this was written for.
+func TestTheSurveyAsksEveryShellTheSameWay(t *testing.T) {
+	query := ""
+	for _, line := range strings.Split(shellSurveyScript, "\n") {
+		if strings.Contains(line, `query="$query`) {
+			query = line
+		}
+	}
+	if query == "" {
+		t.Fatalf("the survey should build a query:\n%s", shellSurveyScript)
+	}
+	// What gets built is `command -v x >/dev/null 2>&1 && echo ...` —
+	// and nothing that any of sh, bash, zsh, ksh, or fish reads
+	// differently.
+	for _, forbidden := range []string{" if ", "for ", "[[", "$(", "`", "${", "$@", "$0"} {
+		if strings.Contains(query, forbidden) {
+			t.Fatalf("the query uses %q, which is not the same in every shell: %s",
+				forbidden, query)
+		}
+	}
+}
+
+// TestOnlyPlainProviderNamesAreSurveyed: a name with a quote in it would
+// have to survive a shell this machine does not choose, and there is no
+// spelling that means the same thing in POSIX and in fish. Such a
+// provider is left out rather than asked about wrongly.
+func TestOnlyPlainProviderNamesAreSurveyed(t *testing.T) {
+	got := plainWords([]string{
+		"codex", "claude", "", "my agent", `quote'd`, "semi;colon", "sub$(x)", "my-agent_2",
+	})
+	want := []string{"codex", "claude", "my-agent_2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("plainWords = %q, want %q", got, want)
+	}
+}
+
+// TestTheSurveyIsReadBackPerShell: the script names a shell and then
+// answers for it, so an answer belongs to whatever was named last.
+func TestTheSurveyIsReadBackPerShell(t *testing.T) {
+	report := parseReport(`platform=Darwin arm64
+account_shell=/opt/homebrew/bin/fish
+shell=/opt/homebrew/bin/fish
+shell_found=codex
+shell_found=claude
+shell=/bin/zsh
+shell=/bin/bash
+shell_found=claude
+`)
+	if report.AccountShell != "/opt/homebrew/bin/fish" {
+		t.Fatalf("account shell = %q", report.AccountShell)
+	}
+	if len(report.Shells) != 3 {
+		t.Fatalf("shells = %+v", report.Shells)
+	}
+	if !slices.Equal(report.Shells[0].Finds, []string{"codex", "claude"}) {
+		t.Fatalf("fish should see both: %+v", report.Shells[0])
+	}
+	// A shell that finds nothing is still reported. The absence is the
+	// finding — it is what says the account's shell is the problem.
+	if len(report.Shells[1].Finds) != 0 || report.Shells[1].Path != "/bin/zsh" {
+		t.Fatalf("zsh should be listed and empty: %+v", report.Shells[1])
+	}
+	if !report.Shells[2].Sees("claude") || report.Shells[2].Sees("codex") {
+		t.Fatalf("bash should see only claude: %+v", report.Shells[2])
+	}
+}
+
+// TestAShellIsSuggestedOnlyWhenItSeesMore: a host that works is not
+// improved by being configured.
+func TestAShellIsSuggestedOnlyWhenItSeesMore(t *testing.T) {
+	survey := func(account string, shells ...ShellReport) Report {
+		return Report{Asked: []string{"codex", "claude"}, AccountShell: account, Shells: shells}
+	}
+	fish := ShellReport{Path: "/opt/fish", Finds: []string{"codex", "claude"}}
+	zshBoth := ShellReport{Path: "/bin/zsh", Finds: []string{"codex", "claude"}}
+	zshNone := ShellReport{Path: "/bin/zsh"}
+	zshOne := ShellReport{Path: "/bin/zsh", Finds: []string{"claude"}}
+
+	// The account's shell sees everything: nothing to say.
+	if _, ok := survey("/bin/zsh", zshBoth, fish).SuggestedShell(); ok {
+		t.Fatal("a host that works should be left alone")
+	}
+	// It sees nothing and another sees everything: the case this exists for.
+	got, ok := survey("/bin/zsh", zshNone, fish).SuggestedShell()
+	if !ok || got.Path != "/opt/fish" {
+		t.Fatalf("SuggestedShell = %+v, %v", got, ok)
+	}
+	// It sees some: still worth naming the one that sees more.
+	got, ok = survey("/bin/zsh", zshOne, fish).SuggestedShell()
+	if !ok || got.Path != "/opt/fish" {
+		t.Fatalf("SuggestedShell = %+v, %v", got, ok)
+	}
+	// Nothing sees more than the account's shell, so there is no better
+	// answer — even though it cannot see everything.
+	if _, ok := survey("/bin/zsh", zshOne, ShellReport{Path: "/bin/sh"}).SuggestedShell(); ok {
+		t.Fatal("a shell that sees no more is not a suggestion")
+	}
+	// A probe that asked nothing suggests nothing.
+	if _, ok := (Report{AccountShell: "/bin/zsh", Shells: []ShellReport{fish}}).SuggestedShell(); ok {
+		t.Fatal("with nothing asked about there is nothing to conclude")
 	}
 }

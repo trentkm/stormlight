@@ -911,7 +911,11 @@ func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
 			// read, and in a popup this process is the only thing holding
 			// the window open. So it reports, waits, and only then
 			// returns the error.
-			err := setUpHost(cmd.Context(), transport, args[0], out, install, withYazi)
+			// The providers this dashboard is configured for, which is
+			// what "can this machine run my agents" means.
+			providers := provider.NewRegistryWithSpecs(providerSpecs(cfg)).Binaries()
+			err := setUpHost(
+				cmd.Context(), transport, args[0], out, providers, install, withYazi)
 			if err != nil {
 				fmt.Fprintf(out, "\n%v\n", err)
 			}
@@ -935,9 +939,10 @@ func setUpHost(
 	transport *remote.Transport,
 	host string,
 	out io.Writer,
+	providers []string,
 	install, withYazi bool,
 ) error {
-	report, err := remote.Probe(ctx, transport)
+	report, err := remote.Probe(ctx, transport, providers...)
 	if err != nil {
 		return err
 	}
@@ -946,6 +951,10 @@ func setUpHost(
 		if !report.Ready() || !report.Yazi.Present() {
 			fmt.Fprintf(out, "\nRun with --install to fix this.\n")
 		}
+		// A host with nothing to install is the likeliest one to need
+		// this: everything is present, and the only thing wrong is which
+		// shell is being asked.
+		adviseHostShell(out, transport, host, report)
 		return nil
 	}
 
@@ -969,13 +978,108 @@ func setUpHost(
 			return err
 		}
 	}
-	fresh, err := remote.Probe(ctx, transport)
+	fresh, err := remote.Probe(ctx, transport, providers...)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(out)
 	writeRemoteReport(out, fresh)
+	// Last, because it is the one thing here that depends on the machine
+	// being finished: a provider installed after the first probe is a
+	// provider the first survey could not have seen.
+	adviseHostShell(out, transport, host, fresh)
 	return nil
+}
+
+// adviseHostShell acts on the survey, when the survey found something to
+// act on and nobody has already answered the question by hand.
+func adviseHostShell(
+	out io.Writer, transport *remote.Transport, host string, report remote.Report,
+) {
+	suggested, ok := report.SuggestedShell()
+	if !ok {
+		return
+	}
+	if configured := transport.Host().Shell; configured != "" {
+		// Already answered. Saying so is still worth it: the person
+		// chose that shell, and this is the evidence about it.
+		if configured != suggested.Path {
+			fmt.Fprintf(out, "\n[hosts.%s] names %s, but %s can see more (%s).\n",
+				host, configured, suggested.Path, strings.Join(suggested.Finds, " "))
+		}
+		return
+	}
+	recordHostShell(out, host, suggested.Path)
+}
+
+// recordHostShell names the shell a host's providers actually live in.
+//
+// It is written rather than merely suggested because the alternative is
+// what produced the issue this came from: a provider that is plainly
+// installed, reported missing, and a setting discoverable only by
+// reading the failure carefully. The host has just been asked which of
+// its shells can see the providers, and one of them can see more than
+// the account's — that is evidence, not a guess, and acting on it is the
+// whole point of having asked.
+//
+// An existing setting is never touched. Someone who has already named a
+// shell has answered this question, and the answer is theirs.
+func recordHostShell(out io.Writer, host, shell string) {
+	path := config.Path()
+	if path == "" {
+		return
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintf(out, "\nSet shell = %q in [hosts.%s]: %v\n", shell, host, err)
+		return
+	}
+	updated, why := withHostShell(string(existing), host, shell)
+	if why != "" {
+		fmt.Fprintf(out, "\n%s\n", why)
+		return
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		fmt.Fprintf(out, "\nAdd shell = %q to [hosts.%s] in %s: %v\n", shell, host, path, err)
+		return
+	}
+	fmt.Fprintf(out, "\nRecorded shell = %q in %s\n", shell, path)
+}
+
+// withHostShell adds the shell to a host's section, and says why not
+// when it does not.
+//
+// The file is edited as text rather than parsed and re-emitted: a config
+// someone wrote by hand carries comments and an ordering that round
+// tripping through a TOML encoder would quietly throw away.
+func withHostShell(existing, host, shell string) (updated, why string) {
+	entry := fmt.Sprintf("shell = %q", shell)
+	header := fmt.Sprintf("[hosts.%s]", host)
+	lines := strings.Split(existing, "\n")
+	start := slices.Index(lines, header)
+	if start < 0 {
+		section := "\n" + header + "\n" + entry + "\n"
+		if existing != "" && !strings.HasSuffix(existing, "\n") {
+			section = "\n" + section
+		}
+		return existing + section, ""
+	}
+	// The section runs to the next table header, and only within it does
+	// a `shell =` line belong to this host.
+	for _, line := range lines[start+1:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			break
+		}
+		if strings.HasPrefix(trimmed, "shell") &&
+			strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, "shell")), "=") {
+			return "", fmt.Sprintf(
+				"[hosts.%s] already names a shell — leaving it alone. "+
+					"Providers were found by %s.", host, shell)
+		}
+	}
+	inserted := slices.Insert(slices.Clone(lines), start+1, entry)
+	return strings.Join(inserted, "\n"), ""
 }
 
 // recordHostBinary writes the installed path into the host's
@@ -1055,6 +1159,34 @@ func writeRemoteReport(out io.Writer, report remote.Report) {
 		yaziNote = "optional — " + report.YaziInstallCommand()
 	}
 	line(report.Yazi, yaziNote)
+	writeShellSurvey(out, report)
+}
+
+// writeShellSurvey prints what each of the host's shells can see, when
+// there was anything to ask about.
+//
+// Every shell is listed, including the ones that find nothing, because
+// the absence is the finding: seeing that the account's shell sees no
+// providers and another sees all of them is the entire diagnosis, and it
+// only reads that way side by side.
+func writeShellSurvey(out io.Writer, report remote.Report) {
+	if len(report.Asked) == 0 || len(report.Shells) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\n  providers, by the shell that can see them:\n")
+	for _, shell := range report.Shells {
+		found := "—"
+		if len(shell.Finds) > 0 {
+			found = strings.Join(shell.Finds, " ")
+		}
+		mark := " "
+		if shell.Path == report.AccountShell {
+			mark = "*"
+		}
+		fmt.Fprintf(out, "  %s %-34s %s\n", mark, shell.Path, found)
+	}
+	fmt.Fprintf(out, "  * the account's own shell, used unless [hosts.%s] names another\n",
+		report.Host)
 }
 
 func newWorkspaceCommand(cfg config.Config) *cobra.Command {
