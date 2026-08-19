@@ -19,6 +19,23 @@
     }
   });
 
+  /**
+   * The way out of the box. While it holds focus the page's keys are
+   * suppressed — every letter belongs to the message — so h cannot
+   * step back out and something else has to. Escape does, and so does
+   * a Backspace with nothing left to delete, which is how the TUI
+   * leaves its reply box.
+   */
+  function composerKey(event: KeyboardEvent) {
+    const leaving =
+      event.key === "Escape" ||
+      (event.key === "Backspace" && message === "");
+    if (!leaving) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composer?.blur();
+  }
+
   const agent = $derived(selected());
 
   async function send(event: SubmitEvent) {
@@ -65,6 +82,12 @@
         </button>
       </nav>
       <span class="spacer"></span>
+      <!-- Walking in is invisible otherwise: the keyboard changes hands
+           and nothing on screen says so, which reads as the key having
+           done nothing at all. -->
+      {#if ui.walkedIn}
+        <span class="typing">typing to this agent · ctrl-space leaves</span>
+      {/if}
       <button onclick={() => run("interrupt")} title="x">interrupt</button>
       {#if agent.attention}
         <button onclick={() => act(() => api.clearAttention(agent.id))}>clear</button>
@@ -92,7 +115,11 @@
         class:hidden={ui.pane !== "terminal"}
         class:walked={ui.walkedIn}
       >
-        <Terminal agentID={agent.id} focused={ui.walkedIn} />
+        <Terminal
+          agentID={agent.id}
+          focused={ui.walkedIn}
+          onenter={() => run("walk-in")}
+        />
       </div>
       {#if ui.pane === "transcript"}
         <Transcript id={agent.id} />
@@ -101,15 +128,28 @@
       {/if}
     {/key}
 
-    <form onsubmit={send}>
-      <input
-        bind:this={composer}
-        bind:value={message}
-        placeholder="Message this agent…"
-        aria-label="Message this agent"
-      />
-      <button type="submit" disabled={!message.trim()}>send</button>
-    </form>
+    <!-- Only where there is no terminal to type into. On the terminal
+         tab the agent's own prompt is the input box: walking in puts
+         the keyboard there, and a second box below it asking the same
+         question was the thing that made this feel like a chat app
+         wearing a terminal. -->
+    {#if ui.pane !== "terminal"}
+      <form class="composer" onsubmit={send}>
+        <span class="prompt" aria-hidden="true">›</span>
+        <input
+          bind:this={composer}
+          bind:value={message}
+          data-composer
+          aria-label="Message this agent"
+          spellcheck="false"
+          autocomplete="off"
+          onkeydown={composerKey}
+        />
+        <span class="hint">
+          {message.trim() ? "enter sends · esc leaves it here" : "esc leaves"}
+        </span>
+      </form>
+    {/if}
   {:else}
     <div class="empty">
       <p>No agent selected.</p>
@@ -121,8 +161,15 @@
 <style>
   /* Aimed, not walked in: the keyboard scrolls this pane, but the
      agent is not listening yet — that is Enter. */
-  .pane.aimed {
-    box-shadow: inset 1px 0 0 var(--ice);
+  /* No rule down the seam: the aimed column is said by its filled
+     cursor and its lit heading, and a bright line beside them was a
+     second answer to a question already answered. The pane has no
+     cursor of its own, so its header carries the whole signal. */
+  .pane.aimed header {
+    border-bottom-color: var(--aim);
+  }
+  .pane.aimed .title {
+    color: var(--aim);
   }
   .pane {
     flex: 1 1 auto;
@@ -177,8 +224,15 @@
   }
   /* Walked in, the terminal says so: the seam the TUI paints in accent
      when the portal has the keyboard. */
+  /* The terminal you are typing into is lit at its own edge — not a
+     rule down the layout's seam, but the box that has the keyboard. */
   .stack.walked :global(.terminal) {
-    box-shadow: inset 0 0 0 1px var(--ice);
+    box-shadow: inset 0 0 0 1px var(--aim);
+  }
+  .typing {
+    color: var(--aim);
+    font-size: 11px;
+    letter-spacing: 0.02em;
   }
   .stack.hidden {
     display: none;
@@ -187,26 +241,47 @@
     border-color: var(--failed);
     color: var(--failed);
   }
-  form {
+  /* One surface with the terminal above it: same ground, same
+     typeface, a prompt where a prompt belongs. */
+  .composer {
     display: flex;
+    align-items: baseline;
     gap: 8px;
     flex: 0 0 auto;
-    padding: 8px 10px;
-    background: var(--bg-raised);
+    padding: 7px 12px;
+    background: var(--bg-sunken);
     border-top: 1px solid var(--border);
+  }
+  .prompt {
+    flex: 0 0 auto;
+    color: var(--working);
+    font-weight: 600;
   }
   input {
     flex: 1 1 auto;
-    padding: 6px 10px;
-    background: var(--field);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-bright);
     font: inherit;
+  }
+  input::placeholder {
+    color: var(--muted);
   }
   input:focus {
     outline: none;
-    border-color: var(--ice);
+  }
+  /* Scoped to the composer: `.hint` is also the empty pane's second
+     line, and an unscoped opacity:0 hid it entirely. */
+  .composer .hint {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 11px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .composer:focus-within .hint {
+    opacity: 1;
   }
   .empty {
     margin: auto;

@@ -107,10 +107,17 @@ function stepColumn(by: number): void {
   // one would move a cursor nobody can see.
   if (ui.zoomed) return;
   const at = columns.indexOf(ui.column);
+  // Walking right off the end walks *in*. The pane's terminal is where
+  // you type to the agent, so "keep going right" ending one step short
+  // of it — at a column you can look at but not type in — was the
+  // wrong place to stop.
+  if (by > 0 && at === columns.length - 1) {
+    if (fleet.selectedID !== "" && ui.pane === "terminal") ui.walkedIn = true;
+    return;
+  }
   const next = Math.min(columns.length - 1, Math.max(0, at + by));
   ui.column = columns[next];
-  // Leaving the pane lets go of the terminal; arriving is not the same
-  // as walking in, which is Enter's job.
+  // Leaving the pane lets go of the terminal.
   if (ui.column !== "spanreed") ui.walkedIn = false;
 }
 
@@ -300,6 +307,7 @@ export function run(id: string, argument?: string): void {
       ui.walkedIn = false;
       ui.zoomed = false;
       ui.column = "agents";
+      document.querySelector<HTMLElement>("[data-composer]")?.blur();
       return;
     case "zoom": {
       // Zoom hides the rail and the roster, so it brings the view that
@@ -375,6 +383,7 @@ export function run(id: string, argument?: string): void {
       if (fleet.selectedID === "") return;
       ui.view = "roster";
       ui.walkedIn = false;
+      ui.column = "spanreed";
       ui.composing = true;
       return;
 

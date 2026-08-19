@@ -252,8 +252,95 @@ describe("moving between columns", () => {
     expect(aimed()).toBe("agents");
     press("l");
     expect(aimed()).toBe("spanreed");
+    // Once more walks *into* the terminal rather than onto a fourth
+    // column: the terminal is where you type to the agent.
     press("l");
-    expect(aimed()).toBe("spanreed");
+    expect(ui.walkedIn).toBe(true);
+    done();
+  });
+
+  // Walking in changes who owns the keyboard, and a change nobody can
+  // see reads as a key that did nothing.
+  test("walking in says so on screen", () => {
+    const done = page();
+    expect(document.body.textContent).not.toContain("typing to this agent");
+
+    press("l");
+    press("l");
+
+    expect(ui.walkedIn).toBe(true);
+    expect(document.body.textContent).toContain("typing to this agent");
+    done();
+  });
+
+  test("clicking the terminal walks in", () => {
+    const done = page();
+    expect(ui.walkedIn).toBe(false);
+
+    document
+      .querySelector("[data-walk-target]")!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    flushSync();
+
+    expect(ui.walkedIn).toBe(true);
+    expect(document.body.textContent).toContain("typing to this agent");
+    done();
+  });
+
+  // The message box exists only where there is no terminal to type in.
+  // On the terminal tab the agent's own prompt is the input box.
+  test("the message box appears only off the terminal tab", () => {
+    const done = page();
+    expect(document.querySelector("[data-composer]")).toBeNull();
+
+    press("T");
+    flushSync();
+
+    expect(document.querySelector("[data-composer]")).not.toBeNull();
+    done();
+  });
+
+  test("Escape and empty-Backspace both leave the box", () => {
+    const done = page();
+    press("T");
+    press("i");
+    flushSync();
+    const box = document.querySelector<HTMLInputElement>("[data-composer]")!;
+    expect(document.activeElement).toBe(box);
+
+    for (const key of ["Escape", "Backspace"]) {
+      box.focus();
+      flushSync();
+      box.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, bubbles: true }),
+      );
+      flushSync();
+      expect(document.activeElement, key).not.toBe(box);
+    }
+    done();
+  });
+
+  // The seam key claims to be the way out from anywhere, and the
+  // message box is a somewhere.
+  test("Ctrl-space leaves the box as well as the terminal", () => {
+    const done = page();
+    press("T");
+    press("i");
+    flushSync();
+    const box = document.querySelector<HTMLInputElement>("[data-composer]")!;
+    expect(document.activeElement).toBe(box);
+
+    box.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: " ",
+        code: "Space",
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
+    flushSync();
+
+    expect(document.activeElement).not.toBe(box);
     done();
   });
 

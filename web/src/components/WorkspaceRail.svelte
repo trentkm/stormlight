@@ -52,8 +52,17 @@
 <style>
   /* The column with the keyboard is lit along its inner edge, the way
      the TUI marks its active pane. */
-  .rail.aimed {
-    border-right-color: var(--ice);
+  .rail.aimed .heading {
+    color: var(--aim);
+  }
+  .rail.aimed .row.selected {
+    background: var(--band);
+    border-left-color: var(--band);
+    color: var(--band-ink);
+  }
+  .rail.aimed .row.selected .count {
+    color: var(--band-ink) !important;
+    opacity: 0.8;
   }
   .rail {
     width: 220px;

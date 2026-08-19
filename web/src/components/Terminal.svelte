@@ -13,8 +13,17 @@
    * picture — it still paints, but it must not hold focus, or the
    * roster's own keys would be typed into someone's agent.
    */
-  let { agentID, focused = false }: { agentID: string; focused?: boolean } =
-    $props();
+  let {
+    agentID,
+    focused = false,
+    onenter,
+  }: {
+    agentID: string;
+    focused?: boolean;
+    /** The terminal was clicked: someone wants to type here. The page
+     *  decides whether that becomes a walk-in; this only asks. */
+    onenter?: () => void;
+  } = $props();
 
   let host: HTMLDivElement;
   let connection = $state<Connection>("live");
@@ -39,6 +48,39 @@
         selectionBackground: terminal.selectionBackground,
       },
     });
+    /**
+     * The wheel scrolls the terminal, not the agent.
+     *
+     * An agent that has asked for mouse reporting gets wheel events as
+     * input, and a CLI with a prompt reads them as history — so
+     * scrolling up over the transcript cycled through past prompts
+     * instead of showing what scrolled off. In the normal buffer there
+     * is scrollback and scrolling it is unambiguously what was meant.
+     * In the alternate screen there is none, and the wheel belongs to
+     * whatever full-screen program is drawing there.
+     */
+    built.attachCustomWheelEventHandler((event) => {
+      if (built.buffer.active.type === "alternate") return true;
+      // A horizontal swipe or a shift-wheel carries no vertical
+      // intention; xterm's own handler bails on it, and this one runs
+      // ahead of that guard, so it has to bail too — otherwise sideways
+      // scrolled the transcript upward.
+      if (event.deltaY === 0) return false;
+      // Proportional to what the device actually reported. A fixed
+      // three lines turned one trackpad flick — sixty momentum events
+      // of two pixels — into ninety lines.
+      const lines =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * built.rows
+            : event.deltaY / 20;
+      // Never round a real movement away to nothing.
+      const whole = Math.trunc(lines);
+      built.scrollLines(whole === 0 ? Math.sign(lines) : whole);
+      return false;
+    });
+
     const fitAddon = new FitAddon();
     built.loadAddon(fitAddon);
     built.open(host);
@@ -73,28 +115,52 @@
     };
   });
 
-  // Focus follows the walked-in state rather than the mouse.
+  // Focus follows the walked-in state rather than the mouse. Walking
+  // in also follows the tail: the prompt you are about to type at is
+  // at the bottom, and arriving somewhere scrolled up is arriving
+  // where you cannot see what you are doing.
   $effect(() => {
     if (!term) return;
-    if (focused) term.focus();
-    else term.blur();
+    if (focused) {
+      term.scrollToBottom();
+      term.focus();
+    } else {
+      term.blur();
+    }
   });
 
   /**
-   * xterm focuses itself on mousedown, unconditionally and from its own
-   * listener. Reacting to the `focused` prop cannot undo that — the
-   * prop did not change — so a click on a terminal nobody walked into
-   * left it holding the keyboard, and every key the page does not claim
-   * went down the socket to a live agent. Watching focusin is what
-   * actually catches it.
+   * A click on the terminal is a request to type in it.
+   *
+   * xterm focuses itself on mousedown from its own listener, which used
+   * to be pure hazard: a click meant to read left the terminal holding
+   * the keyboard, and every key the page did not claim went down the
+   * socket to a live agent. So the click now *asks* — and the page
+   * answers by walking in or not. If it does not, the focus xterm took
+   * for itself is handed straight back.
+   *
+   * The claim is remembered across the moment because mousedown runs
+   * before the focus it causes, and the answer arrives a render later.
    */
   $effect(() => {
     if (!host) return;
-    const stolen = () => {
-      if (!focused) term?.blur();
+    let claiming = false;
+    const claim = () => {
+      claiming = true;
+      onenter?.();
+      queueMicrotask(() => {
+        claiming = false;
+      });
     };
+    const stolen = () => {
+      if (!focused && !claiming) term?.blur();
+    };
+    host.addEventListener("mousedown", claim);
     host.addEventListener("focusin", stolen);
-    return () => host.removeEventListener("focusin", stolen);
+    return () => {
+      host.removeEventListener("mousedown", claim);
+      host.removeEventListener("focusin", stolen);
+    };
   });
 </script>
 
@@ -118,6 +184,14 @@
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px 10px;
+    /* Anchored to the bottom, because a terminal's geometry is shared:
+       another viewer can hold it at more rows than this pane can show,
+       and then something has to be clipped. Clipping the top costs
+       scrollback that scrolls back; clipping the bottom costs the
+       prompt and the status line — the two things you always need. */
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
     /* The terminal's own ground, in both themes: the padding around
        the screen has to be the screen's color, or a light dashboard
        frames the agent's output in a bright margin. */

@@ -80,14 +80,22 @@ beforeEach(() => {
  * these name the movement rather than accepting any movement at all.
  */
 describe("moving between columns", () => {
-  test("l walks right to the end and stops", () => {
+  // Walking right off the end walks *in*: the terminal is where you
+  // type to the agent, so stopping one column short of it — at
+  // something you can look at but not type in — was the wrong place to
+  // stop.
+  test("l walks right, and off the end into the terminal", () => {
     ui.column = "workspaces";
     run("pane-right");
     expect(ui.column).toBe("agents");
     run("pane-right");
     expect(ui.column).toBe("spanreed");
+    expect(ui.walkedIn).toBe(false);
+
     run("pane-right");
+
     expect(ui.column).toBe("spanreed");
+    expect(ui.walkedIn).toBe(true);
   });
 
   test("h walks left to the end and stops", () => {
@@ -98,6 +106,26 @@ describe("moving between columns", () => {
     expect(ui.column).toBe("workspaces");
     run("pane-left");
     expect(ui.column).toBe("workspaces");
+  });
+
+  test("walking right into nothing walks into nothing", () => {
+    fleet.selectedID = "";
+    ui.column = "spanreed";
+
+    run("pane-right");
+
+    expect(ui.walkedIn).toBe(false);
+  });
+
+  // The terminal is what l walks into; on another tab there is no
+  // terminal there to walk into.
+  test("walking right off the end does nothing on the diff tab", () => {
+    run("pane-diff");
+    ui.column = "spanreed";
+
+    run("pane-right");
+
+    expect(ui.walkedIn).toBe(false);
   });
 
   test("leaving the pane lets go of the terminal", () => {
