@@ -96,13 +96,19 @@ func TestAForeignPlatformGetsItsOwnBuild(t *testing.T) {
 	if !(Report{Platform: local}).CanCopyBinary() {
 		t.Fatal("the same platform should be copyable")
 	}
-	foreign := Report{Host: "devbox", Platform: "Linux aarch64"}
+	foreignPlatform := "Linux aarch64"
+	want := Target{OS: "linux", Arch: "arm64"}
+	if localTarget, ok := TargetFor(local); ok && localTarget == want {
+		foreignPlatform = "Darwin arm64"
+		want.OS = "darwin"
+	}
+	foreign := Report{Host: "devbox", Platform: foreignPlatform}
 	if foreign.CanCopyBinary() {
 		t.Fatal("a different platform must not be copied to")
 	}
 	target, ok := foreign.Target()
-	if !ok || target.OS != "linux" || target.Arch != "arm64" {
-		t.Fatalf("target = %+v, ok = %v", target, ok)
+	if !ok || target != want {
+		t.Fatalf("target = %+v, ok = %v, want %+v", target, ok, want)
 	}
 }
 
