@@ -51,7 +51,10 @@
     // and all, the instant they returned.
     if (!scroller) return;
     const watcher = new IntersectionObserver(
-      ([entry]) => (visible = entry.isIntersecting),
+      // The last entry, not the first: deliveries batch, in order, and
+      // acting on the oldest would leave a fast flap parked on a stale
+      // answer until the next crossing.
+      (entries) => (visible = entries[entries.length - 1].isIntersecting),
       { root: scroller, rootMargin: "200px" },
     );
     watcher.observe(host);
@@ -268,6 +271,10 @@
   }
   .needs {
     position: absolute;
+    /* Above the .reach overlay in paint order but transparent to the
+       pointer: this banner marks the one cell the wall most wants
+       clicked, and it must not shield the click it invites. */
+    pointer-events: none;
     left: 0;
     right: 0;
     bottom: 0;
