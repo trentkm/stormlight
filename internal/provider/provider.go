@@ -30,6 +30,11 @@ type Adapter interface {
 	ID() agent.Provider
 	Label() string
 	Resolve(prompt string, mode agent.PermissionMode) (Launch, error)
+	// Binary is the program this provider runs, as a name to look up
+	// rather than a path some machine already resolved. It is what a
+	// host is asked about when the question is whether that machine can
+	// run this provider at all.
+	Binary() string
 	// CanResume reports whether this adapter has a resume path at all.
 	// Capability is a value, not a type: one adapter implementation serves
 	// every command-line provider, and whether a given one can be reopened
@@ -66,6 +71,10 @@ type commandAdapter struct {
 
 func (a commandAdapter) ID() agent.Provider {
 	return a.id
+}
+
+func (a commandAdapter) Binary() string {
+	return a.binary
 }
 
 func (a commandAdapter) Label() string {
@@ -334,6 +343,24 @@ func (r *Registry) Infos() []Info {
 		})
 	}
 	return infos
+}
+
+// Binaries are the programs the configured providers run, deduplicated
+// and in registration order. A host is asked about these — which of its
+// shells can see them is the question that decides whether it can host
+// an agent at all.
+func (r *Registry) Binaries() []string {
+	seen := make(map[string]bool, len(r.order))
+	binaries := make([]string, 0, len(r.order))
+	for _, id := range r.order {
+		binary := r.adapters[id].Binary()
+		if binary == "" || seen[binary] {
+			continue
+		}
+		seen[binary] = true
+		binaries = append(binaries, binary)
+	}
+	return binaries
 }
 
 func (r *Registry) IDs() []agent.Provider {

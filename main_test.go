@@ -239,3 +239,95 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return content
 }
+
+// TestAShellIsAddedToTheSectionItBelongsTo: the file is edited as text,
+// so the edit has to land in the right table and nowhere else.
+func TestAShellIsAddedToTheSectionItBelongsTo(t *testing.T) {
+	existing := `[defaults]
+provider = "codex"
+
+# the one I actually use
+[hosts.mini]
+bin = "/Users/trent/.local/bin/stormlight"
+
+[hosts.other]
+bin = "/opt/stormlight"
+`
+	updated, why := withHostShell(existing, "mini", "/opt/homebrew/bin/fish")
+	if why != "" {
+		t.Fatalf("it should have written: %s", why)
+	}
+	want := `[defaults]
+provider = "codex"
+
+# the one I actually use
+[hosts.mini]
+shell = "/opt/homebrew/bin/fish"
+bin = "/Users/trent/.local/bin/stormlight"
+
+[hosts.other]
+bin = "/opt/stormlight"
+`
+	if updated != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", updated, want)
+	}
+}
+
+// TestAnExistingShellIsNeverOverwritten: someone who has named a shell
+// has answered this question, and the answer is theirs.
+func TestAnExistingShellIsNeverOverwritten(t *testing.T) {
+	existing := `[hosts.mini]
+shell = "/bin/zsh"
+bin = "/opt/stormlight"
+`
+	updated, why := withHostShell(existing, "mini", "/opt/homebrew/bin/fish")
+	if why == "" {
+		t.Fatal("an existing setting must not be replaced")
+	}
+	if updated != "" {
+		t.Fatalf("nothing should have been rewritten: %q", updated)
+	}
+	if !strings.Contains(why, "already names a shell") {
+		t.Fatalf("it should say why: %s", why)
+	}
+}
+
+// TestAnotherHostsShellIsNotThisHostsShell: a `shell` line belongs to the
+// table it is under, and a text edit that forgets that would read the
+// neighbour's setting as this one's.
+func TestAnotherHostsShellIsNotThisHostsShell(t *testing.T) {
+	existing := `[hosts.mini]
+bin = "/opt/stormlight"
+
+[hosts.other]
+shell = "/bin/zsh"
+`
+	updated, why := withHostShell(existing, "mini", "/opt/homebrew/bin/fish")
+	if why != "" {
+		t.Fatalf("the neighbour's setting is not this host's: %s", why)
+	}
+	if !strings.Contains(updated, "[hosts.mini]\nshell = \"/opt/homebrew/bin/fish\"") {
+		t.Fatalf("it should have been added to mini:\n%s", updated)
+	}
+	// And the neighbour is untouched.
+	if strings.Count(updated, `shell = "/bin/zsh"`) != 1 {
+		t.Fatalf("the other host changed:\n%s", updated)
+	}
+}
+
+// TestAHostWithNoSectionGetsOne: naming a host is enough to use it, so
+// the first thing ever recorded about one may have nowhere to go yet.
+func TestAHostWithNoSectionGetsOne(t *testing.T) {
+	for _, existing := range []string{"", "[defaults]\nprovider = \"codex\"\n", "no trailing newline"} {
+		updated, why := withHostShell(existing, "mini", "/opt/homebrew/bin/fish")
+		if why != "" {
+			t.Fatalf("it should have written: %s", why)
+		}
+		if !strings.Contains(updated, "[hosts.mini]\nshell = \"/opt/homebrew/bin/fish\"\n") {
+			t.Fatalf("a section should have been added:\n%q", updated)
+		}
+		if existing != "" && !strings.HasPrefix(updated, existing) {
+			t.Fatalf("what was there should be kept:\n%q", updated)
+		}
+	}
+}

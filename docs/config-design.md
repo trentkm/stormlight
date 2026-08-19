@@ -169,6 +169,30 @@ A configured shell that is missing or not executable is reported as that —
 naming the setting and the host — rather than as every provider on the host
 having gone missing, which is what the symptom otherwise looks like.
 
+`stormlight remote setup <host>` answers the question rather than leaving it
+to be discovered by failure. It asks the host which of its login shells can
+see the configured providers — the account's own, whatever `/etc/shells`
+registers, and a few names that may be installed without being registered —
+and prints the result side by side:
+
+```
+  providers, by the shell that can see them:
+  * /opt/homebrew/bin/fish             claude
+    /bin/bash                          claude codex
+    /bin/zsh                           claude
+  * the account's own shell, used unless [hosts.mini] names another
+```
+
+When the account's shell sees strictly fewer providers than another, setup
+records `shell` for that host and says so. This is evidence rather than a
+guess: the machine was asked, and it answered. A host whose account shell can
+see everything is left alone — a host that works is not improved by being
+configured — and a `shell` someone has already set by hand is never
+overwritten.
+
+The survey costs a login shell per candidate, so it runs only when there are
+providers to ask about. The dashboard's own reachability check skips it.
+
 ## Wiring
 
 - New `internal/config` package: `config.Load()` → `Config` struct with the

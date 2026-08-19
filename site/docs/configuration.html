@@ -188,6 +188,23 @@ provider = <span class="s">"claude"</span>
     <p>A configured shell that is missing or not executable is reported as that &mdash;
     naming the setting and the host &mdash; rather than as every provider on the host having
     gone missing, which is what the symptom otherwise looks like.</p>
+    <p><code>stormlight remote setup &lt;host&gt;</code> answers the question rather than
+    leaving it to be discovered by failure. It asks the host which of its login shells can
+    see the configured providers &mdash; the account&rsquo;s own, whatever
+    <code>/etc/shells</code> registers, and a few names that may be installed without being
+    registered &mdash; and prints the result side by side:</p>
+<pre><code>  providers, by the shell that can see them:
+  * /opt/homebrew/bin/fish             claude
+    /bin/bash                          claude codex
+    /bin/zsh                           claude
+  * the account&#39;s own shell, used unless [hosts.mini] names another</code></pre>
+    <p>When the account&rsquo;s shell sees strictly fewer providers than another, setup
+    records <code>shell</code> for that host and says so. This is evidence rather than a
+    guess: the machine was asked, and it answered. A host whose account shell can see
+    everything is left alone &mdash; a host that works is not improved by being configured
+    &mdash; and a <code>shell</code> someone has already set by hand is never overwritten.
+    The survey costs a login shell per candidate, so it runs only when there are providers
+    to ask about; the dashboard&rsquo;s own reachability check skips it.</p>
     <p>Custom providers appear in the New Agent picker and dispatch like any other.
     Lifecycle integration is the public contract: managed processes receive
     <code>STORMLIGHT_ID</code> and can report state with <code>stormlight event</code> from
