@@ -12,6 +12,9 @@
       "aria-label",
       dark ? "Switch to light theme" : "Switch to dark theme"
     );
+    btn.setAttribute("aria-pressed", dark ? "true" : "false");
+    var chrome = document.querySelector('meta[name="theme-color"]');
+    if (chrome) chrome.content = dark ? "#14181d" : "#f2f6fa";
   }
   btn.addEventListener("click", function () {
     var next =

@@ -6,6 +6,10 @@
    before first paint by the boot script in each page's head. */
 
 :root {
+  /* Tells the UA which chrome to draw — scrollbars in code blocks,
+     the overscroll canvas. Without it dark pages get light scrollbars
+     on every platform that draws classic ones. */
+  color-scheme: light;
   /* internal/theme Light: Text #24323A, Muted #70808A, Working #26799D,
      Waiting #A86600, Done #257A4A, Accent #62AEEF, Band #B9D9EF,
      Code #0E7C6B, PortalInk #0F2338, Border #AAB3B9 */
@@ -19,10 +23,8 @@
   --ink-faint: #8ba1b4;
   --cyan: #26799d;
   --cyan-bright: #1d6485;
-  --ice: #0f2338;
   --amber: #a86600;
   --amber-deep: #8f5800;
-  --green: #257a4a;
   --heading: #17262e;
   --lit: #0f2338;
   --prose: #35485a;
@@ -52,6 +54,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   /* web/src/lib/theme.ts, verbatim where a slot exists: bg #171C20,
      raised #1B2126, sunken #14181D, border #2A3138 / #3A4046,
      text #D7DEE5 / #F3F5F6, muted #74818B, working #61AFEF,
@@ -67,10 +70,8 @@
   --ink-faint: #74818b;
   --cyan: #61afef;
   --cyan-bright: #7dcfff;
-  --ice: #7dcfff;
   --amber: #e5c07b;
   --amber-deep: #e5c07b;
-  --green: #72c087;
   --heading: #f3f5f6;
   --lit: #c6e9ff;
   --prose: #b7c3cd;

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f2f6fa">
 <title>Docs · Stormlight</title>
 <meta name="description" content="Stormlight documentation: architecture, workspace resolvers, configuration.">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
@@ -15,7 +16,10 @@
 (function () {
   var theme;
   try { theme = localStorage.getItem("stormlight-theme"); } catch (e) {}
-  document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
+  var dark = theme === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  var chrome = document.querySelector('meta[name="theme-color"]');
+  if (chrome) chrome.content = dark ? "#14181d" : "#f2f6fa";
 })();
 </script>
 </head>
