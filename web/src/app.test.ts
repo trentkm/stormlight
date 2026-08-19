@@ -129,7 +129,9 @@ beforeEach(() => {
   fleet.agents = [agent("alpha"), agent("beta"), agent("gamma")];
   fleet.selectedID = "alpha";
   fleet.workspaceID = "";
-  fleet.workspaces = [];
+  fleet.workspaces = [
+    { id: "other", kind: "git", name: "other", root: "/o", execution_root: "/o" },
+  ];
   fleet.error = "";
   fleet.lost = "";
   Object.assign(ui, {
@@ -143,6 +145,7 @@ beforeEach(() => {
     confirmDelete: "",
     composing: false,
     pending: "",
+    column: "agents",
   });
 });
 
@@ -218,6 +221,206 @@ describe("the page's keyboard", () => {
     ui.keys = false;
     flushSync();
     expect(ui.pending).toBe("");
+    done();
+  });
+});
+
+/**
+ * h and l shipped bound, listed in `?`, and doing nothing — reported by
+ * the person using it. The unit tests cover the state; these cover the
+ * half that was actually missing, which is that something on screen
+ * moves and the mouse and the keys agree about where the keyboard is.
+ */
+describe("moving between columns", () => {
+  function aimed(): string {
+    if (document.querySelector(".rail.aimed")) return "workspaces";
+    if (document.querySelector(".roster.aimed")) return "agents";
+    if (document.querySelector(".pane.aimed")) return "spanreed";
+    return "none";
+  }
+
+  test("h and l move the mark, and stop at the ends", () => {
+    const done = page();
+    expect(aimed()).toBe("agents");
+
+    press("h");
+    expect(aimed()).toBe("workspaces");
+    press("h");
+    expect(aimed()).toBe("workspaces");
+
+    press("l");
+    expect(aimed()).toBe("agents");
+    press("l");
+    expect(aimed()).toBe("spanreed");
+    press("l");
+    expect(aimed()).toBe("spanreed");
+    done();
+  });
+
+  test("clicking a column aims the keyboard there", () => {
+    const done = page();
+    expect(aimed()).toBe("agents");
+
+    document
+      .querySelector(".rail")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flushSync();
+
+    expect(aimed()).toBe("workspaces");
+    // And j now means the workspace list, not the roster.
+    const before = fleet.workspaceID;
+    press("j");
+    expect(fleet.workspaceID).not.toBe(before);
+    done();
+  });
+
+  test("j in the rail changes workspace; in the roster, the agent", () => {
+    const done = page();
+    press("j");
+    expect(selected()).toBe("beta");
+
+    press("h");
+    press("j");
+    expect(fleet.workspaceID).not.toBe("");
+    done();
+  });
+});
+
+/**
+ * The rail renders one order and stepWorkspace walks another, and
+ * nothing made them agree — reversing the rail's {#each} left every
+ * test green while j moved the cursor the wrong way. These are the
+ * tests that tie the two together, and the ones for the click paths
+ * that had none.
+ */
+describe("the rail and the keyboard agree", () => {
+  test("j walks the rail in the order the rail is drawn", () => {
+    const done = page();
+    press("h");
+
+    const drawn = [...document.querySelectorAll(".rail .row")].map(
+      (row) => row.querySelector(".name")?.textContent?.trim() ?? "",
+    );
+    const walked: string[] = [];
+    // Start at the top, then walk down past the end.
+    press("g");
+    press("g");
+    for (let step = 0; step < drawn.length + 1; step++) {
+      const on = document.querySelector(".rail .row.selected .name");
+      walked.push(on?.textContent?.trim() ?? "");
+      press("j");
+    }
+
+    // The walk visits the drawn rows in the drawn order, then stops.
+    expect(walked.slice(0, drawn.length)).toEqual(drawn);
+    done();
+  });
+
+  // Both rows, because the All agents row is a separate call site and
+  // was the one still bypassing the shared path.
+  test("clicking All agents resets the agent too", () => {
+    const done = page();
+    fleet.agents = [
+      agent("here"),
+      agent("far", {
+        workspace: {
+          id: "other",
+          kind: "git",
+          name: "other",
+          root: "/o",
+          execution_root: "/o",
+        },
+      }),
+    ];
+    fleet.workspaceID = "other";
+    fleet.selectedID = "far";
+    flushSync();
+
+    const row = [...document.querySelectorAll<HTMLElement>(".rail .row")].find(
+      (element) => element.textContent?.includes("All agents"),
+    )!;
+    row.click();
+    flushSync();
+
+    expect(fleet.workspaceID).toBe("");
+    // Reset to the first of everything, not left on whatever was
+    // selected in the workspace we just left.
+    expect(fleet.selectedID).toBe("here");
+    done();
+  });
+
+  test("clicking a workspace resets the agent, as j does", () => {
+    const done = page();
+    // An agent in another workspace, so the pane has somewhere wrong to
+    // be left pointing.
+    fleet.agents = [
+      agent("here"),
+      agent("far", {
+        workspace: {
+          id: "other",
+          kind: "git",
+          name: "other",
+          root: "/o",
+          execution_root: "/o",
+        },
+      }),
+    ];
+    fleet.selectedID = "here";
+    flushSync();
+
+    const row = [...document.querySelectorAll<HTMLElement>(".rail .row")].find(
+      (element) => element.textContent?.includes("other"),
+    )!;
+    row.click();
+    flushSync();
+
+    expect(fleet.workspaceID).toBe("other");
+    expect(fleet.selectedID).toBe("far");
+    done();
+  });
+
+  test("clicking the roster aims the keyboard at it", () => {
+    const done = page();
+    press("h");
+    expect(document.querySelector(".rail.aimed")).not.toBeNull();
+
+    document
+      .querySelector(".roster")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flushSync();
+
+    expect(document.querySelector(".roster.aimed")).not.toBeNull();
+    done();
+  });
+
+  // A click inside the terminal aims the pane without walking in. That
+  // is fine only because j and k scroll the terminal's scrollback; when
+  // they did nothing, one click left four keys dead.
+  // A click inside the terminal aims the pane without walking in. That
+  // is only tolerable because j and k then scroll the terminal's
+  // scrollback — when they did nothing, one click left four keys dead.
+  test("clicking the pane aims it, and j scrolls the terminal", () => {
+    const done = page();
+    const viewport = document.querySelector<HTMLElement>(".xterm-viewport")!;
+    Object.defineProperty(viewport, "scrollHeight", { value: 1000 });
+    viewport.scrollBy = (options?: number | ScrollToOptions) => {
+      viewport.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+    };
+
+    document
+      .querySelector(".pane")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flushSync();
+
+    expect(document.querySelector(".pane.aimed")).not.toBeNull();
+    expect(ui.walkedIn).toBe(false);
+    const before = selected();
+
+    press("j");
+
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    // And the roster stayed where it was.
+    expect(selected()).toBe(before);
     done();
   });
 });

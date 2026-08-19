@@ -57,19 +57,29 @@ export const bindings: Binding[] = [
   {
     id: "pane-left",
     keys: "h",
-    what: "move to the roster",
+    what: "move between columns: workspaces, agents, the pane",
     group: "Navigate",
   },
   {
     id: "pane-right",
     keys: "l",
-    what: "move to the agent pane",
+    what: "move between columns, the other way",
     group: "Navigate",
   },
-  { id: "down", keys: "j", what: "move down; scroll the pane", group: "Navigate" },
-  { id: "up", keys: "k", what: "move up; scroll the pane", group: "Navigate" },
-  { id: "first", keys: "gg", what: "first item", group: "Navigate" },
-  { id: "last", keys: "G", what: "last item", group: "Navigate" },
+  {
+    id: "down",
+    keys: "j",
+    what: "move down in the aimed column; scroll the pane",
+    group: "Navigate",
+  },
+  {
+    id: "up",
+    keys: "k",
+    what: "move up in the aimed column; scroll the pane",
+    group: "Navigate",
+  },
+  { id: "first", keys: "gg", what: "first item, or the top", group: "Navigate" },
+  { id: "last", keys: "G", what: "last item, or the bottom", group: "Navigate" },
   {
     id: "walk-in",
     keys: "Enter",
@@ -231,8 +241,9 @@ export const bindings: Binding[] = [
   {
     id: "zoom",
     keys: "alt+z",
-    what: "zoom the terminal over the body",
+    what: "zoom the terminal over the body, and walk into it",
     group: "View",
+    needsAgent: true,
     whileWalkedIn: true,
     palette: "Zoom the terminal",
   },
@@ -267,6 +278,10 @@ export const unavailable: Array<{ keys: string; why: string }> = [
     why: "the terminal socket takes text; drop images into the agent's own terminal",
   },
   { keys: "F", why: "full-screen attach is a terminal-only idea" },
+  {
+    keys: "Tab",
+    why: "it moves focus through the page; taking it would leave a keyboard user with no way to reach anything. h and l step the columns instead",
+  },
 ];
 
 /**

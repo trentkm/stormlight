@@ -68,6 +68,335 @@ beforeEach(() => {
   ui.confirmDelete = "";
   ui.composing = false;
   ui.pending = "";
+  ui.column = "agents";
+});
+
+/**
+ * h and l, which shipped bound, listed in `?`, and doing nothing.
+ *
+ * The test that was meant to catch it asked only whether a command
+ * moved *something*: `pane-left` passed by clearing walkedIn and
+ * `pane-right` by setting a view that was usually already set. So
+ * these name the movement rather than accepting any movement at all.
+ */
+describe("moving between columns", () => {
+  test("l walks right to the end and stops", () => {
+    ui.column = "workspaces";
+    run("pane-right");
+    expect(ui.column).toBe("agents");
+    run("pane-right");
+    expect(ui.column).toBe("spanreed");
+    run("pane-right");
+    expect(ui.column).toBe("spanreed");
+  });
+
+  test("h walks left to the end and stops", () => {
+    ui.column = "spanreed";
+    run("pane-left");
+    expect(ui.column).toBe("agents");
+    run("pane-left");
+    expect(ui.column).toBe("workspaces");
+    run("pane-left");
+    expect(ui.column).toBe("workspaces");
+  });
+
+  test("leaving the pane lets go of the terminal", () => {
+    run("walk-in");
+    expect(ui.walkedIn).toBe(true);
+    expect(ui.column).toBe("spanreed");
+    run("pane-left");
+    expect(ui.walkedIn).toBe(false);
+  });
+
+  test("the wall and the canvas have no columns to walk", () => {
+    ui.view = "wall";
+    ui.column = "agents";
+    run("pane-left");
+    expect(ui.column).toBe("agents");
+  });
+});
+
+/**
+ * Nine mutations survived the first version of this file, all of them
+ * in the half of the feature that scrolls rather than selects. These
+ * are the tests that kill them.
+ */
+describe("j and k in the pane", () => {
+  /**
+   * Spanreed's real shape: the terminal stays mounted — and stays
+   * *first* — while the transcript or diff renders after it, so tab
+   * switches do not churn the attachment. Building only the tab under
+   * test hid a selector that took whatever came first in the document,
+   * which was always the hidden terminal.
+   */
+  function spanreed(tab: "terminal" | "transcript" | "diff") {
+    document.body.innerHTML =
+      '<div data-walk-target><div class="xterm-viewport"></div></div>' +
+      (tab === "transcript" ? '<div class="transcript"></div>' : "") +
+      (tab === "diff" ? '<div class="diff"></div>' : "");
+    ui.pane = tab;
+    ui.column = "spanreed";
+    const shape = (element: HTMLElement) => {
+      Object.defineProperty(element, "scrollHeight", { value: 1000 });
+      // scrollBy's signature admits a number as well as options; the
+      // code only ever passes options, and the double says so.
+      element.scrollBy = (options?: number | ScrollToOptions) => {
+        element.scrollTop += (options as ScrollToOptions)?.top ?? 0;
+      };
+      return element;
+    };
+    return {
+      terminal: shape(
+        document.querySelector<HTMLElement>(".xterm-viewport")!,
+      ),
+      visible: shape(
+        document.querySelector<HTMLElement>(
+          tab === "terminal" ? ".xterm-viewport" : `.${tab}`,
+        )!,
+      ),
+    };
+  }
+
+  test("scrolls the transcript, not the terminal behind it", () => {
+    const { visible, terminal } = spanreed("transcript");
+
+    run("down");
+
+    expect(visible.scrollTop).toBeGreaterThan(0);
+    // The terminal is still mounted, hidden, and first in the document:
+    // scrolling it would move nothing anyone can see.
+    expect(terminal.scrollTop).toBe(0);
+    // And the roster did not move underneath it either.
+    expect(fleet.selectedID).toBe("a");
+  });
+
+  test("scrolls the diff, not the terminal behind it", () => {
+    const { visible, terminal } = spanreed("diff");
+
+    run("down");
+
+    expect(visible.scrollTop).toBeGreaterThan(0);
+    expect(terminal.scrollTop).toBe(0);
+  });
+
+  // The TUI's j/k scroll the PTY's scrollback in the interaction pane;
+  // leaving the terminal out made four keys dead on the tab people are
+  // on most.
+  test("scrolls the terminal's scrollback", () => {
+    const { terminal } = spanreed("terminal");
+
+    run("down");
+
+    expect(terminal.scrollTop).toBeGreaterThan(0);
+  });
+
+  test("with nothing to scroll, moves the roster rather than nothing", () => {
+    document.body.innerHTML = "";
+    ui.column = "spanreed";
+
+    run("down");
+
+    expect(fleet.selectedID).toBe("b");
+  });
+
+  test("gg and G reach the ends of what is scrolling", () => {
+    const { visible, terminal } = spanreed("transcript");
+    visible.scrollTop = 400;
+
+    run("first");
+    expect(visible.scrollTop).toBe(0);
+    run("last");
+    expect(visible.scrollTop).toBe(1000);
+    expect(terminal.scrollTop).toBe(0);
+  });
+
+  test("gg and G fall through when there is nothing to scroll", () => {
+    document.body.innerHTML = "";
+    ui.column = "spanreed";
+
+    run("last");
+
+    expect(fleet.selectedID).toBe("c");
+  });
+});
+
+describe("walking out lands somewhere the keys work", () => {
+  // The regression this file exists to prevent: walking out left the
+  // keyboard aimed at a pane whose tab does not scroll, so j, k, gg
+  // and G all did nothing — worse than before the columns existed.
+  test("Ctrl-space puts the keyboard back on the roster", () => {
+    run("walk-in");
+    expect(ui.column).toBe("spanreed");
+
+    run("walk-out");
+
+    expect(ui.column).toBe("agents");
+    run("down");
+    expect(fleet.selectedID).toBe("b");
+  });
+
+  test("and collapses zoom, as the TUI's seam key does", () => {
+    run("walk-in");
+    run("zoom");
+    expect(ui.zoomed).toBe(true);
+
+    run("walk-out");
+
+    expect(ui.zoomed).toBe(false);
+  });
+});
+
+describe("keys that need an agent to mean anything", () => {
+  test("a pane key with nothing selected navigates nowhere", () => {
+    fleet.selectedID = "";
+    ui.view = "wall";
+
+    run("pane-terminal");
+    run("pane-transcript");
+    run("pane-diff");
+
+    expect(ui.view).toBe("wall");
+  });
+
+  test("zoom with nothing selected does nothing at all", () => {
+    fleet.selectedID = "";
+    ui.view = "wall";
+
+    run("zoom");
+
+    expect(ui.zoomed).toBe(false);
+    expect(ui.view).toBe("wall");
+  });
+
+  // The TUI's zoom sets the interaction pane with it; a terminal
+  // filling the body while ignoring what you type is half a gesture.
+  test("zoom brings the terminal tab it is zooming", () => {
+    run("pane-diff");
+    expect(ui.pane).toBe("diff");
+
+    run("zoom");
+
+    // Walking in to a tab that is display:none would be a terminal
+    // filling the body and showing nothing.
+    expect(ui.pane).toBe("terminal");
+  });
+
+  test("leaving the roster disarms zoom", () => {
+    run("zoom");
+    run("view-wall");
+    expect(ui.zoomed).toBe(false);
+    run("view-roster");
+    expect(ui.zoomed).toBe(false);
+  });
+
+  test("zoom walks in", () => {
+    run("zoom");
+    expect(ui.zoomed).toBe(true);
+    expect(ui.walkedIn).toBe(true);
+    expect(ui.pane).toBe("terminal");
+  });
+
+  test("zoom from another view zooms rather than un-zooming", () => {
+    run("zoom");
+    ui.view = "wall";
+
+    run("zoom");
+
+    expect(ui.view).toBe("roster");
+    expect(ui.zoomed).toBe(true);
+  });
+});
+
+describe("keys that need their view to mean anything", () => {
+  test("every pane key from the wall brings the roster with it", () => {
+    for (const [id, tab] of [
+      ["pane-diff", "diff"],
+      ["pane-transcript", "transcript"],
+      ["pane-terminal", "terminal"],
+    ] as const) {
+      ui.view = "wall";
+      run(id);
+      expect(ui.view, id).toBe("roster");
+      expect(ui.pane, id).toBe(tab);
+    }
+  });
+
+  test("zoom from the canvas does too, and aims at the pane", () => {
+    ui.view = "canvas";
+    run("zoom");
+    expect(ui.view).toBe("roster");
+    expect(ui.zoomed).toBe(true);
+    expect(ui.column).toBe("spanreed");
+  });
+
+  // Zoomed, the rail and the roster are not on screen; stepping onto
+  // one would move a cursor nobody can see.
+  test("h and l do not step onto a hidden column", () => {
+    run("zoom");
+    expect(ui.column).toBe("spanreed");
+    run("pane-left");
+    expect(ui.column).toBe("spanreed");
+  });
+});
+
+describe("j and k mean what the aimed column says", () => {
+  test("in the roster they change the agent", () => {
+    ui.column = "agents";
+    run("down");
+    expect(fleet.selectedID).toBe("b");
+  });
+
+  test("in the rail they change the workspace, and reset the agent", () => {
+    fleet.agents = [
+      agent("here"),
+      agent("far", {
+        workspace: {
+          id: "other",
+          kind: "git",
+          name: "other",
+          root: "/o",
+          execution_root: "/o",
+        },
+      }),
+    ];
+    fleet.workspaces = [
+      { id: "other", kind: "git", name: "other", root: "/o", execution_root: "/o" },
+    ];
+    fleet.workspaceID = "";
+    fleet.selectedID = "here";
+    ui.column = "workspaces";
+
+    run("down");
+
+    expect(fleet.workspaceID).toBe("other");
+    // The pane beside the roster must not be left showing an agent from
+    // the workspace you just left.
+    expect(fleet.selectedID).toBe("far");
+  });
+
+  test("a vanished workspace lands on All agents rather than jumping", () => {
+    fleet.workspaceID = "gone";
+    ui.column = "workspaces";
+
+    run("up");
+
+    expect(fleet.workspaceID).toBe("");
+  });
+
+  test("the rail stops at its ends", () => {
+    ui.column = "workspaces";
+    fleet.workspaceID = "";
+    run("up");
+    expect(fleet.workspaceID).toBe("");
+  });
+
+  test("gg and G reach the ends of the aimed column", () => {
+    ui.column = "agents";
+    run("last");
+    expect(fleet.selectedID).toBe("c");
+    run("first");
+    expect(fleet.selectedID).toBe("a");
+  });
 });
 
 describe("moving through the roster", () => {
@@ -372,6 +701,90 @@ describe("marking", () => {
  * dead in the shipped code. So: press every binding, and require that
  * something observable moves.
  */
+/**
+ * The seam that keeps splitting.
+ *
+ * Three rounds running, a change to the dispatcher did not reach the
+ * table that describes the keys: h/l's wording, zoom's new meaning,
+ * zoom's new requirement. Each was found by a person reading both
+ * files side by side, which is not a thing that scales.
+ *
+ * So: ask the dispatcher what it actually requires, by running every
+ * binding with an agent and without one, and require the table to say
+ * the same thing. A command that does nothing without a selection is
+ * one the palette must not offer without a selection.
+ */
+describe("the table declares what the dispatcher requires", () => {
+  // Two worlds again, for the same reason the inertness test needs
+  // them: a command that is already where it is going moves nothing,
+  // and that is not the same as needing an agent to go there.
+  function settleWorld(withAgent: boolean, where: "cold" | "hot") {
+    calls.length = 0;
+    document.body.innerHTML = "";
+    fleet.agents = [agent("a"), agent("b"), agent("c")];
+    fleet.selectedID = withAgent ? (where === "cold" ? "a" : "c") : "";
+    fleet.workspaceID = "";
+    Object.assign(ui, {
+      view: where === "cold" ? "roster" : "wall",
+      pane: where === "cold" ? "terminal" : "diff",
+      walkedIn: false,
+      zoomed: false,
+      palette: false,
+      keys: false,
+      dispatching: false,
+      confirmDelete: "",
+      composing: false,
+      pending: "",
+      column: where === "cold" ? "agents" : "spanreed",
+    });
+  }
+
+  function moves(id: string, withAgent: boolean): boolean {
+    return (["cold", "hot"] as const).some((where) =>
+      movesIn(id, withAgent, where),
+    );
+  }
+
+  function movesIn(
+    id: string,
+    withAgent: boolean,
+    where: "cold" | "hot",
+  ): boolean {
+    settleWorld(withAgent, where);
+    const before = JSON.stringify({
+      ui: { ...ui },
+      selected: fleet.selectedID,
+      workspace: fleet.workspaceID,
+      calls: [...calls],
+    });
+    run(id);
+    return (
+      JSON.stringify({
+        ui: { ...ui },
+        selected: fleet.selectedID,
+        workspace: fleet.workspaceID,
+        calls: [...calls],
+      }) !== before
+    );
+  }
+
+  test("needsAgent means exactly what run() does", () => {
+    const mismatched: string[] = [];
+    for (const binding of bindings) {
+      const withoutOne = moves(binding.id, false);
+      const withOne = moves(binding.id, true);
+      const requiresOne = withOne && !withoutOne;
+      if (requiresOne !== (binding.needsAgent === true)) {
+        mismatched.push(
+          `${binding.id}: run() ${requiresOne ? "requires" : "does not require"}` +
+            ` an agent, table says ${binding.needsAgent === true}`,
+        );
+      }
+    }
+    expect(mismatched).toEqual([]);
+  });
+});
+
 describe("every binding actually does something", () => {
   /** A snapshot of everything a command could move. */
   function world() {
