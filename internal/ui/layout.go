@@ -81,9 +81,16 @@ func (m Model) renderBody() string {
 		)
 	}
 	// The failure card sits above even that: whatever is on screen, a
-	// thing that just went wrong is the most important thing on it.
+	// thing that just went wrong is the most important thing on it. With
+	// no card there is nothing to composite, and the body goes out as the
+	// mode drew it — compositing anyway would crop every frame to
+	// bodyDimensions and cost the pane titles their last column.
+	card := m.renderAlertCard(width, contentHeight)
+	if card == "" {
+		return body
+	}
 	return overlayBottomLeft(
-		body, m.renderAlertCard(width, contentHeight), width, contentHeight, 1,
+		body, card, width, contentHeight, 1, m.inputStripRows(width),
 	)
 }
 
@@ -456,12 +463,12 @@ func overlayCenteredIn(
 // cursor is working in.
 func overlayBottomLeft(
 	background, foreground string,
-	width, height, indent int,
+	width, height, indent, lift int,
 ) string {
 	return overlayComposite(background, foreground, width, height,
 		func(foregroundWidth, foregroundHeight int) (int, int) {
 			return clamp(indent, 0, max(0, width-foregroundWidth)),
-				max(0, height-foregroundHeight)
+				max(0, height-foregroundHeight-max(0, lift))
 		})
 }
 

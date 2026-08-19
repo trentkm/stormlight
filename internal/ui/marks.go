@@ -64,7 +64,7 @@ func (m Model) beginMark() (tea.Model, tea.Cmd) {
 	m.markAgentID = selected.ID
 	m.markIndex = markChoiceIndex(selected.EffectiveMark())
 	m.mode = modeMark
-	m.dismissAlert()
+	m.clearAlert()
 	return m, nil
 }
 

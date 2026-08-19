@@ -85,6 +85,17 @@ func (m *Model) raisePolled(err error) {
 	m.raiseFailure(err, true)
 }
 
+// complain is a form objecting to what is in it — an empty name, a path
+// that is not there. Only these belong to the surface they were raised in,
+// and only these are swept when it closes. A failure that merely *arrived*
+// while a form happened to be open belongs to nothing on screen: an ssh
+// setup that failed in the background is not answered by cancelling the
+// dispatch form that was open at the time.
+func (m *Model) complain(err error) {
+	m.raiseFailure(err, false)
+	m.alert.raisedIn = m.mode
+}
+
 func (m *Model) raiseFailure(err error, polled bool) {
 	if err == nil {
 		return
@@ -99,7 +110,7 @@ func (m *Model) raiseFailure(err error, polled bool) {
 		// dismissal that lasts 700ms is not a dismissal.
 		return
 	}
-	m.alert = alert{err: err, raisedIn: m.mode, polled: polled, at: alertClock()}
+	m.alert = alert{err: err, polled: polled, at: alertClock()}
 	// Every failure leaves its full text behind, so `e` can still reach
 	// the last one after the card has gone. This is not what an open
 	// detail view is reading — that took its own copy — because a poll
@@ -113,16 +124,25 @@ func (m *Model) raiseFailure(err error, polled bool) {
 // and a package-scope name that ordinary parameters shadow is a trap.
 var alertClock = time.Now
 
-// dismissAlert takes the card down. Dismissing a self-repeating failure
-// also hushes it: the poll would otherwise raise the identical message on
-// the very next tick, and the Esc the card advertised would do nothing
-// that lasts.
+// dismissAlert is the reader answering the card — Esc, or opening it to
+// read. Answering a self-repeating failure also hushes it: the poll would
+// otherwise raise the identical message on the very next tick, and an Esc
+// undone in 700ms is not a dismissal.
+//
+// This is the only way a card ends that counts as read. Everything else
+// clears it with clearAlert, because hushing a message nobody saw is how
+// a dashboard goes quiet about a daemon that is still down.
 func (m *Model) dismissAlert() {
 	if m.alert.polled {
 		m.hushedPoll = m.alert.message()
 	}
-	m.alert = alert{}
+	m.clearAlert()
 }
+
+// clearAlert takes the card down without counting it as read: a card that
+// timed out unread inside the portal, or a stale form complaint dropped
+// when the form reopens.
+func (m *Model) clearAlert() { m.alert = alert{} }
 
 // resolvePolled is the refresh reporting that it worked. A card raised by
 // a failing poll is the one kind that answers itself: the daemon came back,
@@ -159,7 +179,9 @@ func (m *Model) ageAlert(now time.Time) {
 		return
 	}
 	if now.After(m.alert.expires) {
-		m.dismissAlert()
+		// Timing out is the one ending where the reader provably did not
+		// read it, so it must not hush anything.
+		m.clearAlert()
 	}
 }
 
@@ -306,6 +328,25 @@ func (m Model) alertCardKeys(clipped bool) string {
 		label = "e read it all"
 	}
 	return mutedStyle().Render(label+"  ·  Esc dismiss") + " "
+}
+
+// inputStripRows is the rows at the foot of the body that belong to an
+// input rather than to content: the composer, the search line. The card
+// floats above them instead of over them — covering the box someone is
+// typing into is worse than covering anything else on screen.
+func (m Model) inputStripRows(width int) int {
+	switch m.mode {
+	case modeCompose:
+		interactionWidth := width
+		if width >= 72 {
+			_, _, interactionWidth = m.paneWidths(width)
+		}
+		// The composer is its input between two rules.
+		return composerHeight(m.sendInput.Value(), max(1, interactionWidth)) + 2
+	case modeSearch:
+		return 1
+	}
+	return 0
 }
 
 // alertRows is how many rows the card will take, which is how much of the

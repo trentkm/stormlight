@@ -772,7 +772,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.syncTaskComposerSize()
-		m.dismissAlert()
+		m.clearAlert()
 		return m, nil
 
 	case workspaceAddedMsg:
@@ -834,7 +834,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model, ok := updated.(Model); ok &&
 			standing != nil && model.alert.err == standing &&
 			mode == raisedIn && raisedIn.isForm() && model.mode != mode {
-			model.dismissAlert()
+			model.clearAlert()
 			return model, cmd
 		}
 		return updated, cmd
@@ -1116,17 +1116,22 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "esc", "ctrl+[":
-		if m.alert.active() {
-			// The card waited to be read; Esc is the reader saying so.
-			m.dismissAlert()
-			return m, nil
-		}
+		// The card is last in line. Esc means what it always meant —
+		// drop the selection, clear the search — and only once there is
+		// nothing else to undo does it answer the card. A failure that
+		// stands for as long as the daemon is down must not quietly
+		// redefine the key for that whole time.
 		if m.selectionActive {
 			m.selectionActive = false
 			return m, nil
 		}
 		if m.activePane == paneInteraction && m.search.query != "" {
 			m.clearSearch()
+			return m, nil
+		}
+		if m.alert.active() {
+			// The card waited to be read; Esc is the reader saying so.
+			m.dismissAlert()
 			return m, nil
 		}
 	case "o":
@@ -1155,7 +1160,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// again picks it back up rather than discarding it.
 			m.syncComposerSize()
 			m.sendInput.Focus()
-			m.dismissAlert()
+			m.clearAlert()
 			return m, nil
 		}
 	case "x":
@@ -1172,15 +1177,19 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.mode = modeDelete
-			m.dismissAlert()
+			m.clearAlert()
 			return m, nil
 		}
 		if _, ok := m.selectedAgent(); ok {
 			m.mode = modeDelete
-			m.dismissAlert()
+			m.clearAlert()
 			return m, nil
 		}
 	case "r", "ctrl+l":
+		// Asking again is asking to be told. A hushed failure that is
+		// still failing has to answer an explicit refresh, or the retry
+		// looks exactly like success.
+		m.hushedPoll = ""
 		return m, tea.Batch(m.refreshCmd(), m.loadInteractionCmd())
 	case "R":
 		return m.beginRename()

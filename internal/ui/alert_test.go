@@ -618,3 +618,148 @@ func TestNarrowCardDropsItsKeysRatherThanItsFrame(t *testing.T) {
 		t.Fatalf("the card rendered %d rows into a body of %d:\n%s", rows, height, card)
 	}
 }
+
+// Timing out is the one ending where the reader provably did not read it.
+// Hushing there is how a dashboard goes quiet about a daemon still down.
+func TestTimingOutDoesNotHushAFailure(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	updated, _ := model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	model = updated.(Model)
+
+	moment := time.Now()
+	model.ageAlert(moment)
+	model.ageAlert(moment.Add(alertLinger + time.Second))
+	if model.alert.active() {
+		t.Fatalf("the card should have timed out inside the portal")
+	}
+
+	model.activePane = paneAgents
+	updated, _ = model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("a failure nobody read was silenced by its own timeout")
+	}
+}
+
+// Opening a form drops its stale complaint, which must not silence a
+// self-repeating failure the reader never answered.
+func TestOpeningAFormDoesNotHushAPolledFailure(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	model = updated.(Model)
+
+	updated, _ = model.Update(runeKey("n"))
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+
+	updated, _ = model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("opening a form silenced a failure the reader never answered")
+	}
+}
+
+// Asking again is asking to be told: a hushed failure that is still
+// failing has to answer an explicit refresh, or the retry looks like
+// success.
+func TestExplicitRefreshBreaksTheHush(t *testing.T) {
+	model := alertModel(t)
+	down := func() dashboardMsg {
+		return dashboardMsg{err: errors.New("daemon is not listening")}
+	}
+	updated, _ := model.Update(down())
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+
+	updated, _ = model.Update(runeKey("r"))
+	model = updated.(Model)
+	updated, _ = model.Update(down())
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("an explicit refresh that failed again said nothing")
+	}
+}
+
+// A failure that merely arrived while a form was open belongs to nothing
+// on screen; cancelling that form is not an answer to it.
+func TestCancellingAFormKeepsAnUnrelatedFailure(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.Update(runeKey("n"))
+	model = updated.(Model)
+	if !model.mode.isForm() {
+		t.Fatalf("n did not open a form: mode = %v", model.mode)
+	}
+
+	// An ssh setup started earlier finishes badly while the form is open.
+	updated, _ = model.Update(machinePreparedMsg{
+		host: "thaidex", err: errors.New("ssh: could not resolve hostname"),
+	})
+	model = updated.(Model)
+	if !model.alert.active() {
+		t.Fatalf("the setup failure raised nothing")
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("cancelling the form discarded a failure it did not raise")
+	}
+}
+
+// Esc keeps meaning what it meant: drop the selection, clear the search,
+// and only then answer the card.
+func TestEscapeAnswersTheCardLast(t *testing.T) {
+	model := alertModel(t)
+	// The transcript's own selection, so the keyboard is the dashboard's
+	// rather than the agent's.
+	model.ptyEnabled = false
+	model.activePane = paneInteraction
+	model.selectionActive = true
+	model.raise(errors.New("interrupt failed"))
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.selectionActive {
+		t.Fatalf("Esc did not drop the selection")
+	}
+	if !model.alert.active() {
+		t.Fatalf("Esc answered the card while a selection was still up")
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the next Esc did not answer the card")
+	}
+}
+
+// The card floats above the box someone is typing into, never over it.
+func TestCardStaysOffTheComposer(t *testing.T) {
+	model := alertModel(t)
+	model.mode = modeCompose
+	model.sendInput.SetValue("a reply in progress")
+	model.raise(errors.New(sshFailure))
+
+	width, height := model.bodyDimensions()
+	lift := model.inputStripRows(width)
+	if lift < 3 {
+		t.Fatalf("the composer strip measured %d rows", lift)
+	}
+	_, cardBottom := frameSpan(model.renderBody(), 0)
+	if cardBottom < 0 {
+		t.Fatalf("no card rendered")
+	}
+	if cardBottom > height-1-lift {
+		t.Fatalf("the card reaches row %d, into the composer's last %d rows of %d",
+			cardBottom, lift, height)
+	}
+}
+
+// With no card there is nothing to composite, and the body must go out
+// exactly as the mode drew it.
+func TestBodyIsUntouchedWithoutACard(t *testing.T) {
+	model := alertModel(t)
+	width, height := model.bodyDimensions()
+	if got, want := model.renderBody(), model.renderModeBody(width, height); got != want {
+		t.Fatalf("an empty card still rewrote the body:\n%q\n\n%q", got, want)
+	}
+}

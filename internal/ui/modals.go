@@ -212,7 +212,7 @@ func (m Model) beginRename() (tea.Model, tea.Cmd) {
 	m.renameInput.SetValue(current)
 	m.renameInput.Focus()
 	m.mode = modeRename
-	m.dismissAlert()
+	m.clearAlert()
 	return m, nil
 }
 
@@ -224,7 +224,7 @@ func (m Model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		name := strings.TrimSpace(m.renameInput.Value())
 		if name == "" {
-			m.raise(fmt.Errorf("name cannot be empty"))
+			m.complain(fmt.Errorf("name cannot be empty"))
 			return m, nil
 		}
 		m.mode = modeNormal
