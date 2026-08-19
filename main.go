@@ -263,7 +263,7 @@ func newReadCommand() *cobra.Command {
 // argv, decoded from the environment the daemon set, and become.
 func newExecCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:    "_exec",
+		Use:    remote.ExecSubcommand,
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -898,6 +898,7 @@ func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
 	var install bool
 	var withYazi bool
 	var wait bool
+	var force bool
 	command := &cobra.Command{
 		Use:   "setup <host>",
 		Short: "Report what a machine is missing, and optionally install it",
@@ -915,7 +916,7 @@ func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
 			// what "can this machine run my agents" means.
 			providers := provider.NewRegistryWithSpecs(providerSpecs(cfg)).Binaries()
 			err := setUpHost(
-				cmd.Context(), transport, args[0], out, providers, install, withYazi)
+				cmd.Context(), transport, args[0], out, providers, install, withYazi, force)
 			if err != nil {
 				fmt.Fprintf(out, "\n%v\n", err)
 			}
@@ -929,6 +930,8 @@ func newRemoteSetupCommand(cfg config.Config) *cobra.Command {
 		"also install yazi, using the host's own package manager")
 	command.Flags().BoolVar(&wait, "wait", false,
 		"hold the terminal open at the end, for a popup nobody else closes")
+	command.Flags().BoolVar(&force, "force", false,
+		"replace the host's Stormlight even when it reports the same version")
 	return command
 }
 
@@ -940,7 +943,7 @@ func setUpHost(
 	host string,
 	out io.Writer,
 	providers []string,
-	install, withYazi bool,
+	install, withYazi, force bool,
 ) error {
 	report, err := remote.Probe(ctx, transport, providers...)
 	if err != nil {
@@ -958,7 +961,10 @@ func setUpHost(
 		return nil
 	}
 
-	if !report.Stormlight.Present() {
+	if why, needed := stormlightNeeded(report, version, force); needed {
+		if why != "" {
+			fmt.Fprintf(out, "\n%s\n", why)
+		}
 		binary, err := selfpath.Resolve()
 		if err != nil {
 			return err
@@ -1010,6 +1016,45 @@ func adviseHostShell(
 		return
 	}
 	recordHostShell(out, host, suggested.Path)
+}
+
+// stormlightNeeded says whether this host's Stormlight has to be put
+// there or replaced, and why.
+//
+// Absent is the obvious case. The other one is a host whose binary is
+// older than this dashboard: the two speak the bridge across a version
+// boundary, and since #192 a host too old to serve a dispatch is refused
+// outright. Setup is where that gets fixed, so "already has one" cannot
+// be the whole test — a stale binary is precisely the thing the refusal
+// tells people to come here and mend.
+//
+// Two dev builds report the same version and are left alone, because
+// nothing distinguishes them. That is what force is for.
+func stormlightNeeded(report remote.Report, local string, force bool) (why string, needed bool) {
+	if !report.Stormlight.Present() {
+		return "", true
+	}
+	if force {
+		return "Replacing " + report.Host + "'s Stormlight.", true
+	}
+	there := reportedVersion(report.Stormlight.Version)
+	if there == "" || local == "" || there == local {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"%s runs Stormlight %s and this dashboard is %s — replacing it, "+
+			"because a host older than its dashboard cannot serve a dispatch.",
+		report.Host, there, local), true
+}
+
+// reportedVersion pulls the version out of what `stormlight --version`
+// prints, which is a sentence rather than a number.
+func reportedVersion(reported string) string {
+	fields := strings.Fields(reported)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
 }
 
 // recordHostShell names the shell a host's providers actually live in.

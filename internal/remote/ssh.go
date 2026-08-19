@@ -89,6 +89,13 @@ const (
 	ExecEnv = "STORMLIGHT_EXEC"
 )
 
+// ExecSubcommand is what the prelude runs on the far side. It is named
+// once, here, because the prelude is shell text: a rename that missed it
+// would leave a launch invoking a subcommand nothing registers, and the
+// only report of that would be an agent dying with whatever the root
+// command says about an argument it does not know.
+const ExecSubcommand = "_exec"
+
 // ExecPrelude is what the daemon on a host actually spawns, with the
 // provider's argv waiting in ExecEnv.
 //
@@ -111,7 +118,7 @@ if [ ! -x "$shell" ]; then
   echo "stormlight: $shell is not an executable shell on $(hostname 2>/dev/null)" >&2
   exit 127
 fi
-exec "$shell" -lc 'exec "$STORMLIGHT_BIN" _exec'
+exec "$shell" -lc 'exec "$STORMLIGHT_BIN" ` + ExecSubcommand + `'
 `
 
 // shellAssignment prefixes a script with the shell this host runs things
@@ -187,7 +194,7 @@ func (t *Transport) Dial() (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reach %s: %w", t.host.Name, err)
 	}
-	hello, err := Handshake(conn)
+	hello, err := Handshake(conn, t.host.Name)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("reach %s: %w", t.host.Name, err)
@@ -328,18 +335,51 @@ func shellQuote(args []string) string {
 // Handshake is the client half of Serve: it reads the bridge's greeting
 // and decides whether the two ends can talk. Everything after the line it
 // consumes belongs to windrunner.
-func Handshake(conn net.Conn) (Hello, error) {
+func Handshake(conn net.Conn, host string) (Hello, error) {
 	hello, err := readHello(conn)
 	if err != nil {
 		return Hello{}, err
 	}
 	if hello.Protocol != Protocol {
-		return Hello{}, fmt.Errorf(
-			"it speaks bridge protocol %d, this one speaks %d — stormlight %s "+
-				"there, %s here; upgrade the older side",
-			hello.Protocol, Protocol, hello.Version, localVersion)
+		return Hello{}, mismatch(host, hello)
 	}
 	return hello, nil
+}
+
+// mismatch says which of the two machines is behind, and what to do
+// about that one.
+//
+// Which side is older is the whole of what the reader needs and the one
+// thing the numbers alone do not say. "Upgrade the older side" leaves
+// them to work out which that is, from two version strings that may both
+// read "dev" — and then to remember that a host is updated by a command
+// on this machine, not on that one.
+func mismatch(host string, hello Hello) error {
+	if host == "" {
+		host = "that machine"
+	}
+	if hello.Protocol < Protocol {
+		return fmt.Errorf(
+			"%s runs an older Stormlight (%s) than this dashboard (%s): it speaks "+
+				"bridge protocol %d and this one speaks %d. Update it with "+
+				"`stormlight remote setup %s --install`",
+			host, describeVersion(hello.Version), describeVersion(localVersion),
+			hello.Protocol, Protocol, host)
+	}
+	return fmt.Errorf(
+		"%s runs a newer Stormlight (%s) than this dashboard (%s): it speaks "+
+			"bridge protocol %d and this one speaks %d. Update this machine",
+		host, describeVersion(hello.Version), describeVersion(localVersion),
+		hello.Protocol, Protocol)
+}
+
+// describeVersion keeps an unbuilt binary from being reported as a
+// version anybody could look up.
+func describeVersion(version string) string {
+	if version == "" {
+		return "unknown"
+	}
+	return version
 }
 
 // Explain turns ssh's own diagnostics into something with a next step.
