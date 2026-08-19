@@ -4,7 +4,7 @@
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
   import { attach, type Attachment, type Connection } from "../lib/terminal";
-  import { theme } from "../lib/theme";
+  import { terminal } from "../lib/theme";
 
   /**
    * `focused` is the walked-in state: when it is true the agent has the
@@ -33,10 +33,10 @@
       lineHeight: 1.2,
       allowProposedApi: true,
       theme: {
-        background: theme.bgSunken,
-        foreground: theme.text,
-        cursor: theme.band,
-        selectionBackground: "#3D4245",
+        background: terminal.background,
+        foreground: terminal.foreground,
+        cursor: terminal.cursor,
+        selectionBackground: terminal.selectionBackground,
       },
     });
     const fitAddon = new FitAddon();
@@ -118,6 +118,10 @@
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px 10px;
+    /* The terminal's own ground, in both themes: the padding around
+       the screen has to be the screen's color, or a light dashboard
+       frames the agent's output in a bright margin. */
+    background: var(--term-bg);
     overflow: hidden;
   }
   .reconnecting {

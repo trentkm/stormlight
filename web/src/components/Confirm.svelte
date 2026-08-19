@@ -72,7 +72,7 @@
     border: none;
   }
   dialog::backdrop {
-    background: rgba(10, 13, 16, 0.55);
+    background: var(--scrim);
   }
   .panel {
     width: min(460px, 92vw);
@@ -80,7 +80,7 @@
     background: var(--bg-raised);
     border: 1px solid var(--failed);
     border-radius: 10px;
-    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 24px 60px -20px var(--shadow-modal);
   }
   .panel:focus {
     outline: none;

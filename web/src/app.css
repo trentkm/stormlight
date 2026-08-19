@@ -1,28 +1,157 @@
-/* The palette from internal/theme, as custom properties. Dark only: a
-   browser has no terminal background to adapt to. */
+/* The dashboard's two palettes, as custom properties.
+ *
+ * Dark is the default and is `internal/theme`'s Dark pairs, unchanged:
+ * it is what the dashboard has always looked like. Light is
+ * `internal/theme`'s Light pairs, arranged the way the public site
+ * arranges them — that page is where this palette was composed, and
+ * copying its composition rather than only its hex values is what makes
+ * the two read as one product.
+ *
+ * `[data-theme]` on <html> selects between them, written before first
+ * paint by the boot script in index.html. Every color a component paints
+ * comes from here; a component that reaches for a literal has, by
+ * construction, invented a color one of the two themes will get wrong.
+ *
+ * Roles, not shades. `--band` is the icy *fill* behind a selected tab
+ * and `--accent` is the icy *ink* of a title or a hover — in the dark
+ * palette they are the same color, which is why one variable used to
+ * carry both, but a light page needs the fill pale and the ink deep and
+ * the two part ways.
+ */
 :root {
+  color-scheme: dark;
+
   --bg: #171c20;
   --bg-raised: #1b2126;
   --bg-sunken: #14181d;
   --bg-rail: #191e23;
+  /* Text fields and the troughs of segmented controls: recessed against
+     whatever chrome they sit in. */
+  --field: #14181d;
+
   --border: #2a3138;
   --border-bright: #3a4046;
+
   --text: #d7dee5;
   --text-bright: #f3f5f6;
   --muted: #74818b;
+
+  /* Status means exactly what it means in the TUI. */
   --working: #61afef;
   --waiting: #e5c07b;
   --done: #72c087;
   --failed: #e06c75;
-  --band: #c6e9ff;
-  --ice: #7dcfff;
-  --band-ink: #0f2338;
 
-  color-scheme: dark;
+  /* The icy band family is selection and focus, never status — keeping
+     them apart is what stops "selected" reading as "working". */
+  --band: #c6e9ff;
+  --band-ink: #0f2338;
+  /* Secondary ink on the band — a shortcut's key, a matched entry's
+     detail. The band is pale in both themes, so one value carries both. */
+  --band-ink-dim: #3a5568;
+  --accent: #c6e9ff;
+  --ice: #7dcfff;
+  --hover-bg: rgba(125, 207, 255, 0.06);
+  --selected-bg: rgba(98, 174, 239, 0.16);
+
+  --code: #8fdccb;
+
+  /* Attention: the fill an agent blocked on a person wears, and the ink
+     that sits on it. Loud enough to find without reading the screen. */
+  --attention-fill: #e5c07b;
+  --attention-ink: #1f2328;
+  --attention-ink-dim: #4a3e1e;
+  --attention-glow: rgba(229, 192, 123, 0.18);
+
+  --add-wash: rgba(114, 192, 135, 0.07);
+  --del-wash: rgba(224, 108, 117, 0.07);
+
+  --scrim: rgba(10, 13, 16, 0.6);
+  --shadow-lift: rgba(0, 0, 0, 0.45);
+  --shadow-modal: rgba(0, 0, 0, 0.6);
+  --danger-bg: #552b29;
+  --danger-ink: #f3f5f6;
+
+  /* The wordmark's gradient: sea, sky, crest. */
+  --mark-a: #7aa2f7;
+  --mark-b: #7dcfff;
+  --mark-c: #c8f7ef;
+
+  /* The terminal's ground, in both themes. Provider output is ANSI
+     written for a dark terminal — recoloring it as page chrome would
+     leave an agent's own blues and greens illegible on white — so the
+     surfaces that host a terminal keep the terminal's background even
+     when the dashboard around them is light. The rest of the terminal's
+     colors are xterm's, not CSS's, and live in lib/theme.ts. */
+  --term-bg: #14181d;
+
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 13px;
   color: var(--text);
   background: var(--bg);
+}
+
+/* Light: internal/theme's Light pairs, composed as the site composes
+   them — a tinted page ground, white chrome, and content panes lifted
+   back toward paper. The rail/roster/pane run mirrors dark's, which
+   steps down toward the content the reader is in. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f2f6fa;
+  --bg-raised: #ffffff;
+  --bg-sunken: #fbfdff;
+  --bg-rail: #e9f0f7;
+  --field: #f2f6fa;
+
+  --border: #cfdbe7;
+  --border-bright: #aab3b9;
+
+  --text: #24323a;
+  --text-bright: #172027;
+  /* internal/theme's Light Muted (#70808A) is a hair under 4.5:1 on this
+     ground; the site's own dimmed ink is the same role one step deeper,
+     and secondary text in a dashboard is read, not glanced at. */
+  --muted: #59707f;
+
+  --working: #26799d;
+  --waiting: #a86600;
+  --done: #257a4a;
+  --failed: #b33838;
+
+  --band: #b9d9ef;
+  --band-ink: #0f2338;
+  /* Where dark paints the band itself as ink, light cannot: #b9d9ef on
+     white is not text. The deep end of the same blue is. */
+  --accent: #1d6485;
+  --ice: #26799d;
+  /* Translucent, like dark's, rather than the site's flat #eef4f9: the
+     same wash has to darken the rail, the roster and the page ground,
+     which are three different colors here. */
+  --hover-bg: rgba(38, 121, 157, 0.08);
+  --selected-bg: rgba(98, 174, 239, 0.2);
+
+  --code: #0e7c6b;
+
+  /* The site's deep amber rather than its plain one: this is a fill
+     carrying text, and the plain amber does not hold ink at 4.5:1. */
+  --attention-fill: #8f5800;
+  --attention-ink: #fff6e8;
+  --attention-ink-dim: #f7e9d4;
+  --attention-glow: rgba(143, 88, 0, 0.3);
+
+  --add-wash: rgba(37, 122, 74, 0.1);
+  --del-wash: rgba(179, 56, 56, 0.09);
+
+  --scrim: rgba(15, 35, 56, 0.45);
+  --shadow-lift: rgba(15, 35, 56, 0.18);
+  --shadow-modal: rgba(15, 35, 56, 0.3);
+  --danger-bg: #f2d5d1;
+  --danger-ink: #172027;
+
+  --mark-a: #2b5fa8;
+  --mark-b: #1d6485;
+  --mark-c: #0e7c6b;
 }
 
 * {
@@ -46,7 +175,7 @@ button {
 
 button:hover:not(:disabled) {
   border-color: var(--ice);
-  color: var(--band);
+  color: var(--accent);
 }
 
 button:disabled {
@@ -55,5 +184,5 @@ button:disabled {
 }
 
 code {
-  color: var(--code, #8fdccb);
+  color: var(--code);
 }

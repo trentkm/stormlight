@@ -116,7 +116,7 @@
     color: var(--text);
   }
   dialog::backdrop {
-    background: rgba(10, 13, 16, 0.6);
+    background: var(--scrim);
   }
   form {
     display: flex;
@@ -132,7 +132,7 @@
   h2 {
     margin: 0;
     font-size: 14px;
-    color: var(--band);
+    color: var(--accent);
   }
   label {
     display: flex;
@@ -155,7 +155,7 @@
   select,
   textarea {
     padding: 7px 10px;
-    background: var(--bg-sunken);
+    background: var(--field);
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text);

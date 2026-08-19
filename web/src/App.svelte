@@ -2,6 +2,7 @@
   import { claimToken } from "./lib/api";
   import { reconcileFocus, run, ui } from "./lib/commands.svelte";
   import { focusOf, match } from "./lib/keys";
+  import { followMode, mode, toggleMode } from "./lib/mode.svelte";
   import { fleet, start } from "./lib/state.svelte";
   import { isUrgent } from "./lib/types";
   import Canvas from "./components/Canvas.svelte";
@@ -15,6 +16,8 @@
   import WorkspaceRail from "./components/WorkspaceRail.svelte";
 
   const authorized = claimToken();
+
+  $effect(() => followMode());
 
   $effect(() => {
     if (!authorized) return;
@@ -148,6 +151,14 @@
         <span class="tally waiting">◆ {urgent} needs input</span>
       {/if}
       <span class="tally working">● {working} working</span>
+      <button
+        class="mode"
+        onclick={toggleMode}
+        title="Switch to the {mode.current === 'dark' ? 'light' : 'dark'} theme"
+        aria-label="Switch to the {mode.current === 'dark' ? 'light' : 'dark'} theme"
+      >
+        ◐ {mode.current === "dark" ? "light" : "dark"}
+      </button>
     </header>
 
     <div class="body" class:zoomed={ui.zoomed && ui.view === "roster"}>
@@ -212,7 +223,12 @@
     font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.04em;
-    background: linear-gradient(90deg, #7aa2f7, #7dcfff, #c8f7ef);
+    background: linear-gradient(
+      90deg,
+      var(--mark-a),
+      var(--mark-b),
+      var(--mark-c)
+    );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -224,7 +240,7 @@
     display: flex;
     gap: 2px;
     padding: 3px;
-    background: var(--bg-sunken);
+    background: var(--field);
     border: 1px solid var(--border);
     border-radius: 6px;
   }
@@ -239,7 +255,13 @@
     font-weight: 500;
   }
   .views button:hover:not(.on) {
-    color: var(--band);
+    color: var(--accent);
+  }
+  .mode {
+    padding: 2px 10px;
+    border-color: var(--border);
+    color: var(--muted);
+    font-size: 12px;
   }
   .ghost {
     padding: 2px 8px;
@@ -247,7 +269,7 @@
     font-size: 11px;
   }
   .ghost:hover {
-    color: var(--band);
+    color: var(--accent);
   }
   .tally {
     font-size: 12px;
@@ -275,8 +297,8 @@
     align-items: center;
     margin: 0;
     padding: 6px 14px;
-    background: #552b29;
-    color: #f3f5f6;
+    background: var(--danger-bg);
+    color: var(--danger-ink);
     font-size: 12px;
   }
   .gate {
@@ -287,6 +309,6 @@
     color: var(--muted);
   }
   .gate h1 {
-    color: var(--band);
+    color: var(--accent);
   }
 </style>

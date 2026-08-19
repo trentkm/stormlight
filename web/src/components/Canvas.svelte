@@ -244,7 +244,7 @@
     cursor: pointer;
   }
   .controls button:hover {
-    color: var(--band);
+    color: var(--accent);
   }
   .controls button.urgent {
     color: var(--waiting);

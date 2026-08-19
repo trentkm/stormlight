@@ -257,7 +257,7 @@
     border: none;
   }
   dialog::backdrop {
-    background: rgba(10, 13, 16, 0.55);
+    background: var(--scrim);
   }
   .panel {
     width: min(680px, 92vw);
@@ -267,7 +267,7 @@
     background: var(--bg-raised);
     border: 1px solid var(--border-bright);
     border-radius: 10px;
-    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 24px 60px -20px var(--shadow-modal);
     overflow: hidden;
   }
   .query {
@@ -333,7 +333,7 @@
     font-size: 11.5px;
   }
   .entries button.on .detail {
-    color: #3a5568;
+    color: var(--band-ink-dim);
   }
   kbd {
     flex: 0 0 auto;
@@ -345,8 +345,8 @@
     font-size: 11px;
   }
   .entries button.on kbd {
-    border-color: #3a5568;
-    color: #3a5568;
+    border-color: var(--band-ink-dim);
+    color: var(--band-ink-dim);
   }
   .nothing {
     margin: 0;

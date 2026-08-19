@@ -126,7 +126,7 @@
   }
   .file {
     margin-top: 14px;
-    color: var(--band);
+    color: var(--accent);
     font-weight: 700;
   }
   .meta {
@@ -137,11 +137,11 @@
   }
   .add {
     color: var(--done);
-    background: rgba(114, 192, 135, 0.07);
+    background: var(--add-wash);
   }
   .del {
     color: var(--failed);
-    background: rgba(224, 108, 117, 0.07);
+    background: var(--del-wash);
   }
   .ctx {
     color: var(--text);

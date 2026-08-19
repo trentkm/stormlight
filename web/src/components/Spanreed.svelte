@@ -132,7 +132,7 @@
     border-bottom: 1px solid var(--border);
   }
   .title {
-    color: var(--band);
+    color: var(--accent);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -148,7 +148,7 @@
     display: flex;
     gap: 2px;
     padding: 2px;
-    background: var(--bg-sunken);
+    background: var(--field);
     border: 1px solid var(--border);
     border-radius: 5px;
   }
@@ -188,7 +188,7 @@
   input {
     flex: 1 1 auto;
     padding: 6px 10px;
-    background: var(--bg-sunken);
+    background: var(--field);
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text);
