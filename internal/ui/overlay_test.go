@@ -48,7 +48,9 @@ func newFakeOverlaySession(seed string) *fakeOverlaySession {
 	}
 }
 
-func (f *fakeOverlaySession) Seed() []byte               { return []byte(f.seed) }
+func (f *fakeOverlaySession) Seed() pty.Message {
+	return pty.Message{Resync: []byte(f.seed)}
+}
 func (f *fakeOverlaySession) Output() <-chan pty.Message { return f.output }
 func (f *fakeOverlaySession) Exited() <-chan int         { return f.exited }
 func (f *fakeOverlaySession) Write(p []byte) error {

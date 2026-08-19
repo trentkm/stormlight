@@ -4,7 +4,19 @@ import "context"
 
 // Transport supplies a terminal snapshot, its live stream, and I/O.
 type Transport interface {
-	Seed() []byte
+	// Seed is the terminal's exact state at attach time, carrying the
+	// size it was rendered at.
+	//
+	// The size is not decoration. A viewer that attaches without naming
+	// one — because it has not been laid out, and a terminal shared with
+	// other viewers is not a thing to reflow on a guess — has no other
+	// way to learn the geometry those bytes were wrapped for. Painting
+	// them at its own assumption is how a snapshot arrives pre-mangled.
+	//
+	// It is a Message because that is what it is: a seed and a resync are
+	// the same thing arriving at different moments, and giving them one
+	// shape means a consumer that handles either handles both.
+	Seed() Message
 	Output() <-chan Message
 	Write([]byte) error
 	Resize(context.Context, int, int) error

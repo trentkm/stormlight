@@ -75,8 +75,11 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 
 	// The daemon's snapshot is state, not output: it replaces whatever the
 	// replica had. Say so before sending it, so a reconnecting client
-	// never appends a screen to the one it was already showing.
-	if err := writeSeed(ctx, conn, transport.Seed()); err != nil {
+	// never appends a screen to the one it was already showing — and send
+	// the size it was rendered at first, because a client that named no
+	// geometry of its own has no other way to learn what these bytes were
+	// wrapped for.
+	if err := writeState(ctx, conn, transport.Seed()); err != nil {
 		return
 	}
 
@@ -97,29 +100,10 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				// resize branch below would otherwise swallow it.
 				//
 				// This viewer fell behind and the daemon sent state
-				// instead of the bytes it missed. Same shape as the
-				// opening seed, and for the same reason: the client
-				// replaces its replica rather than appending to it. The
-				// size goes first so the client sizes the replica it is
-				// about to fill — while a viewer is in debt the daemon
-				// sends nothing else, so this is the only place it can
-				// learn the terminal moved.
-				// Sent every time rather than only on a change. Tracking
-				// what the client last heard means tracking three things
-				// that move it — this branch, the resize branch, and the
-				// client resizing itself — and getting that wrong
-				// suppresses a size the browser actually needed. A few
-				// extra control frames cost nothing next to that.
-				if message.Resize != nil {
-					if err := writeControl(ctx, conn, controlMessage{
-						Type: controlResize,
-						Cols: message.Resize.Cols,
-						Rows: message.Resize.Rows,
-					}); err != nil {
-						return
-					}
-				}
-				if err := writeSeed(ctx, conn, message.Resync); err != nil {
+				// instead of the bytes it missed — the same shape as the
+				// opening seed, and written by the same function, because
+				// they are the same thing at different moments.
+				if err := writeState(ctx, conn, message); err != nil {
 					return
 				}
 				continue
@@ -226,11 +210,26 @@ func keepalive(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 	}
 }
 
-func writeSeed(ctx context.Context, conn *websocket.Conn, seed []byte) error {
+// writeState sends terminal state — the attach seed, or a resync — as the
+// size it was rendered at, then the notice, then the bytes.
+//
+// The size leads because the client has to size the replica it is about
+// to fill; the notice is what tells it these bytes replace rather than
+// extend.
+func writeState(ctx context.Context, conn *websocket.Conn, state pty.Message) error {
+	if state.Resize != nil {
+		if err := writeControl(ctx, conn, controlMessage{
+			Type: controlResize,
+			Cols: state.Resize.Cols,
+			Rows: state.Resize.Rows,
+		}); err != nil {
+			return err
+		}
+	}
 	if err := writeControl(ctx, conn, controlMessage{Type: controlSeed}); err != nil {
 		return err
 	}
-	return conn.Write(ctx, websocket.MessageBinary, seed)
+	return conn.Write(ctx, websocket.MessageBinary, state.Resync)
 }
 
 func writeControl(ctx context.Context, conn *websocket.Conn, message controlMessage) error {

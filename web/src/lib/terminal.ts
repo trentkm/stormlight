@@ -139,6 +139,10 @@ export function attach(
           // this the next fit() measures the same grid, compares it to a
           // stale record, and quietly snaps the replica back to a size
           // nobody else is using.
+          //
+          // This is also how a viewer that asserted nothing learns the
+          // geometry its seed was wrapped for: the size arrives just
+          // ahead of the state it belongs to.
           announced = { cols, rows };
         }
         return;

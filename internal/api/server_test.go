@@ -88,8 +88,9 @@ func (f *fakeRuntime) AttachTerminal(
 // fakeStream is one attached terminal: a seed, a channel the test pushes
 // output onto, and a record of what came back the other way.
 type fakeStream struct {
-	seed   []byte
-	output chan pty.Message
+	seed     []byte
+	seedSize *pty.Size
+	output   chan pty.Message
 
 	mu         sync.Mutex
 	written    []byte
@@ -101,7 +102,9 @@ type fakeStream struct {
 	closed  bool
 }
 
-func (f *fakeStream) Seed() []byte               { return f.seed }
+func (f *fakeStream) Seed() pty.Message {
+	return pty.Message{Resync: f.seed, Resize: f.seedSize}
+}
 func (f *fakeStream) Output() <-chan pty.Message { return f.output }
 func (f *fakeStream) Write(p []byte) error {
 	f.mu.Lock()
@@ -684,6 +687,33 @@ func TestTerminalRelayCarriesBytesBothWays(t *testing.T) {
 	runtime.mu.Unlock()
 	if len(streamed) != 1 || streamed[0] != "agent-one" {
 		t.Fatalf("attached to %#v", streamed)
+	}
+}
+
+// A client that named no size of its own — because its pane had not been
+// laid out, and a shared terminal is not a thing to reflow on a guess —
+// has no other way to learn the geometry its seed was wrapped for. The
+// size leads the state it belongs to.
+func TestTheSeedCarriesTheSizeItWasRenderedAt(t *testing.T) {
+	server, runtime := startAPI(t)
+	runtime.stream.seedSize = &pty.Size{Cols: 132, Rows: 43}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/agents/agent-one/terminal?token=" + testToken
+	conn, _, err := websocket.Dial(ctx, address, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	if notice := readControl(t, ctx, conn); notice.Type != controlResize ||
+		notice.Cols != 132 || notice.Rows != 43 {
+		t.Fatalf("first message = %#v, want the seed's 132x43", notice)
+	}
+	if notice := readControl(t, ctx, conn); notice.Type != controlSeed {
+		t.Fatalf("second message = %#v, want a seed notice", notice)
 	}
 }
 

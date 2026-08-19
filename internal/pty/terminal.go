@@ -130,7 +130,11 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 		cols: cols, rows: rows, termCols: cols, termRows: rows,
 		viewDirty: true,
 	}
-	s.replaceReplica(transport.Seed(), nil)
+	seed := transport.Seed()
+	// The seed names the size it was rendered at when the transport knows
+	// it, which is what lets a viewer that asserted no geometry of its own
+	// still paint the snapshot at the width it was wrapped for.
+	s.replaceReplica(seed.Resync, seed.Resize)
 	model := Model{id: lastID.Add(1), state: s}
 	go s.pump(model)
 	return model
@@ -154,13 +158,21 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	cols, rows := s.termCols, s.termRows
 	generation := s.sizeGeneration
 	s.mu.Unlock()
-	if size != nil {
+	if size != nil && size.Cols >= 2 && size.Rows >= 2 {
 		// The snapshot's bytes were rendered at this size, and the two
 		// are one thing: replaying them at any other width wraps them
 		// wrongly on purpose. An older size corrects itself, because
 		// every snapshot carries the daemon's live one and a viewer in
 		// debt receives one every interval until it catches up.
-		cols, rows = max(2, size.Cols), max(2, size.Rows)
+		//
+		// Refused rather than clamped when it names a size no terminal
+		// can be. Rounding a zero up to 2x2 is not a correction, it is a
+		// pane collapsed to a ribbon, and a Transport is free to build a
+		// size without the guard the daemon-backed one applies.
+		//
+		// The standalone resize below still clamps, so the two halves of
+		// this loop disagree; see #166.
+		cols, rows = size.Cols, size.Rows
 	}
 
 	// Built before the lock is taken. Parsing a full snapshot is tens of

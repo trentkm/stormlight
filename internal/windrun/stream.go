@@ -96,8 +96,12 @@ type terminalStream struct {
 	closeOnce sync.Once
 }
 
-func (t *terminalStream) Seed() []byte {
-	return t.attachment.Snapshot().ANSI
+func (t *terminalStream) Seed() pty.Message {
+	snapshot := t.attachment.Snapshot()
+	return pty.Message{
+		Resync: snapshot.ANSI,
+		Resize: snapshotSize(&snapshot),
+	}
 }
 
 // relay carries the daemon's stream across into the widget's, preserving

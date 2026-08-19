@@ -169,7 +169,13 @@ func newBenchStream(attachment *client.Attachment) benchStream {
 	return stream
 }
 
-func (b benchStream) Seed() []byte               { return b.attachment.Snapshot().ANSI }
+func (b benchStream) Seed() pty.Message {
+	snapshot := b.attachment.Snapshot()
+	return pty.Message{
+		Resync: snapshot.ANSI,
+		Resize: &pty.Size{Cols: snapshot.Cols, Rows: snapshot.Rows},
+	}
+}
 func (b benchStream) Output() <-chan pty.Message { return b.output }
 func (b benchStream) Write(p []byte) error       { return b.attachment.Write(p) }
 func (b benchStream) Resize(_ context.Context, cols, rows int) error {
