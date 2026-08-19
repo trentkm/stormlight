@@ -1,6 +1,5 @@
 <script lang="ts">
   import { fleet, agentsIn, workspaceList } from "../lib/state.svelte";
-  import { statusVisual, theme } from "../lib/theme";
   import { isUrgent } from "../lib/types";
 
   const counts = (workspaceID: string) => {
@@ -35,10 +34,10 @@
         <span class="host">{workspace.host}</span>
       {/if}
       {#if tally.working}
-        <span class="count" style:color={theme.working}>●{tally.working}</span>
+        <span class="count" style:color="var(--working)">●{tally.working}</span>
       {/if}
       {#if tally.urgent}
-        <span class="count" style:color={theme.waiting}>◆{tally.urgent}</span>
+        <span class="count" style:color="var(--waiting)">◆{tally.urgent}</span>
       {/if}
     </button>
   {/each}
@@ -76,10 +75,10 @@
     cursor: pointer;
   }
   .row:hover {
-    background: rgba(125, 207, 255, 0.06);
+    background: var(--hover-bg);
   }
   .row.selected {
-    background: rgba(98, 174, 239, 0.16);
+    background: var(--selected-bg);
     border-left-color: var(--ice);
     color: var(--text-bright);
   }
@@ -91,7 +90,7 @@
   }
   .host {
     font-size: 11px;
-    color: var(--band);
+    color: var(--accent);
   }
   .count {
     font-size: 11px;

@@ -33,7 +33,12 @@
       class:urgent={isUrgent(agent)}
       onclick={() => (fleet.selectedID = agent.id)}
     >
-      <span class="glyph" style:color={isUrgent(agent) ? "#1F2328" : status.glyph && status.color}>
+      <span
+        class="glyph"
+        style:color={isUrgent(agent)
+          ? "var(--attention-ink)"
+          : status.glyph && status.color}
+      >
         {status.glyph}
       </span>
       <span class="body">
@@ -83,22 +88,22 @@
     cursor: pointer;
   }
   .row:hover {
-    background: rgba(125, 207, 255, 0.06);
+    background: var(--hover-bg);
   }
   .row.selected {
-    background: rgba(98, 174, 239, 0.16);
+    background: var(--selected-bg);
     border-left-color: var(--ice);
   }
   /* Urgent outranks selection: an agent blocked on a person is the one
      thing on this screen that should be impossible to scroll past. */
   .row.urgent {
-    background: var(--waiting);
-    border-left-color: var(--waiting);
-    color: #1f2328;
+    background: var(--attention-fill);
+    border-left-color: var(--attention-fill);
+    color: var(--attention-ink);
   }
   .row.urgent .detail,
   .row.urgent .age {
-    color: #4a3e1e;
+    color: var(--attention-ink-dim);
   }
   .body {
     display: flex;

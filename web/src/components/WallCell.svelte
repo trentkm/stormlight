@@ -57,7 +57,9 @@
   bind:this={host}
 >
   <button class="label" onclick={onopen} title={agent.task}>
-    <span style:color={isUrgent(agent) ? "#1f2328" : status.color}>{status.glyph}</span>
+    <span style:color={isUrgent(agent) ? "var(--attention-ink)" : status.color}
+      >{status.glyph}</span
+    >
     <span class="name">{agent.name || agent.task || agent.id.slice(0, 8)}</span>
     <span class="where">{agent.workspace?.name ?? ""}</span>
   </button>
@@ -81,18 +83,18 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    background: var(--bg-sunken);
+    background: var(--term-bg);
     border: 1px solid var(--border);
     border-radius: 6px;
   }
   .cell:hover {
-    border-color: var(--band);
+    border-color: var(--accent);
   }
   /* After :hover on purpose: equal specificity, so order keeps the
      urgent band from being repainted by a passing pointer. */
   .cell.urgent {
     border-color: var(--waiting);
-    box-shadow: 0 0 14px rgba(229, 192, 123, 0.18);
+    box-shadow: 0 0 14px var(--attention-glow);
   }
   .cell.done {
     opacity: 0.72;
@@ -114,14 +116,14 @@
     cursor: pointer;
   }
   .cell.urgent .label {
-    background: var(--waiting);
-    color: #1f2328;
+    background: var(--attention-fill);
+    color: var(--attention-ink);
   }
   .label:hover {
-    color: var(--band);
+    color: var(--accent);
   }
   .cell.urgent .label:hover {
-    color: #1f2328;
+    color: var(--attention-ink);
   }
   .name {
     flex: 1 1 auto;
@@ -134,7 +136,7 @@
     font-size: 11px;
   }
   .cell.urgent .where {
-    color: #4a3e1e;
+    color: var(--attention-ink-dim);
   }
   .reach {
     position: absolute;
@@ -158,8 +160,8 @@
     bottom: 0;
     margin: 0;
     padding: 3px 10px;
-    background: var(--waiting);
-    color: #1f2328;
+    background: var(--attention-fill);
+    color: var(--attention-ink);
     font-size: 11px;
     font-weight: 700;
   }

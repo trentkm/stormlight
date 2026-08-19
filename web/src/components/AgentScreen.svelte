@@ -6,7 +6,7 @@
   // pane to be styled.
   import "@xterm/xterm/css/xterm.css";
   import { attach, type Attachment } from "../lib/terminal";
-  import { theme } from "../lib/theme";
+  import { terminal } from "../lib/theme";
 
   /**
    * One agent's whole screen, watched and scaled into whatever box this
@@ -48,9 +48,11 @@
       disableStdin: true,
       cursorBlink: false,
       theme: {
-        background: theme.bgSunken,
-        foreground: theme.text,
-        cursor: theme.bgSunken,
+        background: terminal.background,
+        foreground: terminal.foreground,
+        // The cursor, hidden: a watched screen takes no keystrokes, and
+        // a block cursor on every tile reads as a fleet mid-type.
+        cursor: terminal.background,
       },
     });
     const fitAddon = new FitAddon();
@@ -123,6 +125,9 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
+    /* No background of its own: the cell or tile this is dropped into
+       owns the terminal's ground (--term-bg), and a second opaque layer
+       at the same color only adds a seam to antialias along. */
     overflow: hidden;
   }
   .frame {
