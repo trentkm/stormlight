@@ -157,6 +157,27 @@ describe("the palette's keyboard", () => {
     done();
   });
 
+  test("a click on the backdrop closes it", () => {
+    const done = open();
+    const dialog = document.querySelector("dialog")!;
+    // The backdrop is the dialog's own box, so a click outside the
+    // panel lands on the dialog itself.
+    dialog.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flushSync();
+    expect(closed).toBe(1);
+    done();
+  });
+
+  test("a click inside the panel does not", () => {
+    const done = open();
+    document
+      .querySelector(".panel")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flushSync();
+    expect(closed).toBe(0);
+    done();
+  });
+
   test("⌘K closes what ⌘K opened", () => {
     const done = open();
     press("k", { metaKey: true });

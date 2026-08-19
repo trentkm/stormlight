@@ -13,7 +13,7 @@
   });
 </script>
 
-<div class="terminal">
+<div class="terminal" data-walk-target>
   <textarea bind:this={helper} aria-label="terminal"></textarea>
 </div>
 

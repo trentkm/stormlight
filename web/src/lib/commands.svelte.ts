@@ -50,7 +50,9 @@ export function reconcileFocus(active: Element | null): void {
   if (!ui.walkedIn) return;
   // An overlay's own focus is the overlay's business; the walk waits.
   if (active instanceof HTMLElement && active.closest("dialog")) return;
-  if (active instanceof HTMLElement && active.closest(".terminal")) return;
+  if (active instanceof HTMLElement && active.closest("[data-walk-target]")) {
+    return;
+  }
 
   // Focus landed on something real outside the terminal — a roster row,
   // the composer. That is walking out, and the click meant it.
@@ -67,7 +69,12 @@ export function reconcileFocus(active: Element | null): void {
   // click, or an overlay closed and handed focus back to no one.
   // Walked in means the terminal holds the keyboard, so give it back
   // rather than leaving a page that answers to neither.
-  const helper = document.querySelector<HTMLElement>(".terminal textarea");
+  // The pane's own terminal, named by its hook — never `.terminal`,
+  // which xterm also emits and which a wall cell would answer to first
+  // in document order.
+  const helper = document.querySelector<HTMLElement>(
+    "[data-walk-target] textarea",
+  );
   if (helper) helper.focus();
   else ui.walkedIn = false;
 }

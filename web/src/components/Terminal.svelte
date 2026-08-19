@@ -98,7 +98,13 @@
   });
 </script>
 
-<div class="terminal" bind:this={host}>
+<!-- data-walk-target is the walked-in keyboard's anchor, and it is a
+     data attribute rather than a class because `.terminal` is not ours
+     alone: xterm adds that class to its own container, so every
+     watching wall cell answers to it too. Focus rules that keyed on the
+     class were one shared view away from handing an agent's keyboard to
+     a cell that only wanted to be looked at. -->
+<div class="terminal" data-walk-target bind:this={host}>
   {#if connection === "reconnecting"}
     <!-- Said out loud, because the alternative is a frozen pane that
          looks like an agent gone quiet. -->

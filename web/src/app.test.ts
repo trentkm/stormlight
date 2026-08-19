@@ -222,6 +222,29 @@ describe("the page's keyboard", () => {
   });
 });
 
+describe("deleting an agent", () => {
+  test("Ctrl-x then x asks, naming the agent", () => {
+    const done = page();
+    press("x", { ctrlKey: true });
+    press("x");
+
+    const dialog = document.querySelector("[role=alertdialog]");
+    expect(dialog?.textContent).toContain("alpha");
+    done();
+  });
+
+  // Enter confirms, so the safe answer is the one under the finger of
+  // someone who did not read the question.
+  test("the cancel button holds the focus", () => {
+    const done = page();
+    press("x", { ctrlKey: true });
+    press("x");
+
+    expect(document.activeElement?.textContent).toBe("cancel");
+    done();
+  });
+});
+
 describe("walking in, from the page's side", () => {
   test("Enter walks in and the ordinary keys stop reaching the page", () => {
     const done = page();

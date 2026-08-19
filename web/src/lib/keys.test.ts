@@ -119,6 +119,14 @@ describe("a walked-in terminal", () => {
 
   // Ctrl-K is readline's kill-to-end-of-line. The agent has first claim
   // on it; only ⌘K is the page's from inside a terminal.
+  // ⌘ is macOS only: on Linux and Windows the Super key never reaches
+  // the page, so without this there is no way into the palette from
+  // inside a terminal on those platforms.
+  test("Ctrl-Alt-K opens the palette where there is no ⌘", () => {
+    expect(meaning("k", "terminal", { ctrl: true, alt: true })).toBe("palette");
+    expect(meaning("k", "field", { ctrl: true, alt: true })).toBe("palette");
+  });
+
   test("Ctrl-K belongs to whoever is typing, ⌘K to the page", () => {
     // The agent's, inside a terminal; the field's, inside a field —
     // both implement it as kill-to-end-of-line. Only the page's own
@@ -171,7 +179,9 @@ describe("a walked-in terminal", () => {
     for (const binding of bindings.filter((b) => b.whileWalkedIn)) {
       const chord = binding.keys;
       const survivable =
-        chord.startsWith("alt+") || chord === "Ctrl-space" || chord === "⌘K";
+        chord.startsWith("alt+") ||
+        chord === "Ctrl-space" ||
+        chord === "⌘K / Ctrl-Alt-K";
       expect(
         survivable,
         `${binding.id} claims to work while walked in with "${chord}", ` +
@@ -264,6 +274,7 @@ describe("where the keyboard is", () => {
   function inTerminal(): Element {
     const terminal = document.createElement("div");
     terminal.className = "terminal";
+    terminal.setAttribute("data-walk-target", "");
     const helper = document.createElement("textarea");
     terminal.append(helper);
     document.body.append(terminal);
@@ -276,6 +287,21 @@ describe("where the keyboard is", () => {
 
   test("the same textarea is not the terminal when not walked in", () => {
     expect(focusOf(inTerminal(), false)).toBe("roster");
+  });
+
+  // xterm puts `terminal` on its own container and a hidden textarea
+  // inside it, so every watching wall cell looks like both a terminal
+  // and a text field while being neither: nothing is wired to it. A
+  // click on one must leave the page's own keys working.
+  test("a wall cell's terminal is neither the walk nor a field", () => {
+    document.body.innerHTML = "";
+    const cell = document.createElement("div");
+    cell.className = "terminal xterm";
+    const helper = document.createElement("textarea");
+    cell.append(helper);
+    document.body.append(cell);
+
+    expect(focusOf(helper, false)).toBe("roster");
   });
 
   test("an ordinary input is a field either way", () => {

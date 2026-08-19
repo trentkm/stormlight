@@ -296,7 +296,7 @@ describe("keeping the walk honest", () => {
   // to leave a page answering to neither the agent nor itself.
   test("focus falling to nothing is handed back to the terminal", () => {
     const helper = make(
-      '<div class="terminal"><textarea></textarea></div>',
+      '<div class="terminal" data-walk-target><textarea></textarea></div>',
     ).querySelector("textarea")!;
     helper.blur();
 
@@ -321,10 +321,23 @@ describe("keeping the walk honest", () => {
 
   test("focus still inside the terminal keeps it", () => {
     const helper = make(
-      '<div class="terminal"><textarea></textarea></div>',
+      '<div class="terminal" data-walk-target><textarea></textarea></div>',
     ).querySelector("textarea")!;
     reconcileFocus(helper);
     expect(ui.walkedIn).toBe(true);
+  });
+
+  test("focus is never handed to a watching wall cell", () => {
+    // A wall cell carries xterm's own `terminal` class and comes first
+    // in document order; only the pane's hook may receive the walk.
+    make('<div class="terminal xterm"><textarea id="cell"></textarea></div>');
+    const pane = make(
+      '<div class="terminal" data-walk-target><textarea id="pane"></textarea></div>',
+    ).querySelector("textarea")!;
+
+    reconcileFocus(document.body);
+
+    expect(document.activeElement).toBe(pane);
   });
 
   test("a roster button taking focus ends it", () => {

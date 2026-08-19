@@ -238,7 +238,7 @@ export const bindings: Binding[] = [
   },
   {
     id: "palette",
-    keys: "⌘K",
+    keys: "⌘K / Ctrl-Alt-K",
     what: "the command palette",
     group: "View",
     whileWalkedIn: true,
@@ -294,10 +294,24 @@ export const notYet: Array<{ keys: string; what: string }> = [
  * walked-in terminal — and treating it as a field silences the very
  * chords that exist to work from inside one, the way out among them.
  * The terminal is asked about first, and it answers for itself.
+ *
+ * It answers to [data-walk-target] rather than to `.terminal`, which
+ * xterm puts on its own container and which therefore names every
+ * watching wall cell as well as the pane. Both spellings happen to
+ * give the same answer here, since a watching cell is not a field
+ * either — the distinction is load-bearing in reconcileFocus, which
+ * decides *which* terminal receives the keyboard.
  */
 export function focusOf(active: Element | null, walkedIn: boolean): Focus {
   const here: Focus = walkedIn ? "terminal" : "roster";
-  if (active instanceof HTMLElement && active.closest(".terminal")) return here;
+  if (active instanceof HTMLElement && active.closest("[data-walk-target]")) {
+    return here;
+  }
+  // A watching cell's terminal is a picture, not a keyboard: xterm gives
+  // it a hidden textarea like any other, but nothing is wired to it, so
+  // calling it a field would suppress the page's keys in favour of
+  // somewhere they cannot go.
+  if (active instanceof HTMLElement && active.closest(".xterm")) return here;
   if (
     active instanceof HTMLInputElement ||
     active instanceof HTMLTextAreaElement ||
@@ -346,6 +360,12 @@ export function match(
   // dashboard's own composer, and a walked-in terminal has first claim
   // on it.
   if (event.code === "KeyK" && event.metaKey) return { id: "palette" };
+  // Ctrl-Alt-K is the way in from a terminal on the platforms where
+  // there is no ⌘: Super never reaches the page, and plain Ctrl-K
+  // belongs to the agent.
+  if (event.code === "KeyK" && event.ctrlKey && event.altKey) {
+    return { id: "palette" };
+  }
   // Ctrl-K is readline's kill-to-end-of-line. A terminal's agent has
   // first claim on it, and so does a text field — macOS implements it
   // in every input, and the dashboard's own composer is one.
