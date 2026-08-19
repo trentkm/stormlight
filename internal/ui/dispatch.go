@@ -4,11 +4,14 @@ package ui
 // Split from model.go; see #34.
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -239,6 +242,9 @@ func (m Model) renderAddWorkspaceAt(width, height int) string {
 		return strings.Join(lines, "\n")
 	}
 
+	if line := m.renderMachineStatus(contentWidth); line != "" {
+		lines = append(lines, "  "+line, "")
+	}
 	lines = append(lines, "  "+m.renderDispatchSectionTitle(
 		accentStyle(),
 		"Choose a directory",
@@ -297,6 +303,54 @@ func (m Model) renderAddWorkspaceTabs(width int) string {
 		return truncate(tabs, width)
 	}
 	return tabs
+}
+
+// reaching is the animation for a machine being contacted: Bubbles' own
+// Points spinner, whose ∙ and ● are already this dashboard's vocabulary
+// for quiet and working. The frames and the pace both come from the
+// library rather than being invented here.
+//
+// It rides the tick the working glow already runs on — 90ms — rather
+// than starting a second loop, so each frame is held for as many ticks
+// as the spinner's own FPS asks for.
+var reaching = spinner.Points
+
+// reachingHold is how many 90ms ticks one frame lasts, from the
+// spinner's declared rate.
+var reachingHold = max(1, int(reaching.FPS/(90*time.Millisecond)))
+
+// renderMachineStatus says what is happening with the machine the modal
+// has opened — reaching it, what it lacks, or why it could not be
+// reached. Empty for this machine, which needs no explaining.
+func (m Model) renderMachineStatus(width int) string {
+	if m.addWorkspaceHost == "" {
+		return ""
+	}
+	host := m.addWorkspaceHost
+	if !m.machineState.running && !m.machineAnswered() {
+		return ""
+	}
+	if m.machineState.running {
+		frame := reaching.Frames[0]
+		if phase := m.shimmerPhaseOrRest(); phase >= 0 {
+			frame = reaching.Frames[(phase/reachingHold)%len(reaching.Frames)]
+		}
+		return truncate(accentStyle().Render(frame)+" "+
+			mutedStyle().Render("Reaching "+host+"…"), width)
+	}
+	switch {
+	case m.machineState.err != nil:
+		return truncate(lipgloss.NewStyle().Foreground(colorWaiting()).
+			Render("Cannot reach "+host+" — "+m.machineState.err.Error()), width)
+	case !m.machineState.ready:
+		return truncate(lipgloss.NewStyle().Foreground(colorWaiting()).
+			Render(host+" has no Stormlight yet. Set it up below."), width)
+	case !m.machineState.yazi:
+		return truncate(mutedStyle().
+			Render(host+" has no yazi — type a path, or set it up below."), width)
+	default:
+		return truncate(mutedStyle().Render(host+" · "+m.machineState.detail), width)
+	}
 }
 
 // renderMachineRows lists the machines the Remote tab can open.
@@ -1176,8 +1230,19 @@ func (m *Model) setAddWorkspaceChoices() {
 		where = "Browse " + host
 		typed = "A path on " + host
 	}
-	choices := make([]directoryChoice, 0, 2)
-	if m.yaziPath != "" || host != "" {
+	choices := make([]directoryChoice, 0, 3)
+	// Browsing needs a picker over there, so it is offered once the
+	// machine has said it has one — and while it is still being asked,
+	// which is the common case of a machine that is simply fine.
+	browsable := m.yaziPath != ""
+	if host != "" {
+		// Offered unless the machine has actually said it cannot. Still
+		// being asked, or no way to ask, is not an answer — and refusing
+		// on an absence of evidence hides the row that works.
+		browsable = !m.machineAnswered() ||
+			(m.machineState.err == nil && m.machineState.ready && m.machineState.yazi)
+	}
+	if browsable {
 		choices = append(choices, directoryChoice{
 			kind:   directoryYazi,
 			host:   host,
@@ -1195,15 +1260,35 @@ func (m *Model) setAddWorkspaceChoices() {
 		// A machine needs Stormlight before it can be reached at all, and
 		// Yazi before it can be browsed. Offering to put them there beats
 		// failing at the first thing that needs them.
+		detail := "Check and install what " + host + " needs"
+		if m.machineAnswered() {
+			switch {
+			case m.machineState.err != nil:
+				detail = "Install Stormlight on " + host + " and try again"
+			case !m.machineState.ready:
+				detail = host + " has no Stormlight yet"
+			case !m.machineState.yazi:
+				detail = host + " has no yazi, so it cannot be browsed"
+			}
+		}
 		choices = append(choices, directoryChoice{
 			kind:   directorySetup,
 			host:   host,
 			label:  "Set up this machine",
-			detail: "Check and install what " + host + " needs",
+			detail: detail,
 		})
 	}
 	m.directories = choices
 	m.directoryIndex = 0
+	// A machine that cannot do anything else should open on the row that
+	// fixes that, rather than on one that will fail.
+	if host != "" && m.machineAnswered() && !m.machineReady() {
+		for index, choice := range choices {
+			if choice.kind == directorySetup {
+				m.directoryIndex = index
+			}
+		}
+	}
 }
 
 // addWorkspaceHostName is the machine the modal is on; empty is this one.
@@ -1254,7 +1339,43 @@ func (m *Model) enterMachine(host string) {
 	// Nothing here knows that machine's directories; its own Stormlight
 	// starts the picker wherever it lands.
 	m.pickerStart = ""
+	m.machineState = machineCheck{host: host, running: m.checkHost != nil}
 	m.setAddWorkspaceChoices()
+}
+
+// checkMachineCmd asks the machine what it has, so the modal can say
+// "not set up yet" rather than offering a browse that will fail.
+func (m Model) checkMachineCmd(host string) tea.Cmd {
+	if m.checkHost == nil {
+		return nil
+	}
+	check := m.checkHost
+	return func() tea.Msg {
+		// Long enough for a machine that is merely slow, short enough
+		// that one that is gone does not hold the modal all day.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		status, err := check(ctx, host)
+		return machineCheckedMsg{host: host, status: status, err: err}
+	}
+}
+
+// machineAnswered reports whether the opened machine has actually said
+// something about itself. Nothing here treats silence as a verdict: a
+// machine still being asked, or one there is no way to ask, is unknown
+// rather than broken.
+func (m Model) machineAnswered() bool {
+	return m.checkHost != nil &&
+		!m.machineState.running &&
+		m.machineState.host == m.addWorkspaceHost &&
+		m.addWorkspaceHost != ""
+}
+
+// machineReady reports whether the opened machine can be browsed and
+// dispatched to. Unknown counts as not ready: the rows that need it stay
+// out of the way until the machine has answered.
+func (m Model) machineReady() bool {
+	return m.machineState.err == nil && !m.machineState.running && m.machineState.ready
 }
 
 // leaveMachine goes back to the machine list, which is what Esc means
