@@ -96,6 +96,30 @@ describe("the diff pane", () => {
     done();
   });
 
+  // Position, not prefix: inside a hunk, "---" and "+++" are ordinary
+  // deletions and additions of content that starts with "--" or "++" —
+  // a SQL comment, a Lua comment, a signature. Colouring those as file
+  // metadata hides exactly the lines a reviewer came to read.
+  test("dashes inside a hunk are changes, not metadata", async () => {
+    const tricky = [
+      "diff --git a/q.sql b/q.sql",
+      "--- a/q.sql",
+      "+++ b/q.sql",
+      "@@ -1,2 +1,2 @@",
+      "--- a sql comment",
+      "+++ a replacement comment",
+    ].join("\n");
+    responses.push({ diff: tricky + "\n", ok: true });
+    const done = mountPane();
+    await settle();
+
+    const kinds = [...document.querySelectorAll(".diff pre span")].map(
+      (span) => span.classList[0],
+    );
+    expect(kinds).toEqual(["file", "meta", "meta", "hunk", "del", "add"]);
+    done();
+  });
+
   test("a shrunken diff replaces what was shown", async () => {
     responses.push(
       { diff: sample + "\n", ok: true },
@@ -135,6 +159,21 @@ describe("the diff pane", () => {
       "remote, or its directory is not a git repository",
     );
     done();
+  });
+
+  test("an answer arriving after unmount touches nothing", async () => {
+    let release!: () => void;
+    gates.push(new Promise<void>((resolve) => (release = resolve)));
+    responses.push({ diff: sample + "\n", ok: true });
+    const done = mountPane();
+    await settle();
+
+    // The pane closes while its first fetch is still in flight.
+    done();
+    release();
+    await settle();
+
+    expect(document.querySelector(".diff")).toBeNull();
   });
 
   test("a fetch that outlives the interval never stacks", async () => {

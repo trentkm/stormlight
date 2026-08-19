@@ -51,30 +51,37 @@
     };
   });
 
-  /** A rendered diff line and the class its first character earns. */
-  const classified = $derived(
-    diff === ""
-      ? []
-      : diff
-          .replace(/\n$/, "")
-          .split("\n")
-          .map((line) => {
-            if (line.startsWith("diff --git")) return { line, kind: "file" };
-            if (
-              line.startsWith("+++") ||
-              line.startsWith("---") ||
-              line.startsWith("index ") ||
-              line.startsWith("new file") ||
-              line.startsWith("deleted file")
-            ) {
-              return { line, kind: "meta" };
-            }
-            if (line.startsWith("@@")) return { line, kind: "hunk" };
-            if (line.startsWith("+")) return { line, kind: "add" };
-            if (line.startsWith("-")) return { line, kind: "del" };
-            return { line, kind: "ctx" };
-          }),
-  );
+  /**
+   * Each line and the class it earns.
+   *
+   * Position matters, not just the prefix: "---" and "+++" are file
+   * headers only *before* the first hunk of a file. Inside a hunk they
+   * are ordinary deletions and additions of content that happens to
+   * start with "--" or "++" — a SQL comment, a Lua comment, an email
+   * signature — and colouring those gray hides exactly the lines a
+   * reviewer came to read.
+   */
+  const classified = $derived.by(() => {
+    if (diff === "") return [];
+    let inHeader = false;
+    return diff
+      .replace(/\n$/, "")
+      .split("\n")
+      .map((line) => {
+        if (line.startsWith("diff --git")) {
+          inHeader = true;
+          return { line, kind: "file" };
+        }
+        if (line.startsWith("@@")) {
+          inHeader = false;
+          return { line, kind: "hunk" };
+        }
+        if (inHeader) return { line, kind: "meta" };
+        if (line.startsWith("+")) return { line, kind: "add" };
+        if (line.startsWith("-")) return { line, kind: "del" };
+        return { line, kind: "ctx" };
+      });
+  });
 </script>
 
 <div class="diff">
