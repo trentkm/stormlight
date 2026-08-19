@@ -25,6 +25,23 @@
     onenter?: () => void;
   } = $props();
 
+  /**
+   * The GPU renderer, unless this page was asked to do without it.
+   *
+   * `?gpu=off` on the dashboard URL drops back to the DOM renderer the
+   * wall's cells already use. It is here to settle a question by
+   * reloading rather than rebuilding: the two renderers paint the same
+   * bytes, so anything visible in one and not the other belongs to the
+   * renderer rather than to the stream.
+   */
+  function gpuWanted(): boolean {
+    try {
+      return new URL(window.location.href).searchParams.get("gpu") !== "off";
+    } catch {
+      return true;
+    }
+  }
+
   let host: HTMLDivElement;
   let connection = $state<Connection>("live");
   let term = $state<Terminal>();
@@ -85,12 +102,14 @@
     built.loadAddon(fitAddon);
     built.open(host);
     term = built;
-    try {
-      // The GPU renderer is what makes many live terminals affordable.
-      // It is not available everywhere, and the canvas fallback is fine.
-      built.loadAddon(new WebglAddon());
-    } catch {
-      // Fallback renderer; nothing to do.
+    if (gpuWanted()) {
+      try {
+        // The GPU renderer is what makes many live terminals affordable.
+        // It is not available everywhere, and the DOM fallback is fine.
+        built.loadAddon(new WebglAddon());
+      } catch {
+        // Fallback renderer; nothing to do.
+      }
     }
     // Measure only once the pane has a shape. Fitting a collapsed one
     // yields a two-column terminal, and this terminal is shared.
