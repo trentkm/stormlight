@@ -248,7 +248,12 @@ func (m Model) commandHints() []string {
 	case modeMark:
 		return []string{"w in progress", "a needs attention", "c clear", "Esc cancel"}
 	case modeAlert:
-		return []string{"j/k scroll", "y copy", "Esc close"}
+		// Only when there is something to scroll, exactly as the view's
+		// own key line decides it.
+		if m.alertDetailScrolls() {
+			return []string{"j/k scroll", "y copy", "Esc close"}
+		}
+		return []string{"y copy", "Esc close"}
 	}
 	rowMode := "z expand rows"
 	if m.rowsExpanded {

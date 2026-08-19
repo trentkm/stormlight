@@ -287,8 +287,11 @@ type Model struct {
 	lastFailure alertDetail
 	alertDetail alertDetail
 	// hushedPoll is a self-repeating failure the reader has dismissed,
-	// silenced until the poll recovers.
+	// silenced until the poll recovers. heldBack is one that timed out
+	// where no key could answer it — inside the portal — kept back only
+	// until the reader is somewhere they can.
 	hushedPoll     string
+	heldBack       string
 	shimmerPhase   int
 	shimmerRunning bool
 
@@ -772,7 +775,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.formFocus = dispatchTask
 		m.focusForm()
 		m.syncTaskComposerSize()
-		m.clearAlert()
+		m.clearComplaint(modeDispatch)
 		return m, nil
 
 	case workspaceAddedMsg:
@@ -1164,7 +1167,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// again picks it back up rather than discarding it.
 			m.syncComposerSize()
 			m.sendInput.Focus()
-			m.clearAlert()
+			m.clearComplaint(modeCompose)
 			return m, nil
 		}
 	case "x":
@@ -1181,12 +1184,12 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.mode = modeDelete
-			m.clearAlert()
+			m.clearComplaint(modeDelete)
 			return m, nil
 		}
 		if _, ok := m.selectedAgent(); ok {
 			m.mode = modeDelete
-			m.clearAlert()
+			m.clearComplaint(modeDelete)
 			return m, nil
 		}
 	case "r", "ctrl+l":

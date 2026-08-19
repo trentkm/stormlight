@@ -212,7 +212,7 @@ func (m Model) beginRename() (tea.Model, tea.Cmd) {
 	m.renameInput.SetValue(current)
 	m.renameInput.Focus()
 	m.mode = modeRename
-	m.clearAlert()
+	m.clearComplaint(modeRename)
 	return m, nil
 }
 

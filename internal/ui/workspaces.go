@@ -515,7 +515,7 @@ func (m Model) beginAddWorkspace() (tea.Model, tea.Cmd) {
 	m.formFocus = dispatchDirectory
 	m.dispatchPrefix = ""
 	m.focusForm()
-	m.clearAlert()
+	m.clearComplaint(modeAddWorkspace)
 	return m, nil
 }
 

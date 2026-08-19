@@ -739,8 +739,8 @@ func TestCardStaysOffTheComposer(t *testing.T) {
 	model.sendInput.SetValue("a reply in progress")
 	model.raise(errors.New(sshFailure))
 
-	width, height := model.bodyDimensions()
-	lift := model.inputStripRows(width)
+	_, height := model.bodyDimensions()
+	lift := model.inputStripRows()
 	if lift < 3 {
 		t.Fatalf("the composer strip measured %d rows", lift)
 	}
@@ -828,11 +828,11 @@ func TestComposerStripIsMeasuredWhereTheComposerIsDrawn(t *testing.T) {
 	// A draft that fits on one line at the pane's width and wraps at the
 	// composer's.
 	model.sendInput.SetValue(strings.Repeat("x", composerWidth))
-	if got, want := model.inputStripRows(width),
+	if got, want := model.inputStripRows(),
 		composerHeight(model.sendInput.Value(), composerWidth)+2; got != want {
 		t.Fatalf("strip measured %d rows, composer draws %d", got, want)
 	}
-	if model.inputStripRows(width) ==
+	if model.inputStripRows() ==
 		composerHeight(model.sendInput.Value(), paneWidth)+2 {
 		t.Fatalf("the strip was measured at the pane width, not the composer's")
 	}
@@ -927,5 +927,136 @@ func TestANonComparableErrorDoesNotPanicOnTheNextKey(t *testing.T) {
 	updated, _ := model.Update(runeKey("j"))
 	if next := updated.(Model); !next.alert.active() {
 		t.Fatalf("the complaint vanished")
+	}
+}
+
+// Recovery hands the card's rows back to the modal, and whatever was
+// sized for the shorter one has to hear about it.
+func TestRecoveryRefitsTheDispatchComposer(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	model = updated.(Model)
+	updated, _ = model.beginDispatch(false)
+	model = updated.(Model)
+
+	updated, _ = model.Update(dashboardMsg{})
+	model = updated.(Model)
+	if model.alert.active() {
+		t.Fatalf("the card outlived the recovery")
+	}
+
+	bodyWidth, bodyHeight := model.bodyDimensions()
+	region := model.modalRegion(bodyWidth, bodyHeight)
+	modalWidth, modalHeight := model.dispatchModalDimensions(bodyWidth, region)
+	drawn := model.dispatchLayout(max(1, modalWidth-2), max(1, modalHeight-2))
+	if got := model.taskInput.Height(); got != drawn.taskHeight {
+		t.Fatalf("composer left at %d rows while the form draws it at %d",
+			got, drawn.taskHeight)
+	}
+}
+
+// Opening a form is not reading the failure that happened to be on screen.
+func TestOpeningAFormKeepsAFailureItDidNotRaise(t *testing.T) {
+	for _, open := range []struct {
+		name string
+		key  string
+	}{{"dispatch", "n"}, {"history", "H"}, {"mark", "m"}, {"rename", "R"}} {
+		model := alertModel(t)
+		model.activePane = paneAgents
+		model.raise(errors.New("set up thaidex: ssh: could not resolve hostname"))
+
+		updated, _ := model.Update(runeKey(open.key))
+		if next := updated.(Model); !next.alert.active() {
+			t.Fatalf("%s wiped an unread failure it did not raise", open.name)
+		}
+	}
+}
+
+// A form still drops its own stale objection when it reopens.
+func TestReopeningAFormDropsItsOwnStaleComplaint(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.beginDispatch(false)
+	model = updated.(Model)
+	model.formFocus = dispatchTask
+	model.taskInput.SetValue("")
+
+	updated, _ = model.submitDispatch()
+	model = updated.(Model)
+	if model.alert.raisedIn != modeDispatch {
+		t.Fatalf("the form's objection was tagged %v: %v",
+			model.alert.raisedIn, model.alert.err)
+	}
+	model.mode = modeNormal
+
+	updated, _ = model.beginDispatch(false)
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the form reopened still wearing its last objection: %v",
+			next.alert.err)
+	}
+}
+
+// Inside the portal a card cannot be answered, so one that timed out must
+// not return every twelve seconds for as long as the daemon is down — and
+// must return the moment the reader is back where they can act on it.
+func TestATimedOutCardWaitsForTheReaderToComeBack(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	down := func() dashboardMsg {
+		return dashboardMsg{err: errors.New("daemon is not listening")}
+	}
+	updated, _ := model.Update(down())
+	model = updated.(Model)
+
+	moment := time.Now()
+	model.ageAlert(moment)
+	model.ageAlert(moment.Add(alertLinger + time.Second))
+	if model.alert.active() {
+		t.Fatalf("the card should have timed out")
+	}
+
+	updated, _ = model.Update(down())
+	model = updated.(Model)
+	if model.alert.active() {
+		t.Fatalf("the card came back over the terminal on the next tick")
+	}
+
+	model.activePane = paneAgents
+	updated, _ = model.Update(down())
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("the failure never returned once the reader could answer it")
+	}
+}
+
+// A card must not cost the body a column it drew.
+func TestCardDoesNotCropTheBody(t *testing.T) {
+	model := alertModel(t)
+	width, height := model.bodyDimensions()
+	bare := blockWidth(model.renderModeBody(width, height))
+
+	model.raise(errors.New(sshFailure))
+	if got := blockWidth(model.renderBody()); got != bare {
+		t.Fatalf("body is %d columns wide with a card, %d without", got, bare)
+	}
+}
+
+// The footer names the scroll keys only when there is something to scroll.
+func TestFooterNamesScrollOnlyWhenTheMessageScrolls(t *testing.T) {
+	short := alertModel(t)
+	short.raise(errors.New("boom"))
+	updated, _ := short.Update(runeKey("e"))
+	if footer := ansi.Strip(updated.(Model).renderFooter()); strings.Contains(
+		footer, "j/k scroll",
+	) {
+		t.Fatalf("a one-line message advertised scrolling: %q", footer)
+	}
+
+	long := alertModel(t)
+	long.raise(errors.New(strings.Repeat("a line of failure output. ", 60)))
+	updated, _ = long.Update(runeKey("e"))
+	if footer := ansi.Strip(updated.(Model).renderFooter()); !strings.Contains(
+		footer, "j/k scroll",
+	) {
+		t.Fatalf("a message that scrolls did not say so: %q", footer)
 	}
 }

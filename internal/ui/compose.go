@@ -39,7 +39,7 @@ func (m Model) updateCompose(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.complain(err)
 			return m, nil
 		}
-		m.clearAlert()
+		m.clearComplaint(modeCompose)
 		m.insertComposerToken(path)
 		m.syncComposerSize()
 		return m, nil

@@ -121,6 +121,13 @@ func (m *Model) raiseFailure(err error, polled bool) {
 		}
 		return
 	}
+	if polled && message == m.heldBack && m.keyboardHeldElsewhere() {
+		// It timed out here once and nothing here can answer it, so
+		// raising it again every tick would only cover the agent's
+		// terminal on a loop. The moment the reader is back somewhere
+		// they can act on it, this stops applying and it returns.
+		return
+	}
 	if polled && message == m.hushedPoll {
 		// The reader already dealt with this one. The poll will keep
 		// reporting it every tick until the daemon comes back, and a
@@ -165,6 +172,16 @@ func (m *Model) clearAlert() {
 	m.refitForms()
 }
 
+// clearComplaint drops the objection this surface raised last time it was
+// open, and nothing else. Opening a form is not reading the failure that
+// happened to be on screen — clearing everything here was the keystroke
+// wipe this whole surface exists to remove, wearing a different hat.
+func (m *Model) clearComplaint(surface mode) {
+	if m.alert.active() && m.alert.raisedIn == surface {
+		m.clearAlert()
+	}
+}
+
 // refitForms re-sizes the persistent widgets whose room the card changes.
 // The dispatch form's task composer is sized once and kept; a card
 // appearing under it shortens the modal, and a textarea that believes it
@@ -182,7 +199,11 @@ func (m *Model) refitForms() {
 // is news again.
 func (m *Model) resolvePolled() {
 	if m.alert.polled {
-		m.alert = alert{}
+		// Through clearAlert, not by hand: the card's rows come back to
+		// the modal and whatever was sized for the shorter one has to
+		// hear about it. clearAlert does not hush, so recovery still
+		// counts as unread.
+		m.clearAlert()
 	}
 	m.hushedPoll = ""
 }
@@ -198,11 +219,17 @@ func (m Model) keyboardHeldElsewhere() bool {
 // ageAlert runs on the poll tick. Leaving the portal hands the card back to
 // the human and stops its clock; entering it starts one.
 func (m *Model) ageAlert(now time.Time) {
-	if !m.alert.active() {
+	if !m.keyboardHeldElsewhere() {
+		// Back where a card can be answered. Anything held back because
+		// it could not be is fair to raise again, and a card already
+		// standing stops counting down.
+		m.heldBack = ""
+		if m.alert.active() {
+			m.alert.expires = time.Time{}
+		}
 		return
 	}
-	if !m.keyboardHeldElsewhere() {
-		m.alert.expires = time.Time{}
+	if !m.alert.active() {
 		return
 	}
 	if m.alert.expires.IsZero() {
@@ -210,8 +237,15 @@ func (m *Model) ageAlert(now time.Time) {
 		return
 	}
 	if now.After(m.alert.expires) {
-		// Timing out is the one ending where the reader provably did not
-		// read it, so it must not hush anything.
+		if m.alert.polled {
+			// Still failing, and no key here can answer it: raising it
+			// again on the next tick would cover the agent's terminal
+			// every twelve seconds forever. Hold it until the reader is
+			// back on the dashboard, where it can be read and dismissed.
+			m.heldBack = m.alert.message()
+		}
+		// Timing out is not reading, so nothing is hushed: leaving the
+		// portal raises it again.
 		m.clearAlert()
 	}
 }
@@ -377,7 +411,7 @@ func (m Model) alertCardKeys(clipped bool) string {
 // input rather than to content: the composer, the search line. The card
 // floats above them instead of over them — covering the box someone is
 // typing into is worse than covering anything else on screen.
-func (m Model) inputStripRows(width int) int {
+func (m Model) inputStripRows() int {
 	switch m.mode {
 	case modeCompose:
 		// Measured where renderInteraction lays it out, not at the pane's
@@ -447,6 +481,14 @@ func (m Model) alertDetailWindow() (int, int) {
 // failure card has claimed at its foot.
 func (m Model) modalRegion(width, height int) int {
 	return max(1, height-m.alertRows(width, height))
+}
+
+// alertDetailScrolls reports that the open message is longer than the room
+// it is drawn in, which is the only condition under which the scroll keys
+// do anything.
+func (m Model) alertDetailScrolls() bool {
+	textWidth, window := m.alertDetailWindow()
+	return len(wrapMessage(m.alertDetail.text, textWidth)) > window
 }
 
 func (m Model) renderAlertModal(width, height int) string {

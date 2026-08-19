@@ -1050,7 +1050,7 @@ func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 					strings.TrimSpace(m.pathNav.filter.Value()),
 				))
 			} else {
-				m.clearAlert()
+				m.clearComplaint(modeDispatch)
 			}
 			return false
 		}
@@ -1058,7 +1058,7 @@ func (m *Model) handlePathNavKey(msg tea.KeyPressMsg) bool {
 			m.complain(fmt.Errorf("no matching directory"))
 			return false
 		}
-		m.clearAlert()
+		m.clearComplaint(modeDispatch)
 		return true
 	}
 	m.pathNav.update(msg)
@@ -1575,7 +1575,7 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	m.dispatchPrefix = ""
 	m.focusForm()
 	m.syncTaskComposerSize()
-	m.clearAlert()
+	m.clearComplaint(modeDispatch)
 	return m, nil
 }
 

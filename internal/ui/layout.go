@@ -89,8 +89,13 @@ func (m Model) renderBody() string {
 	if card == "" {
 		return body
 	}
+	// Composited at the body's own width rather than the nominal one:
+	// a row the mode drew wider than bodyDimensions — the pane titles
+	// run to the screen's edge — would otherwise lose its last column
+	// for as long as a card stands.
 	return overlayBottomLeft(
-		body, card, width, contentHeight, 1, m.inputStripRows(width),
+		body, card, max(width, blockWidth(body)), contentHeight, 1,
+		m.inputStripRows(),
 	)
 }
 
@@ -516,6 +521,15 @@ func overlayComposite(
 			fitLine(after, width-rightStart)
 	}
 	return strings.Join(backgroundLines, "\n")
+}
+
+// blockWidth is the widest row of a rendered block.
+func blockWidth(block string) int {
+	widest := 0
+	for _, line := range strings.Split(block, "\n") {
+		widest = max(widest, ansi.StringWidth(line))
+	}
+	return widest
 }
 
 func fitBlock(content string, width, height int) string {
