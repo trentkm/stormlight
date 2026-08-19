@@ -23,10 +23,20 @@ import (
 // checked here, rather than a URL handed to it to trust on its own.
 const releaseHost = "https://github.com/trentkm/stormlight/releases/download"
 
-// downloadTimeout bounds fetching one archive. They are tens of
-// megabytes; a minute is generous and a stall is not a thing to wait out
-// inside a popup.
-const downloadTimeout = 60 * time.Second
+// Fetching has two shapes and they want different patience. Asking a
+// release what it published is a couple of kilobytes: slow means broken.
+// Pulling an archive is tens of megabytes over whatever connection the
+// dashboard happens to be on, and a minute was optimistic enough that an
+// ordinary home network failed it — `context deadline exceeded` on a
+// download that was working.
+//
+// A total deadline is the wrong instrument for the second: it turns a
+// slow link into a failure rather than a wait. Generous is the right
+// setting when the alternative is refusing to install at all.
+const (
+	metadataTimeout = 30 * time.Second
+	archiveTimeout  = 10 * time.Minute
+)
 
 // Target is a platform in the naming published builds use.
 type Target struct {
@@ -86,7 +96,7 @@ func releaseBinary(ctx context.Context, version string, target Target) ([]byte, 
 	archive := fmt.Sprintf("stormlight_%s_%s_%s.tar.gz", number, target.OS, target.Arch)
 	base := fmt.Sprintf("%s/v%s", releaseHost, number)
 
-	sums, err := fetch(ctx, base+"/checksums.txt")
+	sums, err := fetch(ctx, base+"/checksums.txt", metadataTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("read the release checksums: %w", err)
 	}
@@ -96,7 +106,7 @@ func releaseBinary(ctx context.Context, version string, target Target) ([]byte, 
 			"release v%s publishes nothing for %s", number, target)
 	}
 
-	payload, err := fetch(ctx, base+"/"+archive)
+	payload, err := fetch(ctx, base+"/"+archive, archiveTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", archive, err)
 	}
@@ -109,8 +119,8 @@ func releaseBinary(ctx context.Context, version string, target Target) ([]byte, 
 	return binaryFromArchive(payload)
 }
 
-func fetch(ctx context.Context, url string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+func fetch(ctx context.Context, url string, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -221,7 +231,7 @@ func YaziBinaries(ctx context.Context, target Target, musl bool) (map[string][]b
 	if !ok {
 		return nil, fmt.Errorf("yazi publishes no build for %s", target)
 	}
-	metadata, err := fetch(ctx, yaziRelease)
+	metadata, err := fetch(ctx, yaziRelease, metadataTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("ask what yazi has published: %w", err)
 	}
@@ -247,7 +257,7 @@ func YaziBinaries(ctx context.Context, target Target, musl bool) (map[string][]b
 		return nil, fmt.Errorf("yazi %s publishes no %s", release.Tag, want)
 	}
 
-	payload, err := fetch(ctx, url)
+	payload, err := fetch(ctx, url, archiveTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", want, err)
 	}
