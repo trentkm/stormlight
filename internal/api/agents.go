@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
@@ -99,8 +100,19 @@ func (s *Server) dispatchAgent(w http.ResponseWriter, r *http.Request) {
 // unstyled entries the browser paints its own way. The terminal socket
 // stays the live view; this is the history an alternate-screen agent
 // never leaves in scrollback.
+//
+// The view is a delta. Conversations grow all day and a poll every few
+// seconds must not re-ship the morning: ?after=N elides the first N
+// entries, and Total tells the client where the conversation stands. A
+// Total below the client's own count means the file shrank — replaced
+// or compacted — and the client starts over. OK is false when there is
+// no conversation to report *right now*: an agent between hooks, a
+// tunnel mid-hiccup. The client keeps what it has rather than blanking
+// a morning's reading over a two-second fault.
 type transcriptView struct {
 	Entries []provider.TranscriptEntry `json:"entries"`
+	Total   int                        `json:"total"`
+	OK      bool                       `json:"ok"`
 }
 
 func (s *Server) agentTranscript(w http.ResponseWriter, r *http.Request) {
@@ -108,13 +120,20 @@ func (s *Server) agentTranscript(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	entries, ok := s.service.Transcript(ctx, r.PathValue("id"))
 	if !ok {
-		// Not an error: an agent that has not spoken yet, or a provider
-		// that reports no transcript file, simply has no conversation to
-		// show. The client falls back to the terminal.
 		writeJSON(w, http.StatusOK, transcriptView{Entries: []provider.TranscriptEntry{}})
 		return
 	}
-	writeJSON(w, http.StatusOK, transcriptView{Entries: entries})
+	after := 0
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "after must be a non-negative integer")
+			return
+		}
+		after = parsed
+	}
+	delta := entries[min(after, len(entries)):]
+	writeJSON(w, http.StatusOK, transcriptView{Entries: delta, Total: len(entries), OK: true})
 }
 
 type renameBody struct {

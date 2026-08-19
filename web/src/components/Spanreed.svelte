@@ -66,7 +66,7 @@
         <Terminal agentID={agent.id} />
       </div>
       {#if pane === "transcript"}
-        <Transcript id={agent.id} live={true} />
+        <Transcript id={agent.id} />
       {/if}
     {/key}
 

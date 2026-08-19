@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -965,5 +967,72 @@ func TestADirectoryIsNotServed(t *testing.T) {
 	}
 	if cache := response.Header.Get("Cache-Control"); strings.Contains(cache, "immutable") {
 		t.Fatalf("a directory was cached as %q", cache)
+	}
+}
+
+func TestAgentTranscript(t *testing.T) {
+	transcriptPath := filepath.Join(t.TempDir(), "session.jsonl")
+	transcript := `{"type":"user","message":{"content":"first ask"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"first answer"}]}}
+{"type":"user","message":{"content":"second ask"}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server, runtime := startAPI(t)
+	runtime.agents[0].TranscriptPath = transcriptPath
+
+	type view struct {
+		Entries []map[string]any `json:"entries"`
+		Total   int              `json:"total"`
+		OK      bool             `json:"ok"`
+	}
+	fetch := func(t *testing.T, query string) view {
+		t.Helper()
+		response, err := http.Get(
+			server.URL + "/api/agents/" + query + "&token=" + testToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("status %d", response.StatusCode)
+		}
+		var decoded view
+		if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+
+	full := fetch(t, "agent-one/transcript?after=0")
+	if !full.OK || full.Total != 3 || len(full.Entries) != 3 {
+		t.Fatalf("full fetch: %+v", full)
+	}
+	if full.Entries[0]["kind"] != "prompt" || full.Entries[0]["text"] != "first ask" {
+		t.Errorf("first entry: %+v", full.Entries[0])
+	}
+
+	// The delta: a client that has 2 entries gets only the third.
+	delta := fetch(t, "agent-one/transcript?after=2")
+	if !delta.OK || delta.Total != 3 || len(delta.Entries) != 1 {
+		t.Fatalf("delta fetch: %+v", delta)
+	}
+	if delta.Entries[0]["text"] != "second ask" {
+		t.Errorf("delta entry: %+v", delta.Entries[0])
+	}
+
+	// A cursor past the end is an empty delta, not an error: the client
+	// simply has everything.
+	beyond := fetch(t, "agent-one/transcript?after=99")
+	if !beyond.OK || beyond.Total != 3 || len(beyond.Entries) != 0 {
+		t.Fatalf("beyond fetch: %+v", beyond)
+	}
+
+	// No transcript to report: ok is false, so the client keeps what it
+	// has instead of blanking a morning's reading over a hiccup.
+	absent := fetch(t, "missing/transcript?after=0")
+	if absent.OK {
+		t.Fatalf("missing agent should not be ok: %+v", absent)
 	}
 }

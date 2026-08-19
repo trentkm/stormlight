@@ -3,6 +3,7 @@ package provider
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -163,23 +164,39 @@ func TestParseClaudeTranscriptEntries(t *testing.T) {
 	}
 }
 
-// The render of parsed entries is the render the dashboard has always
-// shown; this pins the seam so the parse layer cannot drift from it.
-func TestRenderTranscriptEntriesMatchesDirectRender(t *testing.T) {
-	transcript := `{"type":"user","message":{"content":"ask"}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"answer"},{"type":"tool_use","name":"Read","input":{"file_path":"/f.go"}}]}}
-{"type":"user","message":{"content":[{"type":"tool_result","content":"result line"}]}}`
+// The rendered skeleton, pinned as a literal. RenderClaudeTranscriptFrom
+// is itself parse-then-render now, so comparing the two would compare a
+// function with itself; what this guards is the *shape* the dashboard
+// has always shown — markers, indents, trims, the +N line — with the
+// ANSI styling stripped so the pin is about layout, not palette. The
+// styling itself is asserted by TestRenderClaudeTranscriptPaints
+// Conversation above.
+var testANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-	direct, ok := RenderClaudeTranscriptFrom(strings.NewReader(transcript))
-	if !ok {
-		t.Fatal("expected a conversation")
-	}
-	entries, ok := ParseClaudeTranscriptFrom(strings.NewReader(transcript))
-	if !ok {
-		t.Fatal("expected entries")
+func stripANSI(text string) string { return testANSIPattern.ReplaceAllString(text, "") }
+
+func TestRenderTranscriptEntriesGoldenSkeleton(t *testing.T) {
+	entries := []TranscriptEntry{
+		{Kind: "prompt", Text: "ask\nsecond line"},
+		{Kind: "reply", Text: "answer"},
+		{Kind: "tool", Tool: "Read", Arg: "/f.go"},
+		{Kind: "result", Text: "one\ntwo\nthree", Hidden: 4},
 	}
 
-	if rendered := RenderTranscriptEntries(entries); rendered != direct {
-		t.Errorf("parse-then-render diverged from direct render:\n%q\nvs\n%q", rendered, direct)
+	rendered := stripANSI(RenderTranscriptEntries(entries))
+
+	golden := "\n" +
+		"❯ ask\n" +
+		"  second line\n" +
+		"\n" +
+		"⏺ answer\n" +
+		"\n" +
+		"⏺ Read(/f.go)\n" +
+		"  ⎿ one\n" +
+		"    two\n" +
+		"    three\n" +
+		"    … +4 lines\n"
+	if rendered != golden {
+		t.Errorf("skeleton drifted:\ngot  %q\nwant %q", rendered, golden)
 	}
 }

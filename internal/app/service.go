@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -56,6 +57,19 @@ type Service struct {
 	// tunnel to get here.
 	transcriptMu sync.Mutex
 	transcripts  map[string]cachedTranscript
+
+	// localTranscripts caches parses of transcripts on this machine,
+	// keyed by path and invalidated by mtime and size. A 14MB JSONL is
+	// cheap to stat and expensive to re-parse, and the web polls.
+	localTranscriptMu sync.Mutex
+	localTranscripts  map[string]localTranscript
+}
+
+type localTranscript struct {
+	modTime time.Time
+	size    int64
+	entries []provider.TranscriptEntry
+	ok      bool
 }
 
 type cachedTranscript struct {
@@ -552,12 +566,41 @@ func (s *Service) Transcript(
 			return nil, false
 		}
 		if s.transcriptIsLocal(managedAgent) {
-			return provider.ParseClaudeTranscript(managedAgent.TranscriptPath)
+			return s.localTranscript(managedAgent.TranscriptPath)
 		}
 		cached := s.remoteTranscript(ctx, managedAgent)
 		return cached.entries, cached.ok
 	}
 	return nil, false
+}
+
+// localTranscript parses a transcript on this machine, re-parsing only
+// when the file's mtime or size moved. The cached slice is shared with
+// callers and never mutated after the parse.
+func (s *Service) localTranscript(path string) ([]provider.TranscriptEntry, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, false
+	}
+	s.localTranscriptMu.Lock()
+	cached, hit := s.localTranscripts[path]
+	s.localTranscriptMu.Unlock()
+	if hit && cached.modTime.Equal(info.ModTime()) && cached.size == info.Size() {
+		return cached.entries, cached.ok
+	}
+	entries, ok := provider.ParseClaudeTranscript(path)
+	s.localTranscriptMu.Lock()
+	if s.localTranscripts == nil {
+		s.localTranscripts = map[string]localTranscript{}
+	}
+	s.localTranscripts[path] = localTranscript{
+		modTime: info.ModTime(),
+		size:    info.Size(),
+		entries: entries,
+		ok:      ok,
+	}
+	s.localTranscriptMu.Unlock()
+	return entries, ok
 }
 
 // transcriptIsLocal reports whether the agent's transcript is a file on

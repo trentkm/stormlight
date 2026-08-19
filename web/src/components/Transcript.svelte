@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { api } from "../lib/api";
   import type { TranscriptEntry } from "../lib/types";
 
@@ -8,12 +9,14 @@
    * shows everything said and done, from the provider's own transcript,
    * as HTML the browser lays out and the reader scrolls and selects.
    *
-   * Polled rather than pushed: the transcript file settles between
-   * turns, the server caches remote reads, and a fetch every few
-   * seconds while the pane is open costs less than a push channel
-   * earns. `live` gates the loop so a closed pane costs nothing.
+   * Polled rather than pushed, and polled as a delta: the transcript
+   * file settles between turns, and a conversation that has run all
+   * day must not re-cross the wire every few seconds — ?after elides
+   * what this pane already holds, and the server's total says where
+   * the conversation stands. The component unmounts when its tab
+   * closes, so a closed pane costs nothing.
    */
-  let { id, live }: { id: string; live: boolean } = $props();
+  let { id }: { id: string } = $props();
 
   let entries = $state<TranscriptEntry[]>([]);
   let loaded = $state(false);
@@ -22,19 +25,37 @@
   const refreshInterval = 3000;
 
   $effect(() => {
-    if (!live) return;
     const agentID = id;
     let cancelled = false;
 
     const fetchOnce = async () => {
       try {
-        const transcript = await api.transcript(agentID);
+        // untrack: the first poll runs synchronously inside the effect,
+        // and a tracked read of `entries` here would make the effect
+        // depend on the very state it appends to — teardown, refetch,
+        // forever.
+        const held = untrack(() => entries.length);
+        const transcript = await api.transcript(agentID, held);
         if (cancelled) return;
         const first = !loaded;
-        const grew = transcript.entries.length !== entries.length;
-        entries = transcript.entries;
         loaded = true;
-        if (grew) follow(first);
+        if (!transcript.ok) {
+          // Nothing to report *right now* — an agent between hooks, a
+          // tunnel mid-hiccup. Keep what we have: blanking a morning's
+          // conversation over a two-second fault is worse than being
+          // two seconds stale.
+          return;
+        }
+        if (transcript.total < held) {
+          // The file shrank — replaced or compacted. Start over.
+          entries = [];
+          void fetchOnce();
+          return;
+        }
+        if (transcript.entries.length > 0) {
+          entries = [...entries, ...transcript.entries];
+          follow(first);
+        }
       } catch {
         // The roster socket owns error reporting; a missed transcript
         // poll just tries again.

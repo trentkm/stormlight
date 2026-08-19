@@ -301,3 +301,72 @@ func TestALiveRemoteAgentIsNotAlsoHistory(t *testing.T) {
 		t.Fatalf("a conversation still running is not history yet: %+v", records)
 	}
 }
+
+func TestTranscriptServesParsedEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(transcriptJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &recordingRuntime{agents: []agent.Agent{{
+		ID:             "a1",
+		TranscriptPath: path,
+	}}}
+	service := serviceWithRuntime(t, runtime)
+
+	entries, ok := service.Transcript(context.Background(), "a1")
+	if !ok {
+		t.Fatal("expected a conversation")
+	}
+	want := []provider.TranscriptEntry{
+		{Kind: "prompt", Text: "why is the build red"},
+		{Kind: "reply", Text: "A missing import."},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("got %d entries, want %d: %#v", len(entries), len(want), entries)
+	}
+	for i := range want {
+		if entries[i] != want[i] {
+			t.Errorf("entry %d: got %#v, want %#v", i, entries[i], want[i])
+		}
+	}
+
+	if _, ok := service.Transcript(context.Background(), "missing"); ok {
+		t.Error("unknown agent should have no transcript")
+	}
+}
+
+// The local cache must be invisible: a grown file serves its new
+// entries on the next call, not a stale parse.
+func TestTranscriptSeesGrowth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(transcriptJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &recordingRuntime{agents: []agent.Agent{{
+		ID:             "a1",
+		TranscriptPath: path,
+	}}}
+	service := serviceWithRuntime(t, runtime)
+
+	before, _ := service.Transcript(context.Background(), "a1")
+	appended := `{"type":"user","message":{"content":"and now?"}}` + "\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(appended); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+
+	after, ok := service.Transcript(context.Background(), "a1")
+	if !ok {
+		t.Fatal("expected a conversation")
+	}
+	if len(after) != len(before)+1 {
+		t.Fatalf("got %d entries after growth, want %d", len(after), len(before)+1)
+	}
+	if last := after[len(after)-1]; last.Text != "and now?" {
+		t.Errorf("newest entry: got %#v", last)
+	}
+}

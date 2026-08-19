@@ -116,10 +116,10 @@ export const api = {
     mode?: string;
   }) => call<Agent>("POST", "/api/agents", request),
 
-  transcript: (id: string) =>
-    call<{ entries: TranscriptEntry[] }>(
+  transcript: (id: string, after = 0) =>
+    call<{ entries: TranscriptEntry[]; total: number; ok: boolean }>(
       "GET",
-      `/api/agents/${id}/transcript`,
+      `/api/agents/${id}/transcript?after=${after}`,
     ),
   send: (id: string, message: string) =>
     call<void>("POST", `/api/agents/${id}/message`, { message }),
