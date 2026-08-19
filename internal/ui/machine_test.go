@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -367,5 +368,84 @@ func TestALateAnswerForAnotherMachineIsIgnored(t *testing.T) {
 		host: "somewhere-else", status: HostStatus{Ready: false}})
 	if got := updated.(Model).renderMachineStatus(70); got != before {
 		t.Fatalf("a late answer for another machine changed this one: %q", got)
+	}
+}
+
+// TestACatalogedParentAndItsNestedRepoAreTellable: a catalogued parent
+// directory and a Git repository inside it both end in the same
+// basename, so the pane showed two rows spelled identically with the
+// agents apparently on the wrong one. They are different workspaces —
+// the identities are right — so they have to be readable as different.
+func TestACatalogedParentAndItsNestedRepoAreTellable(t *testing.T) {
+	parent := workspace.Context{
+		Host: "cld2", ID: "cld2:directory:/home/t/workplace/MetaRepo-PFS",
+		Kind: "directory", Name: "MetaRepo-PFS",
+		Root:          "/home/t/workplace/MetaRepo-PFS",
+		ExecutionRoot: "/home/t/workplace/MetaRepo-PFS",
+	}
+	nested := workspace.Context{
+		Host: "cld2", ID: "cld2:git:/home/t/workplace/MetaRepo-PFS/src/MetaRepo-PFS/.git",
+		Kind: "git", Name: "MetaRepo-PFS",
+		Root:          "/home/t/workplace/MetaRepo-PFS/src/MetaRepo-PFS",
+		ExecutionRoot: "/home/t/workplace/MetaRepo-PFS/src/MetaRepo-PFS",
+	}
+
+	groups := buildWorkspaceGroups(
+		[]workspace.Context{parent},
+		[]agent.Agent{{ID: "aaa", Host: "cld2", Workspace: nested}},
+	)
+	if len(groups) != 2 {
+		t.Fatalf("both workspaces belong on screen: %+v", groups)
+	}
+	if groups[0].label == groups[1].label {
+		t.Fatalf("two rows spelled the same way: %q", groups[0].label)
+	}
+	if groups[0].label != "workplace/MetaRepo-PFS" ||
+		groups[1].label != "src/MetaRepo-PFS" {
+		t.Fatalf("labels = %q, %q", groups[0].label, groups[1].label)
+	}
+	// The agent stays where it was; nothing was merged or moved.
+	if len(groups[1].agents) != 1 || groups[1].context.ID != nested.ID {
+		t.Fatalf("the agent left its own workspace: %+v", groups[1])
+	}
+	if len(groups[0].agents) != 0 {
+		t.Fatalf("the catalogued parent gained an agent it never had: %+v", groups[0])
+	}
+
+	// And the distinguishing part survives the truncation a narrow pane
+	// does, because it arrives first.
+	model := Model{}
+	row := model.renderWorkspaceRow(groups[1], false, false, 28, false)
+	if !strings.Contains(row, "src/") {
+		t.Fatalf("row = %q", row)
+	}
+}
+
+// TestNamesThatDoNotCollideAreLeftAlone: growing every name would cost
+// the pane its readability for a problem most workspaces do not have.
+func TestNamesThatDoNotCollideAreLeftAlone(t *testing.T) {
+	groups := buildWorkspaceGroups([]workspace.Context{
+		{ID: "git:/a/api/.git", Kind: "git", Name: "api", Root: "/a/api"},
+		{ID: "git:/b/web/.git", Kind: "git", Name: "web", Root: "/b/web"},
+	}, nil)
+	if groups[0].label != "api" || groups[1].label != "web" {
+		t.Fatalf("labels = %q, %q", groups[0].label, groups[1].label)
+	}
+}
+
+// TestTwoMachinesSameNameStillCollide: the same repository checked out on
+// two machines is two rows, and the host marker alone does not spell them
+// apart when both names are equal.
+func TestTwoMachinesSameNameStillCollide(t *testing.T) {
+	groups := buildWorkspaceGroups([]workspace.Context{
+		{ID: "git:/srv/api/.git", Kind: "git", Name: "api", Root: "/srv/api"},
+		{Host: "devbox", ID: "devbox:git:/opt/api/.git", Kind: "git",
+			Name: "api", Root: "/opt/api"},
+	}, nil)
+	if groups[0].label == groups[1].label {
+		t.Fatalf("both spelled %q", groups[0].label)
+	}
+	if groups[0].label != "srv/api" || groups[1].label != "opt/api" {
+		t.Fatalf("labels = %q, %q", groups[0].label, groups[1].label)
 	}
 }

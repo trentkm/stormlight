@@ -180,8 +180,12 @@ func (m Model) renderWorkspaceRow(
 	contentWidth := max(1, width-1)
 	// What the name actually asks for, floored so a long one still yields
 	// ground to the chips rather than shouldering them off the row.
+	displayName := group.label
+	if displayName == "" {
+		displayName = group.context.Name
+	}
 	nameNeed := min(
-		lipgloss.Width(group.context.Name),
+		lipgloss.Width(displayName),
 		min(10, max(1, contentWidth/2)),
 	)
 	chips := fitCountChips(
@@ -209,7 +213,7 @@ func (m Model) renderWorkspaceRow(
 		1,
 		contentWidth-lipgloss.Width(gutter)-lipgloss.Width(suffix)-1,
 	)
-	name := truncate(group.context.Name, nameWidth)
+	name := truncate(displayName, nameWidth)
 	gap := max(
 		1,
 		contentWidth-

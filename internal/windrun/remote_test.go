@@ -81,7 +81,12 @@ func remoteRuntime(t *testing.T) *Runtime {
 	// the "remote" program itself. Argv construction is asserted
 	// separately, in the remote package.
 	fakeSSH := filepath.Join(dir, "ssh")
+	// A stand-in for ssh. It answers two kinds of request the way a real
+	// host does: a script on stdin runs in a shell, and anything else is
+	// the remote Stormlight — here, this binary in bridge mode.
 	script := fmt.Sprintf(`#!/bin/sh
+for last; do :; done
+if [ "$last" = "-s" ]; then exec /bin/sh -s; fi
 %s=1 %s=%q %s=%q exec %q -test.run=TestMainBridgeHelperNeverRuns
 `, helperSentinel, helperEnv, socket, helperBinEnv, "/remote/bin/stormlight", self)
 	if err := os.WriteFile(fakeSSH, []byte(script), 0o755); err != nil {
@@ -356,4 +361,81 @@ func drainOverlay(t *testing.T, overlay session.Overlay, want string) string {
 		}
 	}
 	return collected
+}
+
+// TestTheProviderIsResolvedOnTheMachineThatRunsIt: the dashboard's own
+// path for a provider is a fact about the dashboard's machine.
+// /Users/someone/.toolbox/bin/codex handed to a Linux daemon can only
+// come back as no such file — which is exactly what it did.
+func TestTheProviderIsResolvedOnTheMachineThatRunsIt(t *testing.T) {
+	runtime := remoteRuntime(t)
+
+	// A provider that exists on the far side under a path this machine
+	// has never had, dispatched with a local path that is nonsense there.
+	remoteOnly := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(remoteOnly, []byte(
+		"#!/bin/sh\nprintf 'ran %s\\nend\\n' \"$0\"; sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(remoteOnly)+":"+os.Getenv("PATH"))
+
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("codex"),
+		Cwd:      t.TempDir(),
+		Launch: session.Launch{
+			Path:    "/Users/someone/.toolbox/bin/codex",
+			Program: "codex",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	screen := waitForScreen(t, runtime, dispatched.ID, "end")
+	// The terminal is 80 columns and a temporary path is longer, so the
+	// line it printed is wrapped: the comparison is against the text, not
+	// the layout.
+	unwrapped := strings.NewReplacer("\r", "", "\n", "").Replace(screen)
+	if !strings.Contains(unwrapped, "ran "+remoteOnly) {
+		t.Fatalf("the far side's own copy should have run:\n%s", screen)
+	}
+	// And nothing from this machine's filesystem was sent.
+	if strings.Contains(unwrapped, "/Users/someone") {
+		t.Fatalf("a dashboard path reached the remote spawn:\n%s", screen)
+	}
+}
+
+// TestAProviderMissingThereSaysSo: naming the host and the provider,
+// rather than a path from the machine that is not running it.
+func TestAProviderMissingThereSaysSo(t *testing.T) {
+	runtime := remoteRuntime(t)
+	_, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("nowhere"),
+		Cwd:      t.TempDir(),
+		Launch: session.Launch{
+			Path:    "/Users/someone/.toolbox/bin/nowhere-provider",
+			Program: "nowhere-provider-that-is-not-installed",
+		},
+	})
+	if err == nil {
+		t.Fatal("a provider the host does not have must not dispatch")
+	}
+	if !strings.Contains(err.Error(), "nowhere-provider-that-is-not-installed") ||
+		!strings.Contains(err.Error(), "testhost") {
+		t.Fatalf("the error should name the provider and the host: %v", err)
+	}
+	if strings.Contains(err.Error(), "/Users/someone") {
+		t.Fatalf("it should not name a path from this machine: %v", err)
+	}
+}
+
+// TestLocalDispatchStillUsesTheResolvedPath: nothing about this changes
+// the machine the dashboard is on, where the path was already right.
+func TestLocalDispatchStillUsesTheResolvedPath(t *testing.T) {
+	local := &Runtime{}
+	path, err := local.providerPath(context.Background(), session.Launch{
+		Path: "/usr/local/bin/codex", Program: "codex",
+	})
+	if err != nil || path != "/usr/local/bin/codex" {
+		t.Fatalf("providerPath = %q, %v", path, err)
+	}
 }
