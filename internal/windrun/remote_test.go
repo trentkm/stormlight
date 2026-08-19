@@ -25,6 +25,7 @@ const (
 	helperEnv       = "STORMLIGHT_BRIDGE_HELPER_SOCKET"
 	helperSentinel  = "STORMLIGHT_BRIDGE_HELPER"
 	helperBinEnv    = "STORMLIGHT_BRIDGE_HELPER_BIN"
+	helperStaleEnv  = "STORMLIGHT_BRIDGE_HELPER_STALE"
 	helperSocketDir = "/remote/state/windrunner"
 )
 
@@ -50,6 +51,18 @@ func TestMain(m *testing.M) {
 			Bin:       os.Getenv(helperBinEnv),
 			SocketDir: helperSocketDir,
 			Hostname:  "testhost",
+			// The daemon this harness serves is the one this test binary
+			// just started, so it can do what this build asks of it.
+			// Saying so is what the real bridge does by reading the
+			// stamp beside the socket.
+		}
+		// A daemon old enough to matter leaves no stamp at all — the
+		// mechanism postdates it — so the stale case reports nothing
+		// rather than reporting itself as old.
+		if os.Getenv(helperStaleEnv) == "" {
+			hello.DaemonCapability = Capability
+			hello.DaemonVersion = "v-remote"
+			hello.DaemonPID = os.Getpid()
 		}
 		if err := remote.Serve(os.Getenv(helperEnv), hello, os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "bridge:", err)
@@ -109,8 +122,9 @@ func remoteRuntime(t *testing.T) *Runtime {
 	script := fmt.Sprintf(`#!/bin/sh
 for last; do :; done
 if [ "$last" = "-s" ]; then exec /bin/sh -s; fi
-%s=1 %s=%q %s=%q exec %q -test.run=TestMainBridgeHelperNeverRuns
-`, helperSentinel, helperEnv, socket, helperBinEnv, self, self)
+%s=1 %s=%q %s=%q %s=%q exec %q -test.run=TestMainBridgeHelperNeverRuns
+`, helperSentinel, helperEnv, socket, helperBinEnv, self,
+		helperStaleEnv, os.Getenv(helperStaleEnv), self)
 	if err := os.WriteFile(fakeSSH, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake ssh: %v", err)
 	}
@@ -672,5 +686,71 @@ func TestAMissingProviderPointsAtTheSetting(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the message should carry %q:\n%s", want, err)
 		}
+	}
+}
+
+// TestADaemonThatCannotCarryAnAgentIsNotGivenOne is #144: a daemon older
+// than the field a dispatch depends on does not refuse the request, it
+// drops the field and starts the process anyway. What came back was an
+// agent with an empty environment, failing three layers from the cause
+// and never mentioning the daemon.
+func TestADaemonThatCannotCarryAnAgentIsNotGivenOne(t *testing.T) {
+	t.Setenv(helperStaleEnv, "1")
+	runtime := remoteRuntime(t)
+
+	_, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("claude"),
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "true"}},
+	})
+	if err == nil {
+		t.Fatal("a daemon that would drop the agent's environment must not be given one")
+	}
+	t.Logf("the message is:\n%s", err)
+	for _, want := range []string{
+		"daemon on testhost", // which machine, and that it is the daemon
+		"still list and attach",
+		// No stamp means no pid, so the only handle left is the pattern.
+		"pkill -f 'stormlight _wrdaemon'",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal should carry %q:\n%v", want, err)
+		}
+	}
+}
+
+// TestARefusedDispatchLeavesNoAgentBehind: the point of refusing before
+// the spawn is that nothing is created. An agent recorded here would be
+// one the roster shows and nothing owns.
+func TestARefusedDispatchLeavesNoAgentBehind(t *testing.T) {
+	t.Setenv(helperStaleEnv, "1")
+	runtime := remoteRuntime(t)
+
+	if _, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("claude"),
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}},
+	}); err == nil {
+		t.Fatal("this dispatch should have been refused")
+	}
+	agents, err := runtime.ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if len(agents) != 0 {
+		t.Fatalf("a refused dispatch left something behind: %+v", agents)
+	}
+}
+
+// TestADaemonNamesTheProcessToEnd: an unstamped daemon can only be found
+// by pattern, but a stamped one that is merely behind names its pid — and
+// killing the right process matters when the wrong one is somebody's
+// afternoon.
+func TestADaemonNamesTheProcessToEnd(t *testing.T) {
+	if got := restartInstruction("mini", 4321); got != "ssh mini kill 4321" {
+		t.Fatalf("restartInstruction = %q", got)
+	}
+	if got := restartInstruction("mini", 0); !strings.Contains(got, "pkill") {
+		t.Fatalf("with no pid it should fall back to a pattern: %q", got)
 	}
 }
