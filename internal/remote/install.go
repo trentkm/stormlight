@@ -175,7 +175,20 @@ const yaziRelease = "https://api.github.com/repos/sxyazi/yazi/releases/latest"
 
 // yaziTriple names a platform the way Rust does, which is how Yazi's
 // archives are named.
-func yaziTriple(target Target, musl bool) (string, bool) {
+//
+// Linux always gets the musl build, whatever the host's libc. Not because
+// musl is better, but because that archive is statically linked and the
+// gnu one is not: the gnu build of Yazi is compiled against whatever
+// glibc its own builder had — 2.39 at the time of writing — and refuses
+// to start on anything older. Amazon Linux 2023 ships glibc 2.34, so the
+// "correct" build for it was the one that could not run:
+//
+//	yazi: /lib64/libc.so.6: version `GLIBC_2.39' not found
+//
+// A static binary has no such opinion about the machine it lands on,
+// which is the only useful property when the machine is not this one and
+// its libc was never asked about.
+func yaziTriple(target Target, _ bool) (string, bool) {
 	arch := ""
 	switch target.Arch {
 	case "arm64":
@@ -189,10 +202,7 @@ func yaziTriple(target Target, musl bool) (string, bool) {
 	case "darwin":
 		return arch + "-apple-darwin", true
 	case "linux":
-		if musl {
-			return arch + "-unknown-linux-musl", true
-		}
-		return arch + "-unknown-linux-gnu", true
+		return arch + "-unknown-linux-musl", true
 	}
 	return "", false
 }
