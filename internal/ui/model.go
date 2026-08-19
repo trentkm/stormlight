@@ -829,10 +829,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// about a name or a path has nothing left to say once the field
 		// is gone. A card the dashboard itself raised belongs to no form,
 		// so it survives a trip through the help and back.
-		standing, raisedIn, mode := m.alert.err, m.alert.raisedIn, m.mode
+		// Compared by message rather than by error value: two interfaces
+		// holding the same non-comparable dynamic type panic on ==, and a
+		// dependency's value-typed error would take the dashboard down on
+		// the next keypress.
+		standing, raisedIn, mode := m.alert.message(), m.alert.raisedIn, m.mode
 		updated, cmd := m.updateKey(msg)
 		if model, ok := updated.(Model); ok &&
-			standing != nil && model.alert.err == standing &&
+			standing != "" && model.alert.message() == standing &&
 			mode == raisedIn && raisedIn.isForm() && model.mode != mode {
 			model.clearAlert()
 			return model, cmd

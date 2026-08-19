@@ -48,8 +48,12 @@ type alert struct {
 // belongs to the form, so the only way those messages are ever readable in
 // full is for `e` to still find the last one after its card is gone.
 type alertDetail struct {
-	text   string
-	at     time.Time
+	text string
+	at   time.Time
+	// polled remembers that this came from the self-repeating poll, so
+	// reading it can hush it even when its card timed out first and took
+	// the flag with it.
+	polled bool
 	offset int
 }
 
@@ -92,8 +96,15 @@ func (m *Model) raisePolled(err error) {
 // setup that failed in the background is not answered by cancelling the
 // dispatch form that was open at the time.
 func (m *Model) complain(err error) {
+	standing := m.alert.message()
 	m.raiseFailure(err, false)
-	m.alert.raisedIn = m.mode
+	if m.alert.message() != standing {
+		// Only stamp a card this actually raised. A repeat of the same
+		// objection is already stamped, and a card that was standing for
+		// another reason is not the form's to claim — or to take with it
+		// when it closes.
+		m.alert.raisedIn = m.mode
+	}
 }
 
 func (m *Model) raiseFailure(err error, polled bool) {
@@ -102,6 +113,12 @@ func (m *Model) raiseFailure(err error, polled bool) {
 	}
 	message := strings.TrimSpace(err.Error())
 	if m.alert.active() && m.alert.message() == message {
+		if polled {
+			// The same text arriving from the poll makes this the poll's
+			// card too, and a card that never learns it is polled never
+			// clears itself when the daemon comes back.
+			m.alert.polled = true
+		}
 		return
 	}
 	if polled && message == m.hushedPoll {
@@ -111,12 +128,13 @@ func (m *Model) raiseFailure(err error, polled bool) {
 		return
 	}
 	m.alert = alert{err: err, polled: polled, at: alertClock()}
+	m.refitForms()
 	// Every failure leaves its full text behind, so `e` can still reach
 	// the last one after the card has gone. This is not what an open
 	// detail view is reading — that took its own copy — because a poll
 	// failing every tick would otherwise swap the message out from under
 	// someone in the middle of reading it.
-	m.lastFailure = alertDetail{text: message, at: m.alert.at}
+	m.lastFailure = alertDetail{text: message, at: m.alert.at, polled: polled}
 }
 
 // alertClock is when a failure says it arrived; tests replace it to hold
@@ -142,7 +160,20 @@ func (m *Model) dismissAlert() {
 // clearAlert takes the card down without counting it as read: a card that
 // timed out unread inside the portal, or a stale form complaint dropped
 // when the form reopens.
-func (m *Model) clearAlert() { m.alert = alert{} }
+func (m *Model) clearAlert() {
+	m.alert = alert{}
+	m.refitForms()
+}
+
+// refitForms re-sizes the persistent widgets whose room the card changes.
+// The dispatch form's task composer is sized once and kept; a card
+// appearing under it shortens the modal, and a textarea that believes it
+// is taller than the box it is drawn into scrolls and stays scrolled.
+func (m *Model) refitForms() {
+	if m.mode == modeDispatch {
+		m.syncTaskComposerSize()
+	}
+}
 
 // resolvePolled is the refresh reporting that it worked. A card raised by
 // a failing poll is the one kind that answers itself: the daemon came back,
@@ -210,6 +241,12 @@ func (m Model) openAlertDetail() (tea.Model, tea.Cmd) {
 	// A copy, taken once: what is on screen must not change under the
 	// reader because a background poll failed again while they read.
 	m.alertDetail = m.lastFailure
+	if m.lastFailure.polled {
+		// Reading it is answering it. Without this the next tick raises
+		// the identical card over the view opened to read it — and, by
+		// shortening the region, resizes that view mid-read.
+		m.hushedPoll = m.lastFailure.text
+	}
 	m.dismissAlert()
 	m.mode = modeAlert
 	return m, nil
@@ -327,6 +364,12 @@ func (m Model) alertCardKeys(clipped bool) string {
 	if clipped {
 		label = "e read it all"
 	}
+	if !m.escapeAnswersAlert() {
+		// Esc is spoken for — a live selection or search takes it first,
+		// and a card promising a key that does something else is the kind
+		// of small lie that costs trust in every other hint.
+		return mutedStyle().Render(label) + " "
+	}
 	return mutedStyle().Render(label+"  ·  Esc dismiss") + " "
 }
 
@@ -337,12 +380,12 @@ func (m Model) alertCardKeys(clipped bool) string {
 func (m Model) inputStripRows(width int) int {
 	switch m.mode {
 	case modeCompose:
-		interactionWidth := width
-		if width >= 72 {
-			_, _, interactionWidth = m.paneWidths(width)
-		}
+		// Measured where renderInteraction lays it out, not at the pane's
+		// full width — three columns of difference is a wrapped line, and
+		// a lift one row short covers the rule it exists to clear.
+		composerWidth, _ := m.interactionDimensions()
 		// The composer is its input between two rules.
-		return composerHeight(m.sendInput.Value(), max(1, interactionWidth)) + 2
+		return composerHeight(m.sendInput.Value(), max(1, composerWidth)) + 2
 	case modeSearch:
 		return 1
 	}
@@ -357,6 +400,15 @@ func (m Model) alertRows(width, height int) int {
 		return 0
 	}
 	return strings.Count(card, "\n") + 1
+}
+
+// escapeAnswersAlert reports that Esc would reach the card rather than
+// undoing something in front of it. It mirrors updateNormal's own order.
+func (m Model) escapeAnswersAlert() bool {
+	if m.selectionActive {
+		return false
+	}
+	return !(m.activePane == paneInteraction && m.search.query != "")
 }
 
 func alignRight(content string, width int) string {

@@ -495,7 +495,13 @@ func (m Model) dispatchNameVisible() bool {
 // dispatchContentDimensions is the modal's interior for the terminal as it
 // stands, matching what renderBody hands renderDispatchModal.
 func (m Model) dispatchContentDimensions() (int, int) {
-	modalWidth, modalHeight := m.dispatchModalDimensions(m.bodyDimensions())
+	// The region the modal is drawn in, not the whole body: the task
+	// composer is persistent state sized from this, and a textarea sized
+	// for a taller box than the one it is drawn into scrolls itself and
+	// stays scrolled. See resetTextareaScroll.
+	width, height := m.bodyDimensions()
+	modalWidth, modalHeight := m.dispatchModalDimensions(
+		width, m.modalRegion(width, height))
 	return max(1, modalWidth-2), max(1, modalHeight-2)
 }
 

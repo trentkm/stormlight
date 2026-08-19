@@ -763,3 +763,169 @@ func TestBodyIsUntouchedWithoutACard(t *testing.T) {
 		t.Fatalf("an empty card still rewrote the body:\n%q\n\n%q", got, want)
 	}
 }
+
+// A form may only claim the card it actually raised. One standing for
+// another reason is not the form's to take with it when it closes.
+func TestAFormDoesNotClaimACardItDidNotRaise(t *testing.T) {
+	model := alertModel(t)
+	repeated := "workspace directory is unavailable: /gone"
+	updated, _ := model.Update(dashboardMsg{err: errors.New(repeated)})
+	model = updated.(Model)
+	if model.alert.raisedIn != modeNormal {
+		t.Fatalf("a polled failure was tagged %v", model.alert.raisedIn)
+	}
+
+	// The same text arrives again, this time as a form's own objection.
+	model.mode = modeAddWorkspace
+	model.complain(errors.New(repeated))
+	if model.alert.raisedIn != modeNormal {
+		t.Fatalf("the form claimed a card it did not raise: %v", model.alert.raisedIn)
+	}
+}
+
+// The task composer is persistent state sized from the room the modal has.
+// A card shortens that room, and a textarea that believes it is taller than
+// the box it is drawn into scrolls itself and stays scrolled.
+func TestDispatchComposerIsSizedForTheModalActuallyDrawn(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.beginDispatch(false)
+	model = updated.(Model)
+	if model.mode != modeDispatch {
+		t.Fatalf("the dispatch form did not open: mode = %v", model.mode)
+	}
+
+	updated, _ = model.Update(dashboardMsg{err: errors.New(sshFailure)})
+	model = updated.(Model)
+	if !model.alert.active() {
+		t.Fatalf("expected a card under the form")
+	}
+
+	// Derived independently of dispatchContentDimensions: this is the
+	// shape renderModeBody draws.
+	bodyWidth, bodyHeight := model.bodyDimensions()
+	region := model.modalRegion(bodyWidth, bodyHeight)
+	modalWidth, modalHeight := model.dispatchModalDimensions(bodyWidth, region)
+	drawn := model.dispatchLayout(max(1, modalWidth-2), max(1, modalHeight-2))
+	if got := model.taskInput.Height(); got != drawn.taskHeight {
+		t.Fatalf("composer kept at %d rows while the form draws it at %d",
+			got, drawn.taskHeight)
+	}
+}
+
+// The composer is laid out narrower than its pane, and three columns is a
+// wrapped line: a lift measured at the wrong width covers the rule it
+// exists to clear.
+func TestComposerStripIsMeasuredWhereTheComposerIsDrawn(t *testing.T) {
+	model := alertModel(t)
+	model.mode = modeCompose
+	width, _ := model.bodyDimensions()
+	composerWidth, _ := model.interactionDimensions()
+	_, _, paneWidth := model.paneWidths(width)
+	if composerWidth == paneWidth {
+		t.Skip("this layout does not distinguish the two widths")
+	}
+
+	// A draft that fits on one line at the pane's width and wraps at the
+	// composer's.
+	model.sendInput.SetValue(strings.Repeat("x", composerWidth))
+	if got, want := model.inputStripRows(width),
+		composerHeight(model.sendInput.Value(), composerWidth)+2; got != want {
+		t.Fatalf("strip measured %d rows, composer draws %d", got, want)
+	}
+	if model.inputStripRows(width) ==
+		composerHeight(model.sendInput.Value(), paneWidth)+2 {
+		t.Fatalf("the strip was measured at the pane width, not the composer's")
+	}
+}
+
+// A card that timed out unread takes its polled flag with it, but reading
+// the message afterwards is still answering it.
+func TestReadingATimedOutPollHushesIt(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	updated, _ := model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	model = updated.(Model)
+
+	moment := time.Now()
+	model.ageAlert(moment)
+	model.ageAlert(moment.Add(alertLinger + time.Second))
+	if model.alert.active() {
+		t.Fatalf("the card should have timed out")
+	}
+
+	model.activePane = paneAgents
+	updated, _ = model.Update(runeKey("e"))
+	model = updated.(Model)
+	if model.mode != modeAlert {
+		t.Fatalf("e did not open the message: mode = %v", model.mode)
+	}
+
+	updated, _ = model.Update(dashboardMsg{err: errors.New("daemon is not listening")})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the card came back over the view opened to read it")
+	}
+}
+
+// A failure that arrives first from an action and then repeats from the
+// poll is the poll's card too, or it never clears when the daemon returns.
+func TestAFailureThePollRepeatsLearnsToClearItself(t *testing.T) {
+	model := alertModel(t)
+	shared := "read unix ->/tmp/stormlight/daemon.sock: i/o timeout"
+
+	updated, _ := model.Update(actionMsg{err: errors.New(shared)})
+	model = updated.(Model)
+	updated, _ = model.Update(dashboardMsg{err: errors.New(shared)})
+	model = updated.(Model)
+	if !model.alert.active() {
+		t.Fatalf("the card went missing")
+	}
+
+	updated, _ = model.Update(dashboardMsg{})
+	if next := updated.(Model); next.alert.active() {
+		t.Fatalf("the daemon came back and the card kept insisting it was down")
+	}
+}
+
+// The card must not name a key that does something else first.
+func TestCardNamesEscapeOnlyWhenEscapeAnswersIt(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = false
+	model.activePane = paneInteraction
+	model.raise(errors.New("interrupt failed"))
+
+	card := ansi.Strip(model.renderAlertCard(model.bodyDimensions()))
+	if !strings.Contains(card, "Esc dismiss") {
+		t.Fatalf("with nothing in front of it the card should name Esc:\n%s", card)
+	}
+
+	model.search.query = "needle"
+	card = ansi.Strip(model.renderAlertCard(model.bodyDimensions()))
+	if strings.Contains(card, "Esc dismiss") {
+		t.Fatalf("Esc clears the search first; the card must not claim it:\n%s", card)
+	}
+	if !strings.Contains(card, "e detail") {
+		t.Fatalf("the card dropped the key it does own:\n%s", card)
+	}
+}
+
+// errorWithSlice is not comparable: two interfaces holding it panic on ==.
+type errorWithSlice struct{ parts []string }
+
+func (e errorWithSlice) Error() string { return strings.Join(e.parts, " ") }
+
+// A dependency's value-typed error must not take the dashboard down on the
+// next keypress.
+func TestANonComparableErrorDoesNotPanicOnTheNextKey(t *testing.T) {
+	model := alertModel(t)
+	model.mode = modeRename
+	model.renameInput = newLineInput("New name")
+	model.complain(errorWithSlice{parts: []string{"could not", "rename"}})
+
+	// Any key at all: the mode-close check compares the standing failure
+	// against itself.
+	updated, _ := model.Update(runeKey("j"))
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("the complaint vanished")
+	}
+}
