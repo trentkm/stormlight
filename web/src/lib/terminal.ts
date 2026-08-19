@@ -40,6 +40,20 @@ export interface Attachment {
   close(): void;
 }
 
+export interface Options {
+  /**
+   * watching attaches without ever speaking: no keystrokes, and no size.
+   *
+   * The wall is why this exists. A terminal belongs to its session and
+   * every viewer shares it, so a grid of small cells that each announced
+   * their geometry would reflow the whole fleet to the size of the
+   * smallest tile — and the dashboard reading one of those agents would
+   * watch it happen. A watcher renders whatever size the terminal
+   * already is, which the seed tells it.
+   */
+  watching?: boolean;
+}
+
 /**
  * attach keeps one xterm.js instance bound to one agent's terminal, across
  * however many sockets that takes.
@@ -57,7 +71,9 @@ export function attach(
   id: string,
   isLaidOut: () => boolean,
   onConnection: (state: Connection) => void = () => {},
+  options: Options = {},
 ): Attachment {
+  const watching = options.watching ?? false;
   let socket: WebSocket | null = null;
   // Zero until this viewer has measured itself: it has asserted no
   // geometry, so it has none to compare against.
@@ -73,12 +89,14 @@ export function attach(
     // real terminal for every viewer, the dashboard included, and nothing
     // moves it back. Naming none leaves it where it is until this pane
     // has a shape and fit() can speak for it (#155).
-    if (isLaidOut()) {
+    if (!watching && isLaidOut()) {
       // Re-measure rather than trusting term.cols, which may hold a size
-      // the daemon pushed rather than one this pane has.
+      // the daemon pushed rather than one this pane has. A watcher skips
+      // it: its grid is whatever the terminal already is, and measuring
+      // its own tile would only invite it to say so.
       fitAddon.fit();
     }
-    const measured = isLaidOut() && usable(term.cols, term.rows);
+    const measured = !watching && isLaidOut() && usable(term.cols, term.rows);
     const opening = measured
       ? { cols: term.cols, rows: term.rows }
       : { cols: 0, rows: 0 };
@@ -176,21 +194,30 @@ export function attach(
     if (socket?.readyState === WebSocket.OPEN) socket.send(data);
   };
 
-  const input = term.onData((data) => {
-    const encoded = new TextEncoder().encode(data);
-    const bytes = new Uint8Array(new ArrayBuffer(encoded.length));
-    bytes.set(encoded);
-    send(bytes);
-  });
-  const binary = term.onBinary((data) => {
-    const bytes = new Uint8Array(new ArrayBuffer(data.length));
-    for (let i = 0; i < data.length; i++) {
-      bytes[i] = data.charCodeAt(i) & 255;
-    }
-    send(bytes);
-  });
+  // A watcher registers no input handlers at all, rather than dropping
+  // what they produce: a cell that quietly swallowed keystrokes would
+  // look like an agent ignoring you.
+  const input = watching
+    ? { dispose: () => {} }
+    : term.onData((data) => {
+        const encoded = new TextEncoder().encode(data);
+        const bytes = new Uint8Array(new ArrayBuffer(encoded.length));
+        bytes.set(encoded);
+        send(bytes);
+      });
+  const binary = watching
+    ? { dispose: () => {} }
+    : term.onBinary((data) => {
+        const bytes = new Uint8Array(new ArrayBuffer(data.length));
+        for (let i = 0; i < data.length; i++) {
+          bytes[i] = data.charCodeAt(i) & 255;
+        }
+        send(bytes);
+      });
 
   const fit = () => {
+    // A watcher never claims a size; it renders the one it was given.
+    if (watching) return;
     // A collapsed or hidden pane has no opinion about geometry, and this
     // terminal is shared.
     if (!isLaidOut()) return;

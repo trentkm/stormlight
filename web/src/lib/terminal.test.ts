@@ -69,8 +69,17 @@ function fakeTerminal() {
       this.cols = cols;
       this.rows = rows;
     },
-    onData: () => ({ dispose: () => {} }),
-    onBinary: () => ({ dispose: () => {} }),
+    handlers: [] as string[],
+    onData(fn: (data: string) => void) {
+      this.handlers.push("data");
+      void fn;
+      return { dispose: () => {} };
+    },
+    onBinary(fn: (data: string) => void) {
+      this.handlers.push("binary");
+      void fn;
+      return { dispose: () => {} };
+    },
     /** Runs the callbacks xterm would run once the queue drained. */
     drain() {
       while (queue.length) queue.shift()!();
@@ -80,7 +89,7 @@ function fakeTerminal() {
 
 const fitAddon = { fit: () => {} };
 
-function setup(options: { laidOut?: boolean } = {}) {
+function setup(options: { laidOut?: boolean; watching?: boolean } = {}) {
   const term = fakeTerminal();
   const states: Connection[] = [];
   const layout = { laidOut: options.laidOut ?? true };
@@ -90,6 +99,7 @@ function setup(options: { laidOut?: boolean } = {}) {
     "agent-one",
     () => layout.laidOut,
     (state) => states.push(state),
+    { watching: options.watching },
   );
   return {
     term,
@@ -278,6 +288,53 @@ describe("a pane with no layout", () => {
 
     expect(socket().sent).toEqual([
       JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+    ]);
+  });
+});
+
+// The wall opens one of these per agent. A terminal belongs to its
+// session and every viewer shares it, so a grid of cells that each
+// announced their geometry would reflow the whole fleet to the size of
+// the smallest tile — with the dashboard watching it happen.
+describe("watching", () => {
+  test("names no size, even from a pane that has one", () => {
+    const { socket } = setup({ watching: true, laidOut: true });
+    expect(socket().url).not.toContain("cols=");
+    expect(socket().url).not.toContain("rows=");
+  });
+
+  test("never reports a size, however the pane changes", () => {
+    const { term, attachment, socket } = setup({ watching: true, laidOut: true });
+    socket().open();
+    socket().sent.length = 0;
+
+    term.cols = 200;
+    term.rows = 60;
+    attachment.fit();
+
+    expect(socket().sent).toEqual([]);
+  });
+
+  // Registering no handler rather than dropping what it produces: a cell
+  // that quietly swallowed keystrokes would look like an agent ignoring
+  // you.
+  test("takes no keyboard at all", () => {
+    const { term } = setup({ watching: true });
+    expect(term.handlers).toEqual([]);
+  });
+
+  test("still paints what the terminal sends", () => {
+    const { term, socket } = setup({ watching: true });
+    socket().open();
+    socket().deliverControl({ type: "resize", cols: 132, rows: 43 });
+    socket().deliverControl({ type: "seed" });
+    socket().deliverBytes("what this agent is doing");
+    term.drain();
+
+    expect(term.calls).toEqual([
+      "resize:132x43",
+      'write:"\\u001bc"',
+      'write:"what this agent is doing"',
     ]);
   });
 });

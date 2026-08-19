@@ -3,12 +3,14 @@
   import { fleet, start } from "./lib/state.svelte";
   import { isUrgent } from "./lib/types";
   import Dispatch from "./components/Dispatch.svelte";
+  import Wall from "./components/Wall.svelte";
   import Roster from "./components/Roster.svelte";
   import Spanreed from "./components/Spanreed.svelte";
   import WorkspaceRail from "./components/WorkspaceRail.svelte";
 
   const authorized = claimToken();
   let dispatching = $state(false);
+  let view = $state<"roster" | "wall">("roster");
 
   $effect(() => {
     if (!authorized) return;
@@ -33,6 +35,14 @@
   <div class="app">
     <header class="top">
       <span class="wordmark">Stormlight</span>
+      <div class="views">
+        <button class:on={view === "roster"} onclick={() => (view = "roster")}>
+          roster
+        </button>
+        <button class:on={view === "wall"} onclick={() => (view = "wall")}>
+          wall
+        </button>
+      </div>
       <button onclick={() => (dispatching = true)}>dispatch</button>
       <span class="spacer"></span>
       {#if urgent}
@@ -43,8 +53,12 @@
 
     <div class="body">
       <WorkspaceRail />
-      <Roster />
-      <Spanreed />
+      {#if view === "wall"}
+        <Wall onopen={() => (view = "roster")} />
+      {:else}
+        <Roster />
+        <Spanreed />
+      {/if}
     </div>
 
     {#if fleet.error}
@@ -87,6 +101,27 @@
   }
   .spacer {
     flex: 1 1 auto;
+  }
+  .views {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .views button {
+    padding: 2px 12px;
+    border: none;
+    color: var(--muted);
+  }
+  .views button.on {
+    background: var(--band);
+    color: var(--band-ink);
+    font-weight: 500;
+  }
+  .views button:hover:not(.on) {
+    color: var(--band);
   }
   .tally {
     font-size: 12px;
