@@ -12,14 +12,44 @@ import type { Agent, Provider, Workspace } from "./types";
 // would instead leave it on disk long after the server that minted it.
 const tokenKey = "stormlight.token";
 
-let token = sessionStorage.getItem(tokenKey) ?? "";
+let token = "";
+
+/**
+ * remembered reads what this tab stored, lazily: reading at module scope
+ * would make importing this file depend on a browser being present, and
+ * anything that imports it — a test, a build-time render — would fail on
+ * the import rather than on the call.
+ */
+function remembered(): string {
+  try {
+    return sessionStorage.getItem(tokenKey) ?? "";
+  } catch {
+    // No storage here. The token then lives as long as this page does,
+    // which is the behavior a reload used to have anyway.
+    return "";
+  }
+}
+
+function remember(value: string): void {
+  try {
+    if (value) {
+      sessionStorage.setItem(tokenKey, value);
+    } else {
+      sessionStorage.removeItem(tokenKey);
+    }
+  } catch {
+    // As above: without storage the token is simply not carried across a
+    // reload.
+  }
+}
 
 export function claimToken(): boolean {
+  if (!token) token = remembered();
   const url = new URL(window.location.href);
   const found = url.searchParams.get("token");
   if (found) {
     token = found;
-    sessionStorage.setItem(tokenKey, token);
+    remember(token);
     url.searchParams.delete("token");
     window.history.replaceState({}, "", url.toString());
   }
@@ -29,10 +59,11 @@ export function claimToken(): boolean {
 /** forgetToken drops a token the server no longer accepts. */
 export function forgetToken(): void {
   token = "";
-  sessionStorage.removeItem(tokenKey);
+  remember("");
 }
 
 export function tokened(path: string, params: Record<string, string> = {}): string {
+  if (!token) token = remembered();
   const url = new URL(path, window.location.origin);
   url.searchParams.set("token", token);
   for (const [key, value] of Object.entries(params)) {

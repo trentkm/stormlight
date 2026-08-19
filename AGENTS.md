@@ -155,7 +155,16 @@ CI rebuilds it and fails if the committed output differs, so a stale
 files you never edited; this is why.
 
 Its own checks are `npm --prefix web test` (the terminal client's
-protocol) and `npm --prefix web run check` (types). CI runs both.
+protocol) and `npm --prefix web run check` (types). CI runs both, on
+Node 22.
+
+Watch the Node version. Newer Node exposes browser globals that CI's does
+not — `sessionStorage` among them — so a module that reaches for one at
+import time passes here and fails there. Reproduce the runner with:
+
+```sh
+NODE_OPTIONS=--no-experimental-webstorage npm --prefix web test
+```
 
 
 ## Releasing
