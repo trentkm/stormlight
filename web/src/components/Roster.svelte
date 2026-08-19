@@ -62,10 +62,6 @@
   /* The aimed column carries the mark on its own edge and lights its
      heading; its cursor is filled rather than tinted. A column you are
      not in keeps a dim memory of where you were. */
-  .roster.aimed {
-    border-right-color: var(--aim);
-    box-shadow: inset -3px 0 0 -1px var(--aim);
-  }
   .roster.aimed .heading {
     color: var(--aim);
   }

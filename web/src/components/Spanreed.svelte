@@ -82,6 +82,12 @@
         </button>
       </nav>
       <span class="spacer"></span>
+      <!-- Walking in is invisible otherwise: the keyboard changes hands
+           and nothing on screen says so, which reads as the key having
+           done nothing at all. -->
+      {#if ui.walkedIn}
+        <span class="typing">typing to this agent · ctrl-space leaves</span>
+      {/if}
       <button onclick={() => run("interrupt")} title="x">interrupt</button>
       {#if agent.attention}
         <button onclick={() => act(() => api.clearAttention(agent.id))}>clear</button>
@@ -151,12 +157,10 @@
 <style>
   /* Aimed, not walked in: the keyboard scrolls this pane, but the
      agent is not listening yet — that is Enter. */
-  /* The pane's mark is on the side it meets the roster, and its header
-     lights the way the other columns' headings do — the pane has no
-     cursor of its own, so the bar has to carry it. */
-  .pane.aimed {
-    box-shadow: inset 3px 0 0 -1px var(--aim);
-  }
+  /* No rule down the seam: the aimed column is said by its filled
+     cursor and its lit heading, and a bright line beside them was a
+     second answer to a question already answered. The pane has no
+     cursor of its own, so its header carries the whole signal. */
   .pane.aimed header {
     border-bottom-color: var(--aim);
   }
@@ -216,8 +220,15 @@
   }
   /* Walked in, the terminal says so: the seam the TUI paints in accent
      when the portal has the keyboard. */
+  /* The terminal you are typing into is lit at its own edge — not a
+     rule down the layout's seam, but the box that has the keyboard. */
   .stack.walked :global(.terminal) {
-    box-shadow: inset 0 0 0 1px var(--ice);
+    box-shadow: inset 0 0 0 1px var(--aim);
+  }
+  .typing {
+    color: var(--aim);
+    font-size: 11px;
+    letter-spacing: 0.02em;
   }
   .stack.hidden {
     display: none;

@@ -259,6 +259,20 @@ describe("moving between columns", () => {
     done();
   });
 
+  // Walking in changes who owns the keyboard, and a change nobody can
+  // see reads as a key that did nothing.
+  test("walking in says so on screen", () => {
+    const done = page();
+    expect(document.body.textContent).not.toContain("typing to this agent");
+
+    press("l");
+    press("l");
+
+    expect(ui.walkedIn).toBe(true);
+    expect(document.body.textContent).toContain("typing to this agent");
+    done();
+  });
+
   // The message box exists only where there is no terminal to type in.
   // On the terminal tab the agent's own prompt is the input box.
   test("the message box appears only off the terminal tab", () => {

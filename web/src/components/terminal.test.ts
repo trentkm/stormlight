@@ -39,6 +39,10 @@ const { FakeTerminal } = vi.hoisted(() => {
     scrollLines(lines: number) {
       this.scrolled += lines;
     }
+    bottoms = 0;
+    scrollToBottom() {
+      this.bottoms++;
+    }
 
     constructor() {
       FakeTerminal.live.push(this);
@@ -212,6 +216,20 @@ describe("who holds the keyboard", () => {
     click();
 
     expect(focusedElement().inTerminal).toBe(true);
+    close();
+  });
+
+  // Arriving at a prompt that is scrolled off screen is arriving
+  // nowhere: you are typing, and cannot see where.
+  test("walking in follows the tail", () => {
+    const { props, close } = show({ agentID: "a1", focused: false });
+    const term = FakeTerminal.live[0];
+    expect(term.bottoms).toBe(0);
+
+    props.focused = true;
+    flushSync();
+
+    expect(term.bottoms).toBeGreaterThan(0);
     close();
   });
 

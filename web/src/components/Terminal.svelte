@@ -106,11 +106,18 @@
     };
   });
 
-  // Focus follows the walked-in state rather than the mouse.
+  // Focus follows the walked-in state rather than the mouse. Walking
+  // in also follows the tail: the prompt you are about to type at is
+  // at the bottom, and arriving somewhere scrolled up is arriving
+  // where you cannot see what you are doing.
   $effect(() => {
     if (!term) return;
-    if (focused) term.focus();
-    else term.blur();
+    if (focused) {
+      term.scrollToBottom();
+      term.focus();
+    } else {
+      term.blur();
+    }
   });
 
   /**
