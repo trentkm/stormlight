@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1034,5 +1035,60 @@ func TestAgentTranscript(t *testing.T) {
 	absent := fetch(t, "missing/transcript?after=0")
 	if absent.OK {
 		t.Fatalf("missing agent should not be ok: %+v", absent)
+	}
+}
+
+func TestAgentDiff(t *testing.T) {
+	server, runtime := startAPI(t)
+	// The fake agent's cwd is a plain temp dir — not a git repository —
+	// so the honest answer is "nothing to show", not an empty diff.
+	fetchDiff := func(t *testing.T, id string) (string, bool) {
+		t.Helper()
+		response := get(t, server, "/api/agents/"+id+"/diff")
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("status %d", response.StatusCode)
+		}
+		var view struct {
+			Diff string `json:"diff"`
+			OK   bool   `json:"ok"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+			t.Fatal(err)
+		}
+		return view.Diff, view.OK
+	}
+	if _, ok := fetchDiff(t, "agent-one"); ok {
+		t.Error("a non-git cwd should answer ok=false")
+	}
+
+	// Now give the agent a real repository with an uncommitted edit.
+	dir := runtime.agents[0].Cwd
+	runGit := func(args ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		command.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "work.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".")
+	runGit("commit", "-q", "-m", "start")
+	if err := os.WriteFile(filepath.Join(dir, "work.txt"), []byte("before\nafter\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, ok := fetchDiff(t, "agent-one")
+	if !ok {
+		t.Fatal("expected a diff")
+	}
+	if !strings.Contains(diff, "+after") {
+		t.Errorf("diff missing the edit:\n%s", diff)
 	}
 }

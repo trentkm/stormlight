@@ -116,6 +116,8 @@ export const api = {
     mode?: string;
   }) => call<Agent>("POST", "/api/agents", request),
 
+  diff: (id: string) =>
+    call<{ diff: string; ok: boolean }>("GET", `/api/agents/${id}/diff`),
   transcript: (id: string, after = 0) =>
     call<{ entries: TranscriptEntry[]; total: number; ok: boolean }>(
       "GET",
