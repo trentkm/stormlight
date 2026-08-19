@@ -1,4 +1,11 @@
-import { place, tileSize, type Box } from "./canvas";
+import {
+  bounded,
+  extentLimit,
+  place,
+  positionLimit,
+  tileSize,
+  type Box,
+} from "./canvas";
 
 /**
  * Where every tile sits, per workspace, surviving reloads.
@@ -18,13 +25,9 @@ function storageKey(workspaceID: string): string {
   return storagePrefix + (workspaceID || "all");
 }
 
-/** The bounds a stored box must live inside to be believed. Storage is
- *  a trust boundary: `1e999` parses to Infinity, and one absurd box is
- *  enough to turn the camera to NaN or wedge placement — so anything
- *  outside these is discarded, not repaired. */
-const positionLimit = 1_000_000;
-const extentLimit = 10_000;
-
+/* Storage is a trust boundary: `1e999` parses to Infinity, and one
+ * absurd box is enough to turn the camera to NaN or wedge placement —
+ * so anything outside the shared limits is discarded, not repaired. */
 function sound(candidate: Partial<Box>): candidate is Box {
   const { x, y, w, h } = candidate;
   return (
@@ -104,9 +107,11 @@ export function canvasLayout(workspaceID: string) {
       }
       return tiles[id];
     },
-    /** A drag or resize, committed. */
+    /** A drag or resize, committed — clamped into the bounds load()
+     *  believes, so the session and its reload never disagree about
+     *  what was arranged. */
     put(id: string, box: Box): void {
-      tiles[id] = box;
+      tiles[id] = bounded(box);
       save(workspaceID, tiles);
     },
   };

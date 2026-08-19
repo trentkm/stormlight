@@ -114,9 +114,19 @@
   let jumpAt = 0;
   const jump = () => {
     if (urgent.length === 0 || !clip) return;
-    const target = urgent[jumpAt % urgent.length];
-    jumpAt += 1;
-    const box = layout.tiles[target.id];
+    // Walk from the cursor to the next urgent agent that has a tile;
+    // burning an index on one minted a tick from now would silently
+    // skip an agent per press.
+    let box;
+    let target;
+    for (let step = 0; step < urgent.length; step++) {
+      target = urgent[(jumpAt + step) % urgent.length];
+      box = layout.tiles[target.id];
+      if (box) {
+        jumpAt = (jumpAt + step + 1) % urgent.length;
+        break;
+      }
+    }
     if (!box) return;
     const z = Math.max(view.z, 0.5);
     view = {

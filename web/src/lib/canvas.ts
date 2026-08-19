@@ -33,6 +33,13 @@ export const maxZoom = 4;
 export const tileSize = { w: 440, h: 300 };
 export const tileMin = { w: 200, h: 140 };
 
+/** The bounds a box must live inside to be believed — enforced at both
+ *  ends: load() discards stored boxes outside them, and put()/resized()
+ *  clamp gestures into them, so a session can never manufacture a box
+ *  that its own reload would throw away. */
+export const positionLimit = 1_000_000;
+export const extentLimit = 10_000;
+
 /** The gap auto-placement keeps between tiles, and how many columns it
  *  fills before starting a new row. */
 const placeGap = 24;
@@ -65,7 +72,13 @@ export function zoomAt(
   point: { x: number; y: number },
   factor: number,
 ): View {
-  const z = clamp(view.z * factor, minZoom, maxZoom);
+  // The floor yields to a view already below it: fit may legitimately
+  // land at z = 0.009 for a far-flung fleet, and a hard floor turned
+  // the first gentle wheel tick after that into an 11x snap that threw
+  // every tile off screen — the exact loss fit exists to recover from.
+  // From below the floor, zooming in is continuous and zooming out
+  // simply holds.
+  const z = clamp(view.z * factor, Math.min(minZoom, view.z), maxZoom);
   const anchor = stagePoint(view, point);
   return { x: point.x - anchor.x * z, y: point.y - anchor.y * z, z };
 }
@@ -103,6 +116,10 @@ export function fitView(
     (viewport.h - padding * 2) / Math.max(1, bottom - top),
     1,
   );
+  // A viewport narrower than its own padding makes that arithmetic
+  // negative — scale(-0.03) renders a mirrored, inverted stage. There
+  // is nothing to fit into; go home instead.
+  if (z <= 0) return homeView;
   return {
     x: (viewport.w - (right - left) * z) / 2 - left * z,
     y: (viewport.h - (bottom - top) * z) / 2 - top * z,
@@ -148,7 +165,24 @@ export function place(existing: Box[], size = tileSize): Box {
   return { x: 0, y: bottom + placeGap, ...size };
 }
 
-/** A resize clamped to the smallest tile still worth drawing. */
+/** A resize clamped between the smallest tile still worth drawing and
+ *  the largest one load() will believe back. */
 export function resized(box: Box, w: number, h: number): Box {
-  return { ...box, w: Math.max(tileMin.w, w), h: Math.max(tileMin.h, h) };
+  return {
+    ...box,
+    w: clamp(w, tileMin.w, extentLimit),
+    h: clamp(h, tileMin.h, extentLimit),
+  };
+}
+
+/** A box clamped into the bounds load() believes, for the commit path:
+ *  a gesture that stored what reload discards would silently lose the
+ *  arrangement it just made. */
+export function bounded(box: Box): Box {
+  return {
+    x: clamp(box.x, -positionLimit, positionLimit),
+    y: clamp(box.y, -positionLimit, positionLimit),
+    w: clamp(box.w, tileMin.w, extentLimit),
+    h: clamp(box.h, tileMin.h, extentLimit),
+  };
 }

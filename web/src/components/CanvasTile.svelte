@@ -72,9 +72,12 @@
   let gesture: {
     kind: "move" | "resize";
     pointer: number;
+    startX: number;
+    startY: number;
     lastX: number;
     lastY: number;
     travel: number;
+    engaged: boolean;
   } | null = null;
 
   const begin = (event: PointerEvent, kind: "move" | "resize") => {
@@ -87,9 +90,12 @@
     gesture = {
       kind,
       pointer: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
       lastX: event.clientX,
       lastY: event.clientY,
       travel: 0,
+      engaged: false,
     };
     // Capture so a fast hand that leaves the tile keeps its grip.
     // Guarded: jsdom mounts this component without implementing it.
@@ -106,16 +112,24 @@
 
   const move = (event: PointerEvent) => {
     if (!gesture || event.pointerId !== gesture.pointer) return;
-    const px = event.clientX - gesture.lastX;
-    const py = event.clientY - gesture.lastY;
+    let px = event.clientX - gesture.lastX;
+    let py = event.clientY - gesture.lastY;
     gesture.lastX = event.clientX;
     gesture.lastY = event.clientY;
     // The click threshold is in screen pixels — a hand is steady in
     // pixels, however far the canvas is zoomed out.
     gesture.travel += Math.abs(px) + Math.abs(py);
     if (gesture.travel <= 4) return;
-    // Stage units from here on: this step's pixels at this moment's
-    // zoom, so the tile tracks the cursor exactly.
+    if (!gesture.engaged) {
+      // Crossing the threshold spends what accumulated beneath it:
+      // applying only this step would leave every careful drag a few
+      // pixels behind the hand, permanently.
+      gesture.engaged = true;
+      px = event.clientX - gesture.startX;
+      py = event.clientY - gesture.startY;
+    }
+    // Stage units from here on: these pixels at this moment's zoom, so
+    // the tile tracks the cursor exactly.
     const dx = px / zoom;
     const dy = py / zoom;
     inFlight =

@@ -274,6 +274,110 @@ describe("the canvas against the roster", () => {
     done();
   });
 
+  test("a finite but absurd stored box is discarded too", () => {
+    // 1e300 survives Number.isFinite; only the magnitude limits catch
+    // it — and believed, it would push the next minted tile toward
+    // y = 1e300 and the camera toward z = 0.
+    localStorage.setItem(
+      "stormlight.canvas.all",
+      '{"ghost":{"x":0,"y":0,"w":1e300,"h":300}}',
+    );
+    const done = mountCanvas();
+    push({ id: "a" });
+
+    expect(boxOf(tileFor("a"))).toEqual({ x: 0, y: 0, w: 440, h: 300 });
+    done();
+  });
+
+  test("what a session arranges, its reload believes", () => {
+    let done = mountCanvas();
+    push({ id: "a" });
+    const tile = tileFor("a");
+    const grip = tile.querySelector<HTMLElement>(".grip")!;
+    // A wild grip fling: without a commit-side clamp this stores
+    // w = 20440, the reload's validator discards the whole box, and
+    // the arrangement quietly reverts.
+    grip.dispatchEvent(pointer("pointerdown", 0, 0));
+    tile.dispatchEvent(pointer("pointermove", 20_000, 100));
+    tile.dispatchEvent(pointer("pointerup", 20_000, 100));
+    flushSync();
+    const arranged = boxOf(tileFor("a"));
+
+    done();
+    done = mountCanvas();
+    push({ id: "a" });
+
+    expect(boxOf(tileFor("a"))).toEqual(arranged);
+    done();
+  });
+
+  test("a tile flung past the world's edge is caught at it", () => {
+    // A drag reaches put() without passing resized(), so this pins
+    // put()'s own clamp: unclamped, the store holds x = 2,000,100,
+    // the reload's validator discards the box, and the tile silently
+    // reverts to its default spot.
+    let done = mountCanvas();
+    push({ id: "a" });
+    const tile = tileFor("a");
+    tile.dispatchEvent(pointer("pointerdown", 100, 100));
+    tile.dispatchEvent(pointer("pointermove", 2_000_100, 100));
+    tile.dispatchEvent(pointer("pointerup", 2_000_100, 100));
+    flushSync();
+    const arranged = boxOf(tileFor("a"));
+    expect(arranged.x).toBe(1_000_000);
+
+    done();
+    done = mountCanvas();
+    push({ id: "a" });
+
+    expect(boxOf(tileFor("a"))).toEqual(arranged);
+    done();
+  });
+
+  test("a careful drag loses none of its pixels", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const tile = tileFor("a");
+    const before = boxOf(tile);
+
+    tile.dispatchEvent(pointer("pointerdown", 100, 100));
+    for (let step = 1; step <= 30; step++) {
+      tile.dispatchEvent(pointer("pointermove", 100 + step, 100));
+    }
+    tile.dispatchEvent(pointer("pointerup", 130, 100));
+    flushSync();
+
+    // All thirty pixels, not thirty minus the click threshold.
+    expect(boxOf(tileFor("a")).x).toBeCloseTo(before.x + 30);
+    done();
+  });
+
+  test("urgent agents are counted, and jump cycles through them", () => {
+    const done = mountCanvas();
+    push(
+      { id: "a" },
+      { id: "b", attention: "question" },
+      { id: "c", attention: "question" },
+    );
+
+    const button = document.querySelector<HTMLButtonElement>(
+      ".controls .urgent",
+    )!;
+    expect(button.textContent).toContain("2 need input");
+
+    const stage = document.querySelector<HTMLElement>(".stage")!;
+    button.click();
+    flushSync();
+    const first = stage.style.transform;
+    button.click();
+    flushSync();
+
+    // Two urgent tiles in different spots: consecutive jumps must aim
+    // the camera at different places.
+    expect(stage.style.transform).not.toBe(first);
+    done();
+  });
+
   test("a poisoned store neither hangs placement nor kills the camera", () => {
     localStorage.setItem(
       "stormlight.canvas.all",

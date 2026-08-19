@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  extentLimit,
   fitView,
   homeView,
   maxZoom,
@@ -104,6 +105,26 @@ describe("fitting", () => {
     expect(view.z).toBe(1);
   });
 
+  test("a viewport smaller than its padding goes home, not negative", () => {
+    // (w - 2*padding) < 0 would otherwise produce scale(-0.03): a
+    // mirrored, inverted stage.
+    const view = fitView([{ x: 0, y: 0, w: 440, h: 300 }], { w: 80, h: 700 });
+
+    expect(view).toEqual(homeView);
+  });
+
+  // Fit may legitimately land far below the wheel's floor. From there
+  // a hard floor turned the first gentle tick into an 11x snap that
+  // threw every tile off screen — zooming must be continuous from
+  // wherever fit put the camera.
+  test("zooming in from below the floor is continuous", () => {
+    const parked = { x: 0, y: 0, z: 0.009 };
+
+    const view = zoomAt(parked, { x: 500, y: 350 }, 1.1);
+
+    expect(view.z).toBeCloseTo(0.0099, 6);
+  });
+
   test("an empty canvas fits to home", () => {
     expect(fitView([], { w: 800, h: 600 })).toEqual(homeView);
   });
@@ -148,6 +169,14 @@ describe("placement", () => {
   // Bounded, because the loop's exit depends on localStorage: one
   // absurd box overlapping every slot must degrade to below-everything
   // placement, not a hung tab.
+  test("even an infinite box cannot hang placement", () => {
+    // Overlaps every slot ever tried; only the slot cap ends the scan.
+    const next = place([{ x: 0, y: 0, w: Infinity, h: Infinity }]);
+
+    expect(Number.isFinite(next.x)).toBe(true);
+    expect(Number.isFinite(next.y)).toBe(true);
+  });
+
   test("an absurd box cannot hang placement", () => {
     const absurd: Box = { x: -5_000_000, y: -5_000_000, w: 10_000_000, h: 10_000_000 };
 
@@ -186,6 +215,13 @@ describe("resizing", () => {
       w: tileMin.w,
       h: tileMin.h,
     });
+  });
+
+  test("a resize cannot outgrow what a reload will believe", () => {
+    const grown = resized({ x: 0, y: 0, w: 440, h: 300 }, 50_000, 50_000);
+
+    expect(grown.w).toBe(extentLimit);
+    expect(grown.h).toBe(extentLimit);
   });
 
   test("an ordinary resize passes through untouched", () => {
