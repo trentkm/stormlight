@@ -269,7 +269,7 @@
     font-size: 11px;
   }
   .ghost:hover {
-    color: var(--band);
+    color: var(--accent);
   }
   .tally {
     font-size: 12px;

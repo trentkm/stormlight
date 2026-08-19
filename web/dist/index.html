@@ -4,8 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Stormlight</title>
-    <script type="module" crossorigin src="./assets/index-DI1m3AY_.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DvM-uVCV.css">
+    <script>
+      /* The theme, before the first paint: whatever was chosen here
+         last, or failing that whatever the machine prefers. Inline and
+         synchronous on purpose — the module that owns the toggle is
+         deferred, and applying the theme from there would paint one
+         frame of the wrong palette first. Dark is the fallback, which
+         is what the dashboard has always been. */
+      (function () {
+        var chosen;
+        try {
+          chosen = localStorage.getItem("stormlight.theme");
+        } catch (e) {
+          /* No storage: the system preference decides this visit. */
+        }
+        var light =
+          chosen === "light" ||
+          chosen === "dark"
+            ? chosen === "light"
+            : window.matchMedia("(prefers-color-scheme: light)").matches;
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-B5wDfOOz.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BFYETopd.css">
   </head>
   <body>
     <div id="app"></div>
