@@ -865,7 +865,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model, ok := updated.(Model); ok &&
 			standing != "" && model.alert.message() == standing &&
 			mode == raisedIn && raisedIn.isForm() && model.mode != mode {
-			model.clearAlert()
+			model.retract()
 			return model, cmd
 		}
 		return updated, cmd
@@ -1208,12 +1208,10 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.mode = modeDelete
-			m.clearComplaint(modeDelete)
 			return m, nil
 		}
 		if _, ok := m.selectedAgent(); ok {
 			m.mode = modeDelete
-			m.clearComplaint(modeDelete)
 			return m, nil
 		}
 	case "r", "ctrl+l":

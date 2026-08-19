@@ -189,8 +189,20 @@ func (m *Model) clearAlert() {
 // wipe this whole surface exists to remove, wearing a different hat.
 func (m *Model) clearComplaint(surface mode) {
 	if m.alert.active() && m.alert.raisedIn == surface {
-		m.clearAlert()
+		m.retract()
 	}
+}
+
+// retract takes a complaint back entirely: the card and the recall slot
+// both. A form's objection is spent when the form closes, and `e` offering
+// "task cannot be empty" from an hour ago — a form long gone, about a
+// field that no longer exists — presents a retracted complaint as an
+// outstanding failure.
+func (m *Model) retract() {
+	if m.alert.message() == m.lastFailure.text {
+		m.lastFailure = alertDetail{}
+	}
+	m.clearAlert()
 }
 
 // refitForms re-sizes the persistent widgets whose room the card changes.
@@ -381,7 +393,10 @@ func (m Model) renderAlertCard(width, height int) string {
 	}
 	cardWidth := clamp(width-4, 16, alertCardWidth)
 	textWidth := max(4, cardWidth-6)
-	budget := clamp(height-3, 1, alertCardLines)
+	// Minus the lift as well: a card sized against the whole body can grow
+	// past the rows reserved for the composer, clamp to the top, and cover
+	// the box it is meant to stay off.
+	budget := clamp(height-3-m.inputStripRows(), 1, alertCardLines)
 
 	lines := wrapMessage(m.alert.message(), textWidth)
 	clipped := len(lines) > budget
@@ -463,6 +478,21 @@ func (m Model) inputStripRows() int {
 	return 1
 }
 
+// alertCoversRow reports that the card is drawn over this screen row. The
+// real terminal cursor sits at the agent's own cell and the card is
+// composited over the grid without it knowing — an agent's prompt sits on
+// its last output line, which is exactly where the card lands, so without
+// this the cursor blinks inside the error box for the card's whole life.
+func (m Model) alertCoversRow(row int) bool {
+	width, height := m.bodyDimensions()
+	rows := m.alertRows(width, height)
+	if rows == 0 {
+		return false
+	}
+	top := bodyTop + max(0, height-rows-m.inputStripRows())
+	return row >= top && row < top+rows
+}
+
 // alertRows is how many rows the card will take, which is how much of the
 // body a modal has to leave alone.
 func (m Model) alertRows(width, height int) int {
@@ -505,17 +535,52 @@ func (m Model) alertDetailDimensions(width, height int) (int, int) {
 	return modalDimensions(width, height, alertCardWidth, len(lines)+6)
 }
 
+// detailLayout is how the detail view divides its modal: the text area,
+// and whether there is room for the title and the blank rows that separate
+// it. It is computed in one place and read by the render, the scroll clamp
+// and the footer hints — three readers disagreeing about the window is what
+// once put the tail of a message out of reach of every scroll key.
+type detailLayout struct {
+	textWidth int
+	window    int
+	title     bool
+	spaced    bool
+}
+
+// alertDetailLayout hands out the modal's rows in order of what the reader
+// cannot do without: the keys that close the view, then the title that
+// names it, then breathing room, and the message takes what is left.
+// Sizing the message first and letting the remainder truncate is how the
+// keys fell off the bottom while the footer went on advertising them.
+func (m Model) alertDetailLayout(width, height int) detailLayout {
+	modalWidth, modalHeight := m.alertDetailDimensions(width, height)
+	layout := detailLayout{textWidth: max(4, modalWidth-6)}
+	layout.window = max(1, max(1, modalHeight-2)-1)
+	if layout.window > 1 {
+		layout.title = true
+		layout.window--
+	}
+	if layout.window > 2 {
+		layout.spaced = true
+		layout.window -= 2
+	}
+	return layout
+}
+
+// alertDetailLayoutHere is that layout for the region the view is actually
+// drawn in — card and all. Measuring against the whole body while the view
+// is rendered into less than that puts the tail of a long message out of
+// reach: the state believes it is already at the bottom.
+func (m Model) alertDetailLayoutHere() detailLayout {
+	bodyWidth, bodyHeight := m.bodyDimensions()
+	return m.alertDetailLayout(bodyWidth, m.modalRegion(bodyWidth, bodyHeight))
+}
+
 // alertDetailWindow is the text area inside the modal: how wide a line may
 // be and how many of them are on screen at once.
 func (m Model) alertDetailWindow() (int, int) {
-	// Measured in the region the modal is drawn in, card and all. Sizing
-	// this from the whole body while the view is rendered into less than
-	// that puts the tail of a long message out of reach of every scroll
-	// key: the state believes it is already at the bottom.
-	bodyWidth, bodyHeight := m.bodyDimensions()
-	width, height := m.alertDetailDimensions(
-		bodyWidth, m.modalRegion(bodyWidth, bodyHeight))
-	return max(4, width-6), max(1, height-6)
+	layout := m.alertDetailLayoutHere()
+	return layout.textWidth, layout.window
 }
 
 // modalRegion is the room a modal has. A form makes way for the card: it
@@ -531,7 +596,13 @@ func (m Model) modalRegion(width, height int) int {
 	// above the floor, so reserving only its own height leaves the two
 	// overlapping by exactly that lift on the terminals where the modal
 	// fills its region.
-	reserved := m.alertRows(width, height) + m.inputStripRows()
+	// Never more than half the body: the card exists so that a failure
+	// reflows nothing, and a form squeezed down to its own border is a
+	// worse outcome than a card overlapping its foot.
+	reserved := min(
+		m.alertRows(width, height)+m.inputStripRows(),
+		max(0, height/2),
+	)
 	if m.mode == modeDispatch && m.formFocus == dispatchName &&
 		!m.dispatchNameVisibleIn(max(1, height-reserved)) {
 		// Shrinking here would take away the row the reader is typing
@@ -549,35 +620,45 @@ func (m Model) modalRegion(width, height int) int {
 // it is drawn in, which is the only condition under which the scroll keys
 // do anything.
 func (m Model) alertDetailScrolls() bool {
-	textWidth, window := m.alertDetailWindow()
-	return len(wrapMessage(m.alertDetail.text, textWidth)) > window
+	layout := m.alertDetailLayoutHere()
+	return len(wrapMessage(m.alertDetail.text, layout.textWidth)) > layout.window
 }
 
 func (m Model) renderAlertModal(width, height int) string {
 	modalWidth, modalHeight := m.alertDetailDimensions(width, height)
-	textWidth := max(4, modalWidth-6)
-	window := max(1, modalHeight-6)
+	layout := m.alertDetailLayout(width, height)
 
-	lines := wrapMessage(m.alertDetail.text, textWidth)
-	offset := clamp(m.alertDetail.offset, 0, max(0, len(lines)-window))
-	visible := lines[offset:min(len(lines), offset+window)]
+	lines := wrapMessage(m.alertDetail.text, layout.textWidth)
+	offset := clamp(m.alertDetail.offset, 0, max(0, len(lines)-layout.window))
+	visible := lines[offset:min(len(lines), offset+layout.window)]
 
-	title := "  " + errorStyle().Bold(true).Render("Error")
-	if age := alertAgeLabel(m.alertDetail.at); age != "" {
-		title += mutedStyle().Render(age)
+	var out []string
+	if layout.title {
+		title := "  " + errorStyle().Bold(true).Render("Error")
+		if age := alertAgeLabel(m.alertDetail.at); age != "" {
+			title += mutedStyle().Render(age)
+		}
+		out = append(out, title)
+		if layout.spaced {
+			out = append(out, "")
+		}
 	}
-	out := []string{title, ""}
 	for _, line := range visible {
 		out = append(out, "  "+line)
 	}
-	for len(out) < window+2 {
+	// Pad the text area to its full window so the keys sit on the modal's
+	// last row rather than riding up under a short message.
+	for index := len(visible); index < layout.window; index++ {
+		out = append(out, "")
+	}
+	if layout.spaced {
 		out = append(out, "")
 	}
 	keys := "y copy  ·  Esc close"
-	if len(lines) > window {
+	if len(lines) > layout.window {
 		keys = "j/k scroll  ·  " + keys
 	}
-	out = append(out, "", "  "+mutedStyle().Render(keys))
+	out = append(out, "  "+mutedStyle().Render(keys))
 	return renderModal(strings.Join(out, "\n"), modalWidth, modalHeight)
 }
 

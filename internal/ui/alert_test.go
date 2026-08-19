@@ -1436,3 +1436,105 @@ func TestCardYieldsEscapeToAPendingChord(t *testing.T) {
 		t.Fatalf("the card claimed Esc while a chord was pending:\n%s", card)
 	}
 }
+
+// A form's objection is spent when the form closes. Recall must not offer
+// it back later as though it were an outstanding failure.
+func TestARetractedComplaintIsNotRecallable(t *testing.T) {
+	model := alertModel(t)
+	updated, _ := model.beginDispatch(false)
+	model = updated.(Model)
+	model.formFocus = dispatchTask
+	model.taskInput.SetValue("")
+	updated, _ = model.submitDispatch()
+	model = updated.(Model)
+	if model.alert.raisedIn != modeDispatch {
+		t.Fatalf("the form's objection was tagged %v", model.alert.raisedIn)
+	}
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+	if model.alert.active() {
+		t.Fatalf("the sweep left the card up")
+	}
+
+	updated, _ = model.Update(runeKey("e"))
+	if next := updated.(Model); next.mode == modeAlert {
+		t.Fatalf("a retracted complaint came back through recall: %q",
+			next.alertDetail.text)
+	}
+}
+
+// A reservation that collapses the form it makes room for has defeated
+// itself: the card floats precisely so a failure reflows nothing.
+func TestAShortTerminalKeepsAUsableForm(t *testing.T) {
+	for _, height := range []int{10, 12, 14, 16} {
+		model := alertModel(t)
+		model.width = 100
+		model.height = height
+		model.mode = modeDispatch
+		model.raise(errors.New(sshFailure))
+
+		width, bodyHeight := model.bodyDimensions()
+		region := model.modalRegion(width, bodyHeight)
+		if region < bodyHeight/2 {
+			t.Fatalf("at height %d the form was left %d rows of %d",
+				height, region, bodyHeight)
+		}
+	}
+}
+
+// The card must not grow past the rows reserved for the composer.
+func TestTheCardNeverOutgrowsItsLift(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = false
+	model.width = 100
+	model.height = 10
+	model.mode = modeCompose
+	model.raise(errors.New(sshFailure))
+
+	width, height := model.bodyDimensions()
+	rows := model.alertRows(width, height)
+	if rows+model.inputStripRows() > height {
+		t.Fatalf("card %d rows + lift %d exceeds the body's %d",
+			rows, model.inputStripRows(), height)
+	}
+}
+
+// The detail view keeps its own key row, which the footer advertises.
+func TestTheDetailViewKeepsItsKeysOnAShortTerminal(t *testing.T) {
+	for _, height := range []int{9, 11, 13} {
+		model := alertModel(t)
+		model.width = 100
+		model.height = height
+		model.raise(errors.New(strings.Repeat("a line of failure output. ", 20)))
+		updated, _ := model.Update(runeKey("e"))
+		model = updated.(Model)
+
+		view := ansi.Strip(model.renderAlertModal(model.bodyDimensions()))
+		if !strings.Contains(view, "Esc close") {
+			t.Fatalf("at height %d the detail view dropped its keys:\n%s", height, view)
+		}
+	}
+}
+
+// The real terminal cursor must not blink inside the card drawn over it.
+func TestTheCursorDoesNotBlinkInsideTheCard(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	width, height := model.bodyDimensions()
+	model.raise(errors.New(sshFailure))
+	rows := model.alertRows(width, height)
+	if rows == 0 {
+		t.Fatalf("no card to cover anything")
+	}
+
+	// A grid row the card is drawn over, and one above it.
+	covered := max(0, height-rows-model.inputStripRows()) + bodyTop - ptyGridTop
+	if got := model.gridCursorAt(4, covered); got != nil {
+		t.Fatalf("the cursor was placed inside the card at %v", got)
+	}
+	if got := model.gridCursorAt(4, covered-1); got == nil {
+		t.Fatalf("the cursor was withheld from a row the card does not cover")
+	}
+}
