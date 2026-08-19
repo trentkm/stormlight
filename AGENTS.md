@@ -138,6 +138,35 @@ binary from whatever main happened to be last week; run them together.
 
 Run tests with `go test ./...`.
 
+### The web client
+
+`web/` is the browser client: TypeScript and Svelte, built by Vite into
+`web/dist`, which is embedded in the binary. `web/dist` is committed so a
+checkout without Node still builds — which means **a change under
+`web/src` is not finished until you rebuild it**:
+
+```sh
+npm --prefix web ci        # first time, or after a dependency change
+npm --prefix web run build # after any change under web/src
+```
+
+CI rebuilds it and fails if the committed output differs, so a stale
+`web/dist` is caught rather than shipped. The failure looks like a diff in
+files you never edited; this is why.
+
+Its own checks are `npm --prefix web test` (the terminal client's
+protocol) and `npm --prefix web run check` (types). CI runs both, on
+Node 22.
+
+Watch the Node version. Newer Node exposes browser globals that CI's does
+not — `sessionStorage` among them — so a module that reaches for one at
+import time passes here and fails there. Reproduce the runner with:
+
+```sh
+NODE_OPTIONS=--no-experimental-webstorage npm --prefix web test
+```
+
+
 ## Releasing
 
 CI is the only thing that publishes. A release happens when — and only

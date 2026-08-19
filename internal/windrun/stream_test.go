@@ -1,13 +1,16 @@
 package windrun
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/trentkm/windrunner/client"
 	"github.com/trentkm/windrunner/wire"
 
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/pty"
+	"github.com/trentkm/stormlight/internal/session"
 )
 
 // newRelay builds a stream through the real constructor, with a source
@@ -124,4 +127,72 @@ func next(t *testing.T, stream *terminalStream) pty.Message {
 		t.Fatal("timed out waiting for a message")
 	}
 	panic("unreachable")
+}
+
+// An attach that names no size must leave the terminal where it is. The
+// terminal belongs to the session and every viewer shares it, so a viewer
+// with no layout yet — a browser tab that has not painted, a pane not on
+// screen — would otherwise reflow the agent for everyone and leave it
+// that way: nothing re-asserts the size a dashboard pane had, so the
+// dashboard renders 80 columns of content into its own wider box until
+// something else moves it (#155).
+func TestAttachWithoutASizeLeavesTheTerminalAlone(t *testing.T) {
+	runtime := remoteRuntime(t)
+
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("claude"),
+		Name:     "sized",
+		Task:     "hold a terminal",
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// A viewer that knows its geometry sets it, the way a laid-out pane
+	// does.
+	wide, err := runtime.AttachTerminal(context.Background(), dispatched.ID, 132, 43)
+	if err != nil {
+		t.Fatalf("AttachTerminal: %v", err)
+	}
+	defer wide.Close()
+	waitForSize(t, runtime, dispatched.ID, 132, 43)
+
+	// A viewer that does not must not take it away from them.
+	blind, err := runtime.AttachTerminal(context.Background(), dispatched.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("AttachTerminal without a size: %v", err)
+	}
+	defer blind.Close()
+
+	if cols, rows := sessionSize(t, runtime, dispatched.ID); cols != 132 || rows != 43 {
+		t.Fatalf("a viewer with no size moved the terminal to %dx%d", cols, rows)
+	}
+}
+
+func sessionSize(t *testing.T, runtime *Runtime, id string) (int, int) {
+	t.Helper()
+	sessionID, err := runtime.sessionIDFor(id)
+	if err != nil {
+		t.Fatalf("sessionIDFor: %v", err)
+	}
+	info, err := runtime.client.Info(sessionID)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	return info.Cols, info.Rows
+}
+
+func waitForSize(t *testing.T, runtime *Runtime, id string, cols, rows int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, r := sessionSize(t, runtime, id); c == cols && r == rows {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c, r := sessionSize(t, runtime, id)
+	t.Fatalf("terminal is %dx%d, want %dx%d", c, r, cols, rows)
 }

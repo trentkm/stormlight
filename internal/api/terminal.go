@@ -270,16 +270,20 @@ func usableSize(cols, rows int) bool {
 // cannot make the server hold an arbitrary buffer.
 const maxTerminalMessage = 4 << 20
 
-// terminalSize reads the viewer's geometry from the query string. A
-// viewer that does not say — or says something a terminal cannot be —
-// gets a conventional one; it will resize as soon as it has laid itself
-// out. Unlike the resize message, there is no client to inform here, and
-// refusing the whole attachment over a query string would be a worse
-// answer than starting at 80x24.
+// terminalSize reads the viewer's geometry from the query string, or
+// zero when it names none.
+//
+// Zero means "no opinion", and it is not the same as a default. The
+// terminal is shared, so any size this returns is asserted on the agent
+// for every viewer — a browser tab that has not laid itself out yet would
+// otherwise reflow the dashboard's pane to 80x24 and leave it there,
+// because nothing re-asserts the dashboard's own size afterward. A viewer
+// that cannot say has nothing to say; it will resize as soon as it has a
+// shape (see #155).
 func terminalSize(r *http.Request) (cols, rows int) {
 	cols, rows = queryInt(r, "cols"), queryInt(r, "rows")
 	if !usableSize(cols, rows) {
-		return 80, 24
+		return 0, 0
 	}
 	return cols, rows
 }

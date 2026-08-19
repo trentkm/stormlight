@@ -23,6 +23,33 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # web/dist is committed so a checkout without Node still builds.
+      # Rebuilding it here is what stops a stale one from surviving a
+      # change to web/src: the diff check below fails if the committed
+      # output no longer matches the source it came from.
+      - name: Build the web client
+        run: npm ci --prefix web && npm run build --prefix web
+
+      - name: Check the committed web client is current
+        # --porcelain rather than `git diff --exit-code`: a build that
+        # emits a new file leaves the tracked ones untouched, and a diff
+        # would call that clean.
+        run: |
+          test -z "$(git status --porcelain -- web/dist)" || {
+            echo "web/dist is stale; run 'npm run build --prefix web'"
+            git status --porcelain -- web/dist
+            exit 1
+          }
+
+      - name: Check the web client
+        run: npm run check --prefix web && npm test --prefix web
+
       - name: Test
         run: go test -race ./...
 

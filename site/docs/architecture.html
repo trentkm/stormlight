@@ -124,9 +124,12 @@
     viewer's size becomes everyone's, and the others are told over their own streams and
     repaint. Sharing the size is what keeps the replicas identical — the alternative is
     each client rendering a different reflow of the same program's output.</p>
-    <p>The server binds loopback only and requires a per-run token on every request and
-    upgrade — these routes dispatch agents and stream terminals in every workspace the
-    catalog knows. Reaching them from another machine is a tunnel the operator opens
+    <p>The server binds loopback only. Every <code>/api</code> route requires a per-run
+    token — these routes dispatch agents and stream terminals in every workspace the
+    catalog knows. The page itself is served without one, because a browser cannot put a
+    token on its own script and stylesheet requests: gating those would stop the client
+    loading its own code, and the files are inert. A visitor without a token gets a page
+    that says where to find the URL. Reaching them from another machine is a tunnel the operator opens
     deliberately, never a default. WebSocket upgrades also check <code>Origin</code>, so a
     page the user merely visited cannot reach the API just because it is on localhost.</p>
 

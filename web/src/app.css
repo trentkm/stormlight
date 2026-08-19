@@ -1,0 +1,59 @@
+/* The palette from internal/theme, as custom properties. Dark only: a
+   browser has no terminal background to adapt to. */
+:root {
+  --bg: #171c20;
+  --bg-raised: #1b2126;
+  --bg-sunken: #14181d;
+  --bg-rail: #191e23;
+  --border: #2a3138;
+  --border-bright: #3a4046;
+  --text: #d7dee5;
+  --text-bright: #f3f5f6;
+  --muted: #74818b;
+  --working: #61afef;
+  --waiting: #e5c07b;
+  --done: #72c087;
+  --failed: #e06c75;
+  --band: #c6e9ff;
+  --ice: #7dcfff;
+  --band-ink: #0f2338;
+
+  color-scheme: dark;
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+button {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--ice);
+  color: var(--band);
+}
+
+button:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+
+code {
+  color: var(--code, #8fdccb);
+}

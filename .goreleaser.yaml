@@ -4,6 +4,11 @@ project_name: stormlight
 
 before:
   hooks:
+    # The page is embedded, so it is built before the binary that carries
+    # it — a release must never ship whatever web/dist happened to be
+    # committed last.
+    - npm ci --prefix web
+    - npm run build --prefix web
     - go mod tidy
     - go test ./...
 
