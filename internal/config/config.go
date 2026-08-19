@@ -43,6 +43,15 @@ type Host struct {
 	Bin string `toml:"bin"`
 	// Options are extra ssh flags, placed ahead of the destination.
 	Options []string `toml:"options"`
+	// Shell is the login shell that defines this host's execution
+	// environment: the one whose PATH finds the providers, and the one
+	// providers are launched under. Empty means the account's own
+	// $SHELL, which is right until the shell someone actually works in
+	// and the shell their account records are two different programs.
+	//
+	// Absolute, because the PATH a non-interactive SSH session gets is
+	// exactly the PATH that will not find it by name.
+	Shell string `toml:"shell"`
 	// NoMultiplex turns off SSH connection sharing, which is on by
 	// default because a dashboard opens several connections per host.
 	NoMultiplex bool `toml:"no_multiplex"`
@@ -183,6 +192,13 @@ func (c Config) normalize(path string) (Config, []string, error) {
 			warn("hosts.%s: a host name cannot contain spaces, colons, or quotes", name)
 			delete(c.Hosts, name)
 			continue
+		}
+		if shell := strings.TrimSpace(host.Shell); shell != "" && !strings.HasPrefix(shell, "/") {
+			// A bare name would be looked up on the very PATH that is
+			// the reason this setting exists.
+			warn("hosts.%s.shell: %q must be an absolute path", name, shell)
+			host.Shell = ""
+			c.Hosts[name] = host
 		}
 		if strings.TrimSpace(host.Destination) == "" && strings.Contains(name, "@") {
 			// A key like trent@devbox is already a destination; taking it

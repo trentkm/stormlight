@@ -129,6 +129,7 @@ func newRootCommand() *cobra.Command {
 		newWindrunnerBridgeCommand(),
 		newResolveCommand(),
 		newReadCommand(),
+		newExecCommand(),
 		newPickCommand(),
 		newHistoryCommand(),
 		newBenchCommand(),
@@ -254,6 +255,19 @@ func newReadCommand() *cobra.Command {
 			defer file.Close()
 			_, err = io.Copy(cmd.OutOrStdout(), io.LimitReader(file, windrun.MaxAgentFile))
 			return err
+		},
+	}
+}
+
+// newExecCommand is the far side of a remote dispatch: the provider's
+// argv, decoded from the environment the daemon set, and become.
+func newExecCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "_exec",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return remote.Exec()
 		},
 	}
 }
@@ -703,6 +717,7 @@ func remoteHostFrom(name string, host config.Host) remote.Host {
 		Destination: host.Destination,
 		Bin:         host.Bin,
 		Options:     host.Options,
+		Shell:       host.Shell,
 		NoMultiplex: host.NoMultiplex,
 	}
 }

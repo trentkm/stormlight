@@ -42,6 +42,7 @@
     <li><a href="#file-location">File location</a></li>
     <li><a href="#format">Format</a></li>
     <li><a href="#schema">Schema</a></li>
+    <li class="sub"><a href="#host-shell">The host&rsquo;s execution shell</a></li>
     <li><a href="#wiring">Wiring</a></li>
     <li><a href="#project-local">Project-local config</a></li>
     </ul></li>
@@ -143,6 +144,8 @@ provider = <span class="s">"claude"</span>
 <span class="c"># destination  = "trent@10.0.0.4"   # defaults to the key</span>
 <span class="c"># bin          = "/opt/bin/stormlight"  # when it is not on PATH</span>
 <span class="c"># options      = ["-p", "2222"]     # extra ssh flags</span>
+<span class="c"># shell        = "/opt/homebrew/bin/fish"  # the shell providers are</span>
+<span class="c">#                                          # found and run in</span>
 <span class="c"># no_multiplex = false              # sharing is on by default</span></code></pre>
     <p>A host joins the dashboard as another daemon: its agents appear in the same roster,
     its workspaces in the same pane, and <code>dispatch --host</code> starts agents there.
@@ -155,6 +158,36 @@ provider = <span class="s">"claude"</span>
     <code>destination</code> when the name is not what ssh should dial, <code>bin</code>
     when Stormlight is somewhere a non-interactive shell will not find it,
     <code>options</code> for extra flags.</p>
+    <h3 id="host-shell">The host&rsquo;s execution shell</h3>
+    <p><code>shell</code> is the one setting about a host that is not about reaching it. It
+    names the login shell that defines what &ldquo;installed&rdquo; means there.</p>
+    <p>The default is the account&rsquo;s own <code>$SHELL</code>, which is right whenever
+    the shell someone works in is the shell their account records. It stops being right the
+    moment those differ &mdash; an account whose <code>$SHELL</code> is <code>/bin/zsh</code>
+    belonging to someone who has configured fish, whose <code>PATH</code> is the only one
+    that finds <code>codex</code>. Nothing about the machine reveals which shell was meant,
+    so the setting says it outright; Stormlight does not scan for installed shells and
+    guess. The path must be absolute, for the same reason the setting exists: the
+    <code>PATH</code> a non-interactive SSH session gets is exactly the <code>PATH</code>
+    that will not find the shell by name.</p>
+    <p>The shell is used for both halves of running a provider, because using it for only
+    one is worse than using it for neither. <em>Discovery</em> &mdash; &ldquo;is
+    <code>codex</code> installed here&rdquo; &mdash; is asked of that shell, so a provider
+    present only on its <code>PATH</code> is found. <em>Launch</em> goes through it, so the
+    provider inherits the environment and not merely the path: a provider found on a login
+    shell&rsquo;s <code>PATH</code> is regularly a shim &mdash; mise, asdf, a Homebrew
+    wrapper &mdash; that needs the rest of that shell&rsquo;s environment to work at all.
+    Resolving it to an absolute path and then running it under the daemon&rsquo;s bare
+    environment finds the right file and still fails.</p>
+    <p>The launch is three <code>exec</code> calls and no wrapper process, so what the
+    daemon supervises is the provider itself &mdash; signals, exit status, and lifetime
+    untouched by the route taken to start it. The provider&rsquo;s argv never appears in
+    shell text: it travels in an environment variable as JSON and is decoded on the far
+    side, because task text and custom provider arguments are arbitrary input and the shell
+    that would parse them is one this machine does not choose.</p>
+    <p>A configured shell that is missing or not executable is reported as that &mdash;
+    naming the setting and the host &mdash; rather than as every provider on the host having
+    gone missing, which is what the symptom otherwise looks like.</p>
     <p>Custom providers appear in the New Agent picker and dispatch like any other.
     Lifecycle integration is the public contract: managed processes receive
     <code>STORMLIGHT_ID</code> and can report state with <code>stormlight event</code> from

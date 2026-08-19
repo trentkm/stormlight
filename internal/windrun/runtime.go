@@ -274,17 +274,28 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 		// so the machinery is switched off rather than chased.
 		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
 	}
-	// The provider is resolved where it will run. Launch.Path answers
-	// "where is it here", which for another machine is a path that
-	// machine has never had — a macOS toolbox path handed to a Linux
-	// daemon can only come back as no such file.
-	program, err := r.providerPath(ctx, request.Launch)
+	// The provider runs where it lives, which for another machine means
+	// neither the path nor the environment this one has. Launch.Path
+	// answers "where is it here", and a macOS toolbox path handed to a
+	// Linux daemon can only come back as no such file.
+	command, args, err := r.launchCommand(ctx, request.Launch)
 	if err != nil {
 		return agent.Agent{}, err
 	}
+	if r.transport != nil {
+		argv, err := remote.ExecEnvFor(
+			append([]string{providerName(request.Launch)}, request.Launch.Args...))
+		if err != nil {
+			return agent.Agent{}, err
+		}
+		overrides = append(overrides, argv)
+		if shell := r.transport.Host().Shell; shell != "" {
+			overrides = append(overrides, remote.ShellEnv+"="+shell)
+		}
+	}
 	spawn := wire.Request{
-		Command: program,
-		Args:    request.Launch.Args,
+		Command: command,
+		Args:    args,
 		Dir:     request.Cwd,
 		// Peer input is how the dashboard and CLI speak to an agent
 		// without an attachment — Send, Interrupt, `stormlight send` —
@@ -317,23 +328,40 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	return managedAgent, nil
 }
 
-// providerPath is the provider as the machine running it will find it.
+// launchCommand is what the daemon on the far side is asked to start.
 //
-// Locally that is the path already resolved. Remotely it is resolved
-// there, so a provider the host does not have is reported as missing
-// from that host by name, rather than as a path from this one that it
-// was never going to have.
-func (r *Runtime) providerPath(ctx context.Context, launch session.Launch) (string, error) {
+// Locally that is the provider, at the path already resolved here.
+// Remotely it is a POSIX script, because resolving the provider is only
+// half of running it: one found on a login shell's PATH is regularly a
+// shim — mise, asdf, a Homebrew wrapper — that needs the rest of that
+// shell's environment to work, and the daemon over there has whatever
+// environment it was started with instead. The script hands off to the
+// host's shell, which hands off to Stormlight, which becomes the
+// provider. The argv travels in the environment rather than through the
+// shell, so nothing about it is ever parsed as syntax.
+//
+// The check that the host has the provider at all happens here, before
+// an agent exists to be a corpse: a machine without it should say so in
+// the dashboard, not in a terminal nobody asked for.
+func (r *Runtime) launchCommand(ctx context.Context, launch session.Launch) (string, []string, error) {
 	if r.transport == nil {
-		return launch.Path, nil
+		return launch.Path, launch.Args, nil
 	}
-	program := launch.Program
-	if program == "" {
-		// A launch with no name to resolve — a custom spec from an older
-		// record — leaves nothing better than the path it carries.
-		program = launch.Path
+	if _, err := remote.LookPath(ctx, r.transport, providerName(launch)); err != nil {
+		return "", nil, err
 	}
-	return remote.LookPath(ctx, r.transport, program)
+	return "/bin/sh", []string{"-c", remote.ExecPrelude}, nil
+}
+
+// providerName is the provider as something to look up, rather than as a
+// path this machine happens to have resolved.
+func providerName(launch session.Launch) string {
+	if launch.Program != "" {
+		return launch.Program
+	}
+	// A launch with no name to resolve — a custom spec from an older
+	// record — leaves nothing better than the path it carries.
+	return launch.Path
 }
 
 // sessionIDFor maps an agent id to the daemon's session id.
