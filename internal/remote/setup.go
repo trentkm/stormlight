@@ -74,7 +74,14 @@ else
 fi
 [ -n "$sl" ] && printf 'stormlight=%s\n' "$sl"
 [ -n "$sl" ] && printf 'stormlight_version=%s\n' "$("$sl" --version 2>/dev/null | head -1)"
-yz=$(look yazi) && printf 'yazi=%s\n' "$yz"
+yz=$(look yazi)
+# Beside Stormlight, which is where setup puts it and is regularly on no
+# PATH at all — without this, a machine reports yazi missing immediately
+# after being given one.
+if [ -z "$yz" ] && [ -n "$sl" ] && [ -x "$(dirname "$sl")/yazi" ]; then
+  yz="$(dirname "$sl")/yazi"
+fi
+[ -n "$yz" ] && printf 'yazi=%s\n' "$yz"
 for manager in brew apt-get dnf pacman apk; do
   if command -v "$manager" >/dev/null 2>&1; then printf 'package_manager=%s\n' "$manager"; break; fi
 done

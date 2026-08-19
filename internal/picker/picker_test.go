@@ -84,3 +84,31 @@ func TestChooseRefusesWithoutYazi(t *testing.T) {
 		t.Fatal("a machine without yazi should say so")
 	}
 }
+
+// TestYaziIsFoundBesideStormlight: `remote setup` installs both into the
+// same directory, and that directory is regularly on no PATH at all — a
+// fresh machine's ~/.local/bin is missing from the non-interactive
+// environment, and often from the login one too, because the profile
+// that would add it checked for the directory before it existed.
+func TestYaziIsFoundBesideStormlight(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Skip("cannot locate this test binary")
+	}
+	beside := filepath.Join(filepath.Dir(self), "yazi")
+	if err := os.WriteFile(beside, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Skipf("cannot write beside the test binary: %v", err)
+	}
+	defer os.Remove(beside)
+
+	// Nothing on PATH, so only the neighbour can answer.
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("SHELL", "/bin/sh")
+	found, err := findYazi()
+	if err != nil {
+		t.Fatalf("findYazi: %v", err)
+	}
+	if found != beside {
+		t.Fatalf("found %q, want the one beside this binary %q", found, beside)
+	}
+}
