@@ -23,10 +23,16 @@ import (
 // Structure is colored where the JSONL states it (prompt, reply, tool call,
 // result) and prose is colored where Claude's own markdown says so — see
 // markdown.go for the stylesheet that reads it back.
+//
+// Parsing and styling are two passes on purpose. The parse produces
+// TranscriptEntry values, the shared form every renderer consumes: the
+// TUI paints them with lipgloss below, and the web API ships them as
+// JSON for the browser to paint its own way. When they were one pass,
+// the only way to read a conversation was in ANSI.
 
 const (
 	// transcriptResultLines caps how many lines of a tool result are
-	// rendered; results routinely run to hundreds of lines of noise.
+	// kept; results routinely run to hundreds of lines of noise.
 	transcriptResultLines = 3
 	// transcriptScanBuffer must fit the largest JSONL line; tool results
 	// carry whole files.
@@ -97,24 +103,38 @@ type transcriptBlock struct {
 	Content json.RawMessage `json:"content"`
 }
 
-// RenderClaudeTranscript renders a Claude Code session transcript into the
-// conversation form Spanreed displays: ❯ user prompts, ⏺ assistant text and
-// tool calls, ⎿ trimmed tool results. ok is false when the file cannot be
-// read or holds no conversation, so callers fall back to the pane capture.
-func RenderClaudeTranscript(path string) (rendered string, ok bool) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", false
-	}
-	defer file.Close()
-	return RenderClaudeTranscriptFrom(file)
+// A TranscriptEntry is one conversation event, parsed and unstyled.
+type TranscriptEntry struct {
+	// Kind is "prompt", "reply", "tool", or "result".
+	Kind string `json:"kind"`
+	// Text is the prompt, the reply's markdown, or the result's kept
+	// lines. Empty for tool calls.
+	Text string `json:"text,omitempty"`
+	// Tool and Arg identify a tool call: the name, and the one input
+	// that distinguishes it.
+	Tool string `json:"tool,omitempty"`
+	Arg  string `json:"arg,omitempty"`
+	// Hidden counts result lines elided at parse. The trim happens
+	// here, once, so every renderer shows the same conversation and
+	// none holds a whole pasted file in memory.
+	Hidden int `json:"hidden,omitempty"`
 }
 
-// RenderClaudeTranscriptFrom is RenderClaudeTranscript over an already-open
+// ParseClaudeTranscript parses a Claude Code session transcript into
+// conversation entries. ok is false when the file cannot be read or
+// holds no conversation, so callers fall back to the pane capture.
+func ParseClaudeTranscript(path string) (entries []TranscriptEntry, ok bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer file.Close()
+	return ParseClaudeTranscriptFrom(file)
+}
+
+// ParseClaudeTranscriptFrom is ParseClaudeTranscript over an already-open
 // transcript, for the ones that are not on this machine.
-func RenderClaudeTranscriptFrom(source io.Reader) (rendered string, ok bool) {
-	var out strings.Builder
-	turns := 0
+func ParseClaudeTranscriptFrom(source io.Reader) (entries []TranscriptEntry, ok bool) {
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 0, 64*1024), transcriptScanBuffer)
 	for scanner.Scan() {
@@ -131,55 +151,97 @@ func RenderClaudeTranscriptFrom(source io.Reader) (rendered string, ok bool) {
 		}
 		switch line.Type {
 		case "user":
-			turns += renderTranscriptUser(&out, message.Content)
+			entries = append(entries, parseTranscriptUser(message.Content)...)
 		case "assistant":
-			turns += renderTranscriptAssistant(&out, message.Content)
+			entries = append(entries, parseTranscriptAssistant(message.Content)...)
 		}
 	}
-	if turns == 0 {
-		return "", false
+	if len(entries) == 0 {
+		return nil, false
 	}
-	return strings.TrimRight(out.String(), "\n") + "\n", true
+	return entries, true
 }
 
-// renderTranscriptUser writes a prompt (string content) or the trimmed
-// tool results a user message carries (block content), returning how many
-// conversation entries it produced.
-func renderTranscriptUser(out *strings.Builder, content json.RawMessage) int {
+// RenderClaudeTranscript renders a Claude Code session transcript into the
+// conversation form Spanreed displays: ❯ user prompts, ⏺ assistant text and
+// tool calls, ⎿ trimmed tool results. ok is false when the file cannot be
+// read or holds no conversation, so callers fall back to the pane capture.
+func RenderClaudeTranscript(path string) (rendered string, ok bool) {
+	entries, ok := ParseClaudeTranscript(path)
+	if !ok {
+		return "", false
+	}
+	return RenderTranscriptEntries(entries), true
+}
+
+// RenderClaudeTranscriptFrom is RenderClaudeTranscript over an already-open
+// transcript, for the ones that are not on this machine.
+func RenderClaudeTranscriptFrom(source io.Reader) (rendered string, ok bool) {
+	entries, ok := ParseClaudeTranscriptFrom(source)
+	if !ok {
+		return "", false
+	}
+	return RenderTranscriptEntries(entries), true
+}
+
+// RenderTranscriptEntries paints parsed entries for the terminal.
+func RenderTranscriptEntries(entries []TranscriptEntry) string {
+	var out strings.Builder
+	for _, entry := range entries {
+		switch entry.Kind {
+		case "prompt":
+			out.WriteString("\n")
+			writeEntry(&out, promptMarkStyle().Render("❯ "),
+				paintLines(entry.Text, promptTextStyle()))
+		case "reply":
+			out.WriteString("\n")
+			writeEntry(&out, replyMarkStyle().Render("⏺ "), renderMarkdown(entry.Text))
+		case "tool":
+			out.WriteString("\n" +
+				toolMarkStyle().Render("⏺ ") +
+				toolNameStyle().Render(entry.Tool) +
+				toolArgStyle().Render("("+entry.Arg+")") +
+				"\n")
+		case "result":
+			writeResult(&out, entry)
+		}
+	}
+	return strings.TrimRight(out.String(), "\n") + "\n"
+}
+
+// parseTranscriptUser yields a prompt (string content) or the trimmed
+// tool results a user message carries (block content).
+func parseTranscriptUser(content json.RawMessage) []TranscriptEntry {
 	var prompt string
 	if err := json.Unmarshal(content, &prompt); err == nil {
 		prompt = strings.TrimSpace(prompt)
 		if prompt == "" {
-			return 0
+			return nil
 		}
-		out.WriteString("\n")
-		writeEntry(out, promptMarkStyle().Render("❯ "),
-			paintLines(prompt, promptTextStyle()))
-		return 1
+		return []TranscriptEntry{{Kind: "prompt", Text: prompt}}
 	}
 	var blocks []transcriptBlock
 	if err := json.Unmarshal(content, &blocks); err != nil {
-		return 0
+		return nil
 	}
-	entries := 0
+	var entries []TranscriptEntry
 	for _, block := range blocks {
 		if block.Type != "tool_result" {
 			continue
 		}
 		if result := transcriptResultText(block.Content); result != "" {
-			out.WriteString(trimTranscriptResult(result))
-			entries++
+			entries = append(entries, trimTranscriptResult(result))
 		}
 	}
 	return entries
 }
 
-func renderTranscriptAssistant(out *strings.Builder, content json.RawMessage) int {
+func parseTranscriptAssistant(content json.RawMessage) []TranscriptEntry {
 	var blocks []transcriptBlock
 	if err := json.Unmarshal(content, &blocks); err != nil {
-		return 0
+		return nil
 	}
-	entries := 0
+	var entries []TranscriptEntry
 	for _, block := range blocks {
 		switch block.Type {
 		case "text":
@@ -187,16 +249,13 @@ func renderTranscriptAssistant(out *strings.Builder, content json.RawMessage) in
 			if text == "" {
 				continue
 			}
-			out.WriteString("\n")
-			writeEntry(out, replyMarkStyle().Render("⏺ "), renderMarkdown(text))
-			entries++
+			entries = append(entries, TranscriptEntry{Kind: "reply", Text: text})
 		case "tool_use":
-			out.WriteString("\n" +
-				toolMarkStyle().Render("⏺ ") +
-				toolNameStyle().Render(block.Name) +
-				toolArgStyle().Render("("+transcriptToolArgument(block.Input)+")") +
-				"\n")
-			entries++
+			entries = append(entries, TranscriptEntry{
+				Kind: "tool",
+				Tool: block.Name,
+				Arg:  transcriptToolArgument(block.Input),
+			})
 		}
 	}
 	return entries
@@ -235,27 +294,38 @@ func transcriptResultText(content json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// trimTranscriptResult renders a tool result as an indented ⎿ block capped
-// at transcriptResultLines lines.
-func trimTranscriptResult(result string) string {
+// trimTranscriptResult caps a tool result at transcriptResultLines lines
+// of at most 200 runes each.
+func trimTranscriptResult(result string) TranscriptEntry {
 	lines := strings.Split(strings.TrimRight(result, "\n"), "\n")
 	shown := lines
 	if len(shown) > transcriptResultLines {
 		shown = shown[:transcriptResultLines]
 	}
-	var out strings.Builder
+	kept := make([]string, len(shown))
 	for index, line := range shown {
+		kept[index] = transcriptEllipsis(line, 200)
+	}
+	return TranscriptEntry{
+		Kind:   "result",
+		Text:   strings.Join(kept, "\n"),
+		Hidden: len(lines) - len(shown),
+	}
+}
+
+// writeResult paints a result entry as an indented ⎿ block.
+func writeResult(out *strings.Builder, entry TranscriptEntry) {
+	for index, line := range strings.Split(entry.Text, "\n") {
 		prefix := "    "
 		if index == 0 {
 			prefix = "  ⎿ "
 		}
-		out.WriteString(resultStyle().Render(prefix+transcriptEllipsis(line, 200)) + "\n")
+		out.WriteString(resultStyle().Render(prefix+line) + "\n")
 	}
-	if hidden := len(lines) - len(shown); hidden > 0 {
+	if entry.Hidden > 0 {
 		out.WriteString(resultStyle().Render(
-			fmt.Sprintf("    … +%d lines", hidden)) + "\n")
+			fmt.Sprintf("    … +%d lines", entry.Hidden)) + "\n")
 	}
-	return out.String()
 }
 
 // writeEntry writes one conversation entry: marker then first line, with

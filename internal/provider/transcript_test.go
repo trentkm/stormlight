@@ -131,3 +131,55 @@ func TestRenderClaudeTranscriptFallsBackWhenEmpty(t *testing.T) {
 		t.Fatal("missing file reported ok")
 	}
 }
+
+func TestParseClaudeTranscriptEntries(t *testing.T) {
+	transcript := strings.Join([]string{
+		`{"type":"user","message":{"content":"do the thing"}}`,
+		`{"type":"assistant","message":{"content":[` +
+			`{"type":"text","text":"On it."},` +
+			`{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","content":"one\ntwo\nthree\nfour\nfive"}]}}`,
+		`{"type":"user","isMeta":true,"message":{"content":"skipped"}}`,
+	}, "\n")
+
+	entries, ok := ParseClaudeTranscriptFrom(strings.NewReader(transcript))
+	if !ok {
+		t.Fatal("expected a conversation")
+	}
+
+	want := []TranscriptEntry{
+		{Kind: "prompt", Text: "do the thing"},
+		{Kind: "reply", Text: "On it."},
+		{Kind: "tool", Tool: "Bash", Arg: "go test ./..."},
+		{Kind: "result", Text: "one\ntwo\nthree", Hidden: 2},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("got %d entries, want %d: %#v", len(entries), len(want), entries)
+	}
+	for i := range want {
+		if entries[i] != want[i] {
+			t.Errorf("entry %d: got %#v, want %#v", i, entries[i], want[i])
+		}
+	}
+}
+
+// The render of parsed entries is the render the dashboard has always
+// shown; this pins the seam so the parse layer cannot drift from it.
+func TestRenderTranscriptEntriesMatchesDirectRender(t *testing.T) {
+	transcript := `{"type":"user","message":{"content":"ask"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"answer"},{"type":"tool_use","name":"Read","input":{"file_path":"/f.go"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"result line"}]}}`
+
+	direct, ok := RenderClaudeTranscriptFrom(strings.NewReader(transcript))
+	if !ok {
+		t.Fatal("expected a conversation")
+	}
+	entries, ok := ParseClaudeTranscriptFrom(strings.NewReader(transcript))
+	if !ok {
+		t.Fatal("expected entries")
+	}
+
+	if rendered := RenderTranscriptEntries(entries); rendered != direct {
+		t.Errorf("parse-then-render diverged from direct render:\n%q\nvs\n%q", rendered, direct)
+	}
+}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/provider"
 )
 
 // call gives a control-plane handler its bounded context. Every handler
@@ -92,6 +93,28 @@ func (s *Server) dispatchAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, agentView{Agent: dispatched, Host: dispatched.Host})
+}
+
+// transcriptView is a conversation as this API serves it: parsed,
+// unstyled entries the browser paints its own way. The terminal socket
+// stays the live view; this is the history an alternate-screen agent
+// never leaves in scrollback.
+type transcriptView struct {
+	Entries []provider.TranscriptEntry `json:"entries"`
+}
+
+func (s *Server) agentTranscript(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := call(r)
+	defer cancel()
+	entries, ok := s.service.Transcript(ctx, r.PathValue("id"))
+	if !ok {
+		// Not an error: an agent that has not spoken yet, or a provider
+		// that reports no transcript file, simply has no conversation to
+		// show. The client falls back to the terminal.
+		writeJSON(w, http.StatusOK, transcriptView{Entries: []provider.TranscriptEntry{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, transcriptView{Entries: entries})
 }
 
 type renameBody struct {
