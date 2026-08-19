@@ -136,6 +136,21 @@ func (s *Server) agentTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, transcriptView{Entries: delta, Total: len(entries), OK: true})
 }
 
+// diffView is an agent's workspace changes as unified diff text. OK is
+// false when there is nothing to answer — a remote agent, a cwd
+// outside git — and the client shows why rather than an empty diff.
+type diffView struct {
+	Diff string `json:"diff"`
+	OK   bool   `json:"ok"`
+}
+
+func (s *Server) agentDiff(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := call(r)
+	defer cancel()
+	diff, ok := s.service.Diff(ctx, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, diffView{Diff: diff, OK: ok})
+}
+
 type renameBody struct {
 	Name string `json:"name"`
 }

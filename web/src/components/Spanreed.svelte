@@ -3,10 +3,11 @@
   import { act, fleet, selected } from "../lib/state.svelte";
   import { statusVisual } from "../lib/theme";
   import Terminal from "./Terminal.svelte";
+  import Diff from "./Diff.svelte";
   import Transcript from "./Transcript.svelte";
 
   let message = $state("");
-  let pane = $state<"terminal" | "transcript">("terminal");
+  let pane = $state<"terminal" | "transcript" | "diff">("terminal");
 
   const agent = $derived(selected());
 
@@ -38,6 +39,9 @@
         >
           transcript
         </button>
+        <button class:on={pane === "diff"} onclick={() => (pane = "diff")}>
+          diff
+        </button>
       </nav>
       <span class="spacer"></span>
       <button onclick={() => act(() => api.interrupt(agent.id))}>interrupt</button>
@@ -67,6 +71,8 @@
       </div>
       {#if pane === "transcript"}
         <Transcript id={agent.id} />
+      {:else if pane === "diff"}
+        <Diff id={agent.id} />
       {/if}
     {/key}
 
