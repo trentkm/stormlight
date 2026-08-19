@@ -18,8 +18,17 @@ import (
 // was unreadable by construction, and the reader rarely got even that far.
 //
 // The alert is the correction. The message floats in its own card over the
-// foot of the body, wrapped rather than cut, and it waits there until it is
-// dismissed, superseded, or answered — the hint row keeps its own line.
+// foot of the body, wrapped rather than cut, and the hint row keeps its own
+// line. A card ends in one of five ways, and only the first counts as read:
+//
+//   - dismissed, by Esc or by opening it with `e`
+//   - superseded, by a different failure
+//   - answered, when the poll that raised it succeeds (see polled)
+//   - swept, when the form that raised it closes (see raisedIn)
+//   - timed out, where no key of ours can reach it (see expires)
+//
+// The distinction matters because only a card that was read may silence a
+// failure that repeats. Everything else leaves it free to speak again.
 type alert struct {
 	err error
 	// raisedIn is the surface the complaint belongs to. A form's
@@ -208,6 +217,11 @@ func (m *Model) refitForms() {
 // The recovery also lifts the hush — if the failure returns after this, it
 // is news again.
 func (m *Model) resolvePolled() {
+	// The recall slot stops being the poll's the moment the poll works.
+	// Otherwise reading it later — the whole point of recall — arms a
+	// hush against a failure that is not happening, and the next time it
+	// does happen the dashboard says nothing at all.
+	m.lastFailure.polled = false
 	if m.alert.polled {
 		// Through clearAlert, not by hand: the card's rows come back to
 		// the modal and whatever was sized for the shorter one has to
@@ -353,10 +367,17 @@ func wrapMessage(message string, width int) []string {
 // a real terminal sized 1:1 to its pane, and a card that changed the body's
 // height would reflow every agent's screen each time something failed.
 func (m Model) renderAlertCard(width, height int) string {
-	// Three rows is a card with nothing in it: two borders and the keys.
-	// Rendering one anyway is how a card loses its bottom edge.
-	if !m.alert.active() || width < 16 || height < 4 {
+	if !m.alert.active() || width < 8 || height < 1 {
 		return ""
+	}
+	// Three rows is a card with nothing in it: two borders and the keys,
+	// and rendering a frame into fewer is how it loses its bottom edge.
+	// A terminal that small still gets the message, just without the
+	// frame — the old footer row managed that much, and going quiet
+	// because the screen is small is the one thing this must never do.
+	if width < 16 || height < 4 {
+		return errorStyle().Render(
+			truncate("! "+m.alert.message(), width))
 	}
 	cardWidth := clamp(width-4, 16, alertCardWidth)
 	textWidth := max(4, cardWidth-6)

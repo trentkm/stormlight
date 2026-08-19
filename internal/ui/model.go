@@ -80,12 +80,18 @@ func (m mode) isForm() bool {
 	return false
 }
 
-// isReading reports an overlay that is read rather than filled in. They
-// close on any key and are sized to their own content, so the failure card
-// holds off while one is up rather than taking rows out of it.
+// isReading reports an overlay that is read once and closes on any key.
+// Those are sized to their own content, so shrinking them to make room for
+// the card cuts their last lines off with nothing to scroll them back —
+// the card floats over them instead.
+//
+// Everything else makes room, including the surfaces that merely look
+// passive: Sessions is a list the reader moves through, filters and
+// resumes from, and the detail view scrolls. A card over either covers
+// rows they need, and Esc there belongs to the surface, not the card.
 func (m mode) isReading() bool {
 	switch m {
-	case modeHelp, modeInfo, modeHistory, modeAlert:
+	case modeHelp, modeInfo:
 		return true
 	}
 	return false
@@ -641,6 +647,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					// receive text, so the composer yields to the attention
 					// band without waiting for an Esc. The draft stays in
 					// the box.
+					//
+					// The composer's own objection goes with it. This close
+					// arrives on a message rather than a keystroke, so the
+					// sweep in Update never sees it.
+					m.clearComplaint(modeCompose)
 					m.mode = modeNormal
 					m.sendInput.Blur()
 				}

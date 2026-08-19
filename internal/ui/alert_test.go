@@ -432,8 +432,14 @@ func TestCardKeepsItsFrameOnAShortTerminal(t *testing.T) {
 	if lines := strings.Count(card, "\n") + 1; lines > 4 {
 		t.Fatalf("the card rendered %d rows into 4", lines)
 	}
-	if shorter := model.renderAlertCard(60, 3); shorter != "" {
-		t.Fatalf("a card drew into three rows:\n%s", shorter)
+	// Too short for a frame is not too short for the message: going quiet
+	// because the terminal is small is the one thing this must never do.
+	shorter := ansi.Strip(model.renderAlertCard(60, 3))
+	if strings.Contains(shorter, "╭") || strings.Contains(shorter, "╰") {
+		t.Fatalf("a frame drew into three rows:\n%s", shorter)
+	}
+	if !strings.Contains(shorter, "boom") {
+		t.Fatalf("a short terminal was told nothing:\n%q", shorter)
 	}
 }
 
@@ -1274,5 +1280,88 @@ func TestCardStaysOffTheTranscriptsFootRow(t *testing.T) {
 	model.mode = modeNormal
 	if got := model.inputStripRows(); got != 0 {
 		t.Fatalf("the portal reserved %d rows; it has no foot row", got)
+	}
+}
+
+// Reading a failure that has already recovered must not arm a hush against
+// its next occurrence — that would be the dashboard going silent about a
+// daemon that is down.
+func TestRecallingARecoveredFailureDoesNotSilenceItsReturn(t *testing.T) {
+	model := alertModel(t)
+	down := func() dashboardMsg {
+		return dashboardMsg{err: errors.New("daemon is not listening")}
+	}
+
+	updated, _ := model.Update(down())
+	model = updated.(Model)
+	updated, _ = model.Update(dashboardMsg{})
+	model = updated.(Model)
+	if model.alert.active() {
+		t.Fatalf("the card outlived the recovery")
+	}
+
+	// Minutes later the reader re-reads the message that recall exists for.
+	updated, _ = model.Update(runeKey("e"))
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(Model)
+
+	updated, _ = model.Update(down())
+	if next := updated.(Model); !next.alert.active() {
+		t.Fatalf("the daemon went down again and the dashboard said nothing")
+	}
+}
+
+// Sessions is a list the reader moves through, filters and resumes from.
+// A card over it covers rows they need, and Esc there closes the modal
+// rather than the card.
+func TestTheCardMakesRoomForSurfacesTheReaderWorksIn(t *testing.T) {
+	for _, surface := range []mode{modeHistory, modeAlert} {
+		model := alertModel(t)
+		model.width = 120
+		model.height = 24
+		model.mode = surface
+		model.raise(errors.New(sshFailure))
+
+		width, height := model.bodyDimensions()
+		if got := model.modalRegion(width, height); got >= height {
+			t.Fatalf("mode %v gave the card no room: region %d of %d",
+				surface, got, height)
+		}
+		modalTop, modalBottom := frameSpan(model.renderModeBody(width, height), 1)
+		cardTop, _ := frameSpan(model.renderBody(), 0)
+		if modalTop < 0 || cardTop < 0 {
+			t.Fatalf("mode %v: expected a modal and a card (%d..%d, %d)",
+				surface, modalTop, modalBottom, cardTop)
+		}
+		if cardTop <= modalBottom {
+			t.Fatalf("mode %v: the card lands on it: modal %d..%d, card from %d",
+				surface, modalTop, modalBottom, cardTop)
+		}
+	}
+}
+
+// The composer closing itself is still the composer closing, and its
+// objection goes with it.
+func TestAnAutoClosedComposerTakesItsComplaintWithIt(t *testing.T) {
+	model := alertModel(t)
+	model.ptyEnabled = false
+	model.agents = []agent.Agent{{ID: "a1", Name: "one", ProcessLive: true}}
+	model.rebuildGroups("", "a1")
+	model.activePane = paneInteraction
+	model.mode = modeCompose
+	model.complain(errors.New("message cannot be empty"))
+
+	// The agent puts up a prompt, which closes the composer from under it.
+	updated, _ := model.Update(dashboardMsg{agents: []agent.Agent{{
+		ID: "a1", Name: "one", ProcessLive: true,
+		Attention: agent.AttentionApproval,
+	}}})
+	model = updated.(Model)
+	if model.mode == modeCompose {
+		t.Skip("this model did not auto-close the composer")
+	}
+	if model.alert.active() {
+		t.Fatalf("the composer's objection outlived the composer: %v", model.alert.err)
 	}
 }
