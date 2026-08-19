@@ -346,7 +346,10 @@ export function match(
   // dashboard's own composer, and a walked-in terminal has first claim
   // on it.
   if (event.code === "KeyK" && event.metaKey) return { id: "palette" };
-  if (event.code === "KeyK" && event.ctrlKey && focus !== "terminal") {
+  // Ctrl-K is readline's kill-to-end-of-line. A terminal's agent has
+  // first claim on it, and so does a text field — macOS implements it
+  // in every input, and the dashboard's own composer is one.
+  if (event.code === "KeyK" && event.ctrlKey && focus === "roster") {
     return { id: "palette" };
   }
   if (focus === "field") return undefined;

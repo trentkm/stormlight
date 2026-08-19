@@ -1,6 +1,6 @@
 <script lang="ts">
   import { claimToken } from "./lib/api";
-  import { run, ui } from "./lib/commands.svelte";
+  import { reconcileFocus, run, ui } from "./lib/commands.svelte";
   import { focusOf, match } from "./lib/keys";
   import { fleet, start } from "./lib/state.svelte";
   import { isUrgent } from "./lib/types";
@@ -41,26 +41,42 @@
 
   /**
    * Walking in is a claim about where the keyboard is, and the DOM can
-   * disagree: click a roster row while walked in and focus leaves the
-   * terminal, but the page still thinks the agent is listening — so
-   * ordinary keys reach neither. Focus moving out of the terminal ends
-   * the walk, which is what the click meant anyway.
+   * disagree — so the claim is checked after focus settles, wherever it
+   * landed. focusout rather than focusin, because focus can leave the
+   * terminal for nothing at all (a click on the host's padding blurs
+   * the agent's textarea to the body, and no focusin fires anywhere).
    */
-  function focusMoved(event: FocusEvent) {
-    if (!ui.walkedIn) return;
-    const target = event.target;
-    if (target instanceof HTMLElement && target.closest(".terminal")) return;
-    ui.walkedIn = false;
+  function focusLeft() {
+    // After this event, not during it: relatedTarget lies about
+    // programmatic moves, and by the next tick activeElement is simply
+    // the answer.
+    queueMicrotask(() => reconcileFocus(document.activeElement));
   }
 
+  // An overlay closing is the other half of the walk's bookkeeping.
+  // focusout alone cannot do it: when the dialog goes, focus is still
+  // inside it as the event fires, so the reconcile sees an overlay and
+  // waits — correctly — and nothing looks again once the dialog is
+  // gone. This looks again.
+  let wasOverlaid = false;
+  $effect(() => {
+    const now = overlaid;
+    const closing = wasOverlaid && !now;
+    wasOverlaid = now;
+    if (closing) queueMicrotask(() => reconcileFocus(document.activeElement));
+  });
+
+  // A half-typed sequence does not survive an overlay opening, however
+  // it was opened: coming back to a roster that has moved and finishing
+  // "m" on whatever is selected now is how the wrong agent gets marked.
+  // An effect rather than a keydown check, because the mouse can open
+  // and close an overlay without a key ever being pressed.
+  $effect(() => {
+    if (overlaid) ui.pending = "";
+  });
+
   function key(event: KeyboardEvent) {
-    if (overlaid) {
-      // A half-typed sequence does not survive an overlay: coming back
-      // to a roster that has moved and finishing "m" on whatever is
-      // selected now is how the wrong agent gets marked.
-      ui.pending = "";
-      return;
-    }
+    if (overlaid) return;
     const found = match(
       event,
       focusOf(document.activeElement, ui.walkedIn),
@@ -87,7 +103,7 @@
   );
 </script>
 
-<svelte:window onkeydowncapture={key} onfocusin={focusMoved} />
+<svelte:window onkeydowncapture={key} onfocusout={focusLeft} />
 
 {#if !authorized || fleet.lost}
   <main class="gate">
@@ -134,7 +150,7 @@
       <span class="tally working">● {working} working</span>
     </header>
 
-    <div class="body" class:zoomed={ui.zoomed}>
+    <div class="body" class:zoomed={ui.zoomed && ui.view === "roster"}>
       <WorkspaceRail />
       {#if ui.view === "wall"}
         <Wall onopen={() => run("view-roster")} />

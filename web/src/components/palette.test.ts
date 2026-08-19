@@ -12,6 +12,18 @@ import { flushSync, mount, unmount } from "svelte";
 
 vi.mock("../lib/api", () => ({ api: {} }));
 
+// jsdom implements <dialog> as an inert element: no showModal, no
+// close event, and — the part that matters here — no focus trap. The
+// palette is a dialog precisely for that trap, so these stubs let the
+// component mount while the trap itself stays a browser concern.
+HTMLDialogElement.prototype.showModal = function () {
+  this.open = true;
+};
+HTMLDialogElement.prototype.close = function () {
+  this.open = false;
+  this.dispatchEvent(new Event("close"));
+};
+
 import Palette from "./Palette.svelte";
 import { fleet } from "../lib/state.svelte";
 import type { Agent } from "../lib/types";

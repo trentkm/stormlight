@@ -28,7 +28,7 @@ vi.mock("./api", () => ({
 }));
 
 import { bindings } from "./keys";
-import { run, ui } from "./commands.svelte";
+import { reconcileFocus, run, ui } from "./commands.svelte";
 import { fleet } from "./state.svelte";
 import type { Agent } from "./types";
 
@@ -268,6 +268,74 @@ describe("the view keys", () => {
   test("i asks for the composer", () => {
     run("message");
     expect(ui.composing).toBe(true);
+    expect(ui.walkedIn).toBe(false);
+  });
+});
+
+/**
+ * The walked-in claim against where focus really is. Every case here
+ * was a live bug at some point in this branch's review: focus falling
+ * to nothing, focus taken by an overlay, focus never leaving at all.
+ */
+describe("keeping the walk honest", () => {
+  function make(html: string): HTMLElement {
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    document.body.append(host);
+    return host.firstElementChild as HTMLElement;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    ui.walkedIn = true;
+  });
+
+  // Walked in means the terminal holds the keyboard. When focus falls
+  // to nothing — the host's padding swallows a click, an overlay closes
+  // handing focus back to no one — the answer is to give it back, not
+  // to leave a page answering to neither the agent nor itself.
+  test("focus falling to nothing is handed back to the terminal", () => {
+    const helper = make(
+      '<div class="terminal"><textarea></textarea></div>',
+    ).querySelector("textarea")!;
+    helper.blur();
+
+    reconcileFocus(document.body);
+
+    expect(ui.walkedIn).toBe(true);
+    expect(document.activeElement).toBe(helper);
+  });
+
+  test("with no terminal to hand it back to, the walk ends", () => {
+    reconcileFocus(null);
+    expect(ui.walkedIn).toBe(false);
+  });
+
+  test("an overlay taking focus does not end it", () => {
+    // ⌘K autofocuses the palette's query. That is not walking out, and
+    // Escape has to put you back where you were.
+    const input = make('<dialog><input /></dialog>').querySelector("input")!;
+    reconcileFocus(input);
+    expect(ui.walkedIn).toBe(true);
+  });
+
+  test("focus still inside the terminal keeps it", () => {
+    const helper = make(
+      '<div class="terminal"><textarea></textarea></div>',
+    ).querySelector("textarea")!;
+    reconcileFocus(helper);
+    expect(ui.walkedIn).toBe(true);
+  });
+
+  test("a roster button taking focus ends it", () => {
+    const button = make("<button>agent</button>");
+    reconcileFocus(button);
+    expect(ui.walkedIn).toBe(false);
+  });
+
+  test("it does nothing at all when not walked in", () => {
+    ui.walkedIn = false;
+    reconcileFocus(document.body);
     expect(ui.walkedIn).toBe(false);
   });
 });

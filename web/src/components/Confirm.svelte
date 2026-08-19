@@ -17,12 +17,19 @@
     oncancel: () => void;
   } = $props();
 
-  let panel = $state<HTMLDivElement>();
+  let modal = $state<HTMLDialogElement>();
+  let refuse = $state<HTMLButtonElement>();
 
-  // Focus lands here so Escape and Enter reach this dialog rather than
-  // whatever had the keyboard a moment ago.
+  // A real dialog, so the browser traps focus: a Tab out of a
+  // hand-rolled one leaves its keys on an element nobody is focused in.
   $effect(() => {
-    panel?.focus();
+    modal?.showModal();
+  });
+
+  // Focus lands on cancel. Enter confirms, so the safe answer is the
+  // one under the finger of somebody who did not read the question.
+  $effect(() => {
+    refuse?.focus();
   });
 
   const key = (event: KeyboardEvent) => {
@@ -37,36 +44,34 @@
   };
 </script>
 
-<div class="scrim" role="presentation" onclick={oncancel}>
-  <div
-    class="panel"
-    role="alertdialog"
-    aria-modal="true"
-    aria-label={what}
-    tabindex="-1"
-    bind:this={panel}
-    onclick={(event) => event.stopPropagation()}
-    onkeydown={key}
-  >
+<dialog
+  bind:this={modal}
+  aria-label={what}
+  onkeydown={key}
+  onclose={oncancel}
+  onclick={(event) => {
+    if (event.target === modal) oncancel();
+  }}
+>
+  <div class="panel" role="alertdialog" aria-label={what}>
     <p class="what">{what}</p>
     {#if detail}<p class="detail">{detail}</p>{/if}
     <div class="row">
       <button class="danger" onclick={onconfirm}>delete</button>
-      <button onclick={oncancel}>cancel</button>
+      <button bind:this={refuse} onclick={oncancel}>cancel</button>
       <span class="hint">x or Enter confirms · Esc cancels</span>
     </div>
   </div>
-</div>
+</dialog>
 
 <style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 22vh;
+  dialog {
+    margin: 22vh auto auto;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+  dialog::backdrop {
     background: rgba(10, 13, 16, 0.55);
   }
   .panel {

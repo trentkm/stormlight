@@ -34,6 +34,44 @@ export const ui = $state({
   pending: "",
 });
 
+/**
+ * Keeps the walked-in claim honest against where focus actually is.
+ *
+ * Two ways they drift, both found by review rather than by reasoning:
+ * the terminal's host has padding, and a click on that band blurs the
+ * agent's textarea to nothing at all — no focusin fires anywhere, so
+ * only watching focus *leave* catches it. And an overlay that focuses
+ * its own input is not the person walking out; the walk survives ⌘K
+ * and resumes when the overlay closes.
+ *
+ * Called with whatever holds focus after the event has settled.
+ */
+export function reconcileFocus(active: Element | null): void {
+  if (!ui.walkedIn) return;
+  // An overlay's own focus is the overlay's business; the walk waits.
+  if (active instanceof HTMLElement && active.closest("dialog")) return;
+  if (active instanceof HTMLElement && active.closest(".terminal")) return;
+
+  // Focus landed on something real outside the terminal — a roster row,
+  // the composer. That is walking out, and the click meant it.
+  const onSomething =
+    active instanceof HTMLElement &&
+    active !== document.body &&
+    active !== document.documentElement;
+  if (onSomething) {
+    ui.walkedIn = false;
+    return;
+  }
+
+  // Focus fell to nothing: the terminal host's padding swallowed a
+  // click, or an overlay closed and handed focus back to no one.
+  // Walked in means the terminal holds the keyboard, so give it back
+  // rather than leaving a page that answers to neither.
+  const helper = document.querySelector<HTMLElement>(".terminal textarea");
+  if (helper) helper.focus();
+  else ui.walkedIn = false;
+}
+
 /** The agents the roster is showing, in the order it shows them. */
 function visible(): Agent[] {
   return agentsIn(fleet.workspaceID);

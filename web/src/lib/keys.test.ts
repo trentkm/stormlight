@@ -119,10 +119,15 @@ describe("a walked-in terminal", () => {
 
   // Ctrl-K is readline's kill-to-end-of-line. The agent has first claim
   // on it; only ⌘K is the page's from inside a terminal.
-  test("Ctrl-K belongs to the agent, ⌘K to the page", () => {
+  test("Ctrl-K belongs to whoever is typing, ⌘K to the page", () => {
+    // The agent's, inside a terminal; the field's, inside a field —
+    // both implement it as kill-to-end-of-line. Only the page's own
+    // keyboard has it spare.
     expect(meaning("k", "terminal", { ctrl: true })).toBeUndefined();
-    expect(meaning("k", "terminal", { meta: true })).toBe("palette");
+    expect(meaning("k", "field", { ctrl: true })).toBeUndefined();
     expect(meaning("k", "roster", { ctrl: true })).toBe("palette");
+    expect(meaning("k", "terminal", { meta: true })).toBe("palette");
+    expect(meaning("k", "field", { meta: true })).toBe("palette");
   });
 
   test("still lets the alt chords through", () => {

@@ -10,6 +10,12 @@
    */
   let { onclose }: { onclose: () => void } = $props();
 
+  let modal = $state<HTMLDialogElement>();
+
+  $effect(() => {
+    modal?.showModal();
+  });
+
   const groups = ["Navigate", "Act", "Panes", "View"] as const;
 
   const key = (event: KeyboardEvent) => {
@@ -26,21 +32,16 @@
   };
 </script>
 
-<svelte:window onkeydown={key} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- The window handler above closes on any key at all, so this scrim
-     needs no keyboard affordance of its own; the click is the mouse's
-     way to the same door. -->
-<div class="scrim" role="presentation" onclick={onclose}>
-  <div
-    class="panel"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Keys"
-    tabindex="-1"
-    onclick={(event) => event.stopPropagation()}
-  >
+<dialog
+  bind:this={modal}
+  aria-label="Keys"
+  onkeydown={key}
+  onclose={onclose}
+  onclick={(event) => {
+    if (event.target === modal) onclose();
+  }}
+>
+  <div class="panel">
     <h2>Keys</h2>
     {#each groups as group (group)}
       {@const rows = bindings.filter((binding) => binding.group === group)}
@@ -77,19 +78,21 @@
         </p>
       {/each}
     </section>
-    <p class="dismiss">any key closes</p>
+    <!-- Says what it does. The handler ignores lone modifiers and
+         leaves browser chords alone, so "any key" would be a help
+         screen lying about the keyboard. -->
+    <p class="dismiss">Esc, or any ordinary key, closes</p>
   </div>
-</div>
+</dialog>
 
 <style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 8vh;
+  dialog {
+    margin: 8vh auto auto;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+  dialog::backdrop {
     background: rgba(10, 13, 16, 0.55);
   }
   .panel {

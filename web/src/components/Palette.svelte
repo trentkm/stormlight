@@ -39,6 +39,23 @@
   let query = $state("");
   let cursor = $state(0);
   let field: HTMLInputElement;
+  let modal = $state<HTMLDialogElement>();
+
+  /**
+   * showModal, not a styled div.
+   *
+   * The first version handled keys on the window while its own panel
+   * stopped propagation, so nothing worked. The fix — handling on the
+   * panel — worked until one Shift+Tab moved focus to the header
+   * behind the scrim, at which point the palette's keys existed on an
+   * element nobody was focused in and the page's own keys were
+   * suppressed for being overlaid: a keyboard frozen until a mouse
+   * click. A dialog traps focus natively, which is the property both
+   * attempts were trying to hand-roll.
+   */
+  $effect(() => {
+    modal?.showModal();
+  });
 
   const agentEntries = $derived(
     fleet.agents.map((agent: Agent) => {
@@ -180,25 +197,18 @@
   };
 </script>
 
-<!-- The scrim closes on click; the panel stops the click reaching it. -->
-<div
-  class="scrim"
-  role="presentation"
-  onclick={onclose}
+<dialog
+  bind:this={modal}
+  aria-label="Command palette"
+  onkeydown={key}
+  onclose={onclose}
+  onclick={(event) => {
+    // The backdrop is part of the dialog's own box, so a click lands
+    // here when it lands outside the panel.
+    if (event.target === modal) onclose();
+  }}
 >
-  <!-- The panel stops clicks reaching the scrim behind it. It is not
-       itself interactive: the input and the buttons inside are, and
-       Escape closes from anywhere, so there is nothing here for a
-       keyboard to reach that it cannot reach already. -->
-  <div
-    class="panel"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Command palette"
-    tabindex="-1"
-    onclick={(event) => event.stopPropagation()}
-    onkeydown={key}
-  >
+  <div class="panel">
     <input
       bind:this={field}
       bind:value={query}
@@ -237,17 +247,16 @@
       </ul>
     {/if}
   </div>
-</div>
+</dialog>
 
 <style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 12vh;
+  dialog {
+    margin: 12vh auto auto;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+  dialog::backdrop {
     background: rgba(10, 13, 16, 0.55);
   }
   .panel {
