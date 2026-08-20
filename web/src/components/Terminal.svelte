@@ -77,7 +77,20 @@
       h: number;
     };
     const samples: Sample[] = [];
+    const events: string[] = [];
     const armed = Math.round(performance.now());
+    // Said out loud as it happens, so catching one is a matter of
+    // watching rather than of calling __flicker() at the right instant.
+    let hadContent = false;
+    let previous = 0;
+    const note = (what: string, sample: Sample) => {
+      const line =
+        `flicker: ${what} at t=${sample.t}ms — painted ${sample.painted}, ` +
+        `held ${sample.held}, grid ${sample.cols}x${sample.rows}, ` +
+        `box ${sample.w}x${sample.h}`;
+      events.push(line);
+      console.warn(line);
+    };
     built.onRender(() => {
       const painted = box.querySelector(".xterm-rows");
       let drawn = -1;
@@ -93,7 +106,7 @@
         const line = buffer.getLine(buffer.viewportY + index);
         if (line && line.translateToString(true).trim() !== "") held++;
       }
-      samples.push({
+      const sample: Sample = {
         t: Math.round(performance.now()),
         painted: drawn,
         held,
@@ -101,8 +114,23 @@
         rows: built.rows,
         w: box.offsetWidth,
         h: box.offsetHeight,
-      });
+      };
+      samples.push(sample);
       if (samples.length > 6000) samples.shift();
+
+      // Three shapes worth shouting about, each a different culprit.
+      // The screen emptying is the terminal being cleared and not yet
+      // redrawn; a blank paint is the renderer showing nothing while
+      // the emulator holds a screen; a stall is the renderer stopping.
+      if (held >= 5) hadContent = true;
+      if (hadContent && held <= 2) note("the screen emptied", sample);
+      else if (sample.painted >= 0 && sample.painted <= 2 && held >= 5) {
+        note("a paint landed blank", sample);
+      }
+      if (previous && sample.t - previous > 200) {
+        note(`the renderer stalled ${sample.t - previous}ms`, sample);
+      }
+      previous = sample.t;
     });
 
     (window as { __flicker?: () => unknown }).__flicker = () => {
@@ -130,6 +158,7 @@
         .filter((x) => x.gap > 250)
         .slice(0, 10);
       return {
+        events,
         renders: samples.length,
         seconds: +((samples[samples.length - 1].t - samples[0].t) / 1000).toFixed(1),
         domRenderer: samples[0].painted >= 0,
