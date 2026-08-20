@@ -76,40 +76,6 @@ function rebuild(state: Uint8Array): Uint8Array {
   return whole;
 }
 
-/**
- * Whether this page batches at all.
- *
- * `?batch=off` writes every message straight through the way it did
- * before batching existed, so the two can be compared by reloading. The
- * batch buys atomicity and costs a frame of latency — output waits for a
- * frame to be handed over and then waits for another to be painted —
- * and which of those matters more is a question about a real agent on a
- * real screen rather than one to settle by reasoning.
- */
-function batching(): boolean {
-  try {
-    return new URL(window.location.href).searchParams.get("batch") !== "off";
-  } catch {
-    return true;
-  }
-}
-
-/**
- * Whether this page narrates what the socket is doing.
- *
- * A replica rebuilt is a screen that jumps, and the two reasons — the
- * daemon resyncing a viewer that fell behind, and the socket coming back
- * after a drop — look identical from the buffer's side. They do not look
- * identical from here.
- */
-function narrating(): boolean {
-  try {
-    return new URL(window.location.href).searchParams.get("probe") !== "0";
-  } catch {
-    return false;
-  }
-}
-
 function usable(cols: number, rows: number): boolean {
   return cols >= minCols && rows >= minRows;
 }
@@ -183,10 +149,6 @@ export function attach(
    * the write in front of it — which is what keeps a repaint from being
    * reflowed by a size that belongs after it.
    */
-  const batched = batching();
-  const narrate = narrating();
-  let seeds = 0;
-  let sockets = 0;
   let batch: Array<Uint8Array | (() => void)> = [];
   let frame: number | undefined;
   let backstop: number | undefined;
@@ -228,11 +190,6 @@ export function attach(
   };
 
   const enqueue = (item: Uint8Array | (() => void)) => {
-    if (!batched) {
-      if (typeof item === "function") term.write("", item);
-      else term.write(item);
-      return;
-    }
     batch.push(item);
     if (frame !== undefined || backstop !== undefined) return;
     frame = window.requestAnimationFrame?.(flush);
@@ -259,13 +216,6 @@ export function attach(
       : { cols: 0, rows: 0 };
     announced = opening;
 
-    sockets++;
-    if (narrate) {
-      console.log(
-        `flicker: opening terminal socket #${sockets}` +
-          (sockets > 1 ? " — THE SOCKET DROPPED AND CAME BACK" : ""),
-      );
-    }
     const live = new WebSocket(
       socketURL(
         `/api/agents/${id}/terminal`,
@@ -294,16 +244,6 @@ export function attach(
       if (typeof event.data === "string") {
         const control: Control = JSON.parse(event.data);
         if (control.type === "seed") {
-          seeds++;
-          if (narrate) {
-            console.log(
-              `flicker: the daemon seeded this replica (#${seeds} on socket ` +
-                `#${sockets})` +
-                (seeds > 1
-                  ? " — A RESYNC: this viewer fell behind and was handed state"
-                  : ""),
-            );
-          }
           // The attach worked. Not `onopen`: this server upgrades before
           // it attaches, so a failed attach is an accepted socket that
           // closes a moment later — and treating that as success resets
