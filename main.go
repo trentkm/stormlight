@@ -147,12 +147,6 @@ func newWindrunnerDaemonCommand() *cobra.Command {
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := windrun.SocketPath()
-			// Before the socket exists, so that nothing can connect to a
-			// daemon that has not yet said what it is.
-			if err := windrun.WriteStamp(version); err != nil {
-				return err
-			}
-			defer windrun.RemoveStamp()
 			os.Remove(path)
 			listener, err := net.Listen("unix", path)
 			if err != nil {
@@ -195,19 +189,12 @@ func newWindrunnerBridgeCommand() *cobra.Command {
 			}
 			c.Close()
 			hostname, _ := os.Hostname()
-			// Read rather than assumed: EnsureDaemon starts one only
-			// when none is listening, so the daemon this bridge is about
-			// to splice onto may be years older than this binary.
-			stamp, _ := windrun.ReadStamp()
 			return remote.Serve(windrun.SocketPath(), remote.Hello{
-				Protocol:         remote.Protocol,
-				Version:          version,
-				Bin:              binPath,
-				SocketDir:        windrun.SocketDir(),
-				Hostname:         hostname,
-				DaemonCapability: stamp.Capability,
-				DaemonVersion:    stamp.Version,
-				DaemonPID:        stamp.PID,
+				Protocol:  remote.Protocol,
+				Version:   version,
+				Bin:       binPath,
+				SocketDir: windrun.SocketDir(),
+				Hostname:  hostname,
 			}, os.Stdin, os.Stdout)
 		},
 	}

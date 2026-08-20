@@ -2,7 +2,9 @@ package windrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/trentkm/windrunner"
 	"github.com/trentkm/windrunner/server"
+	"github.com/trentkm/windrunner/wire"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/remote"
@@ -25,7 +28,6 @@ const (
 	helperEnv       = "STORMLIGHT_BRIDGE_HELPER_SOCKET"
 	helperSentinel  = "STORMLIGHT_BRIDGE_HELPER"
 	helperBinEnv    = "STORMLIGHT_BRIDGE_HELPER_BIN"
-	helperStaleEnv  = "STORMLIGHT_BRIDGE_HELPER_STALE"
 	helperSocketDir = "/remote/state/windrunner"
 )
 
@@ -51,18 +53,6 @@ func TestMain(m *testing.M) {
 			Bin:       os.Getenv(helperBinEnv),
 			SocketDir: helperSocketDir,
 			Hostname:  "testhost",
-			// The daemon this harness serves is the one this test binary
-			// just started, so it can do what this build asks of it.
-			// Saying so is what the real bridge does by reading the
-			// stamp beside the socket.
-		}
-		// A daemon old enough to matter leaves no stamp at all — the
-		// mechanism postdates it — so the stale case reports nothing
-		// rather than reporting itself as old.
-		if os.Getenv(helperStaleEnv) == "" {
-			hello.DaemonCapability = Capability
-			hello.DaemonVersion = "v-remote"
-			hello.DaemonPID = os.Getpid()
 		}
 		if err := remote.Serve(os.Getenv(helperEnv), hello, os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "bridge:", err)
@@ -90,6 +80,23 @@ func testBinary(t *testing.T) string {
 // another machine — because everything it can observe says so.
 func remoteRuntime(t *testing.T) *Runtime {
 	t.Helper()
+	return remoteRuntimeOn(t, farSide{})
+}
+
+// farSide is what a test wants of the daemon over there. The zero value
+// is a windrunner of this build reached directly, which is what every
+// test that is not about the daemon's age wants.
+type farSide struct {
+	// sendsAFieldTheDaemonLacks puts a name in every spawn request that
+	// no daemon has ever known, which is what a request from a newer
+	// build looks like to an older daemon. The daemon's answer to it is
+	// the real one, not a fixture: this stands the situation up rather
+	// than describing it.
+	sendsAFieldTheDaemonLacks bool
+}
+
+func remoteRuntimeOn(t *testing.T, side farSide) *Runtime {
+	t.Helper()
 	// Not t.TempDir(): a unix socket path caps near 104 bytes and test
 	// names push a per-test directory past it.
 	dir, err := os.MkdirTemp("", "sl")
@@ -107,6 +114,9 @@ func remoteRuntime(t *testing.T) *Runtime {
 	t.Cleanup(engine.Close)
 	go server.Serve(engine, listener)
 	t.Cleanup(func() { listener.Close() })
+	if side.sendsAFieldTheDaemonLacks {
+		socket = aheadOfTheDaemon(t, dir, socket)
+	}
 
 	self, err := os.Executable()
 	if err != nil {
@@ -122,9 +132,8 @@ func remoteRuntime(t *testing.T) *Runtime {
 	script := fmt.Sprintf(`#!/bin/sh
 for last; do :; done
 if [ "$last" = "-s" ]; then exec /bin/sh -s; fi
-%s=1 %s=%q %s=%q %s=%q exec %q -test.run=TestMainBridgeHelperNeverRuns
-`, helperSentinel, helperEnv, socket, helperBinEnv, self,
-		helperStaleEnv, os.Getenv(helperStaleEnv), self)
+%s=1 %s=%q %s=%q exec %q -test.run=TestMainBridgeHelperNeverRuns
+`, helperSentinel, helperEnv, socket, helperBinEnv, self, self)
 	if err := os.WriteFile(fakeSSH, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake ssh: %v", err)
 	}
@@ -134,6 +143,74 @@ if [ "$last" = "-s" ]; then exec /bin/sh -s; fi
 		t.Fatalf("NewRemoteRuntime: %v", err)
 	}
 	return runtime
+}
+
+// aheadOfTheDaemon sits between the bridge and a real daemon and adds a
+// field to every spawn request, so that what arrives is a request from a
+// build the daemon predates. Nothing is faked past that point: the refusal
+// the test reads is the daemon's own, produced by the same code path a
+// genuinely old daemon would take.
+//
+// Adding rather than removing is deliberate. Removing a field simulates
+// the daemon's fault by performing it here, and would keep passing if the
+// daemon stopped refusing tomorrow.
+func aheadOfTheDaemon(t *testing.T, dir, target string) string {
+	t.Helper()
+	path := filepath.Join(dir, "ahead.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			upstream, err := net.Dial("unix", target)
+			if err != nil {
+				conn.Close()
+				continue
+			}
+			go func() {
+				defer conn.Close()
+				defer upstream.Close()
+				io.Copy(conn, upstream)
+			}()
+			go func() {
+				defer conn.Close()
+				defer upstream.Close()
+				relayAhead(conn, upstream)
+			}()
+		}
+	}()
+	return path
+}
+
+// relayAhead carries one client's frames to the daemon, adding the field
+// to spawn requests on the way. Frames of any other kind — attach, input,
+// resize, raw terminal bytes — go through untouched: what is being staged
+// is a client newer than the daemon, not a broken one.
+func relayAhead(from io.Reader, to io.Writer) {
+	for {
+		frameType, payload, err := wire.ReadFrame(from)
+		if err != nil {
+			return
+		}
+		if frameType == wire.FrameControl {
+			var request map[string]any
+			if json.Unmarshal(payload, &request) == nil && request["op"] == "spawn" {
+				request["from_a_release_it_predates"] = true
+				if reencoded, err := json.Marshal(request); err == nil {
+					payload = reencoded
+				}
+			}
+		}
+		if wire.WriteFrame(to, frameType, payload) != nil {
+			return
+		}
+	}
 }
 
 // withShell re-points a runtime's host at a configured login shell,
@@ -689,14 +766,18 @@ func TestAMissingProviderPointsAtTheSetting(t *testing.T) {
 	}
 }
 
-// TestADaemonThatCannotCarryAnAgentIsNotGivenOne is #144: a daemon older
-// than the field a dispatch depends on does not refuse the request, it
-// drops the field and starts the process anyway. What came back was an
-// agent with an empty environment, failing three layers from the cause
-// and never mentioning the daemon.
-func TestADaemonThatCannotCarryAnAgentIsNotGivenOne(t *testing.T) {
-	t.Setenv(helperStaleEnv, "1")
-	runtime := remoteRuntime(t)
+// TestADaemonTooOldForTheRequestRefusesItItself is #144, and the reason
+// Stormlight keeps no record of what a daemon can do.
+//
+// The daemon refuses a request it cannot fully read, naming the field it
+// does not know and saying that restarting it is the cure. That is a
+// better answer than anything this side could infer: it is the daemon's
+// own, it is per-field, it arrives before a session exists, and it needs
+// no bookkeeping here that a new field would have to remember to update.
+// All this side owes it is the machine, which the daemon cannot know is
+// not the one being read from.
+func TestADaemonTooOldForTheRequestRefusesItItself(t *testing.T) {
+	runtime := remoteRuntimeOn(t, farSide{sendsAFieldTheDaemonLacks: true})
 
 	_, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
 		Provider: agent.Provider("claude"),
@@ -704,53 +785,17 @@ func TestADaemonThatCannotCarryAnAgentIsNotGivenOne(t *testing.T) {
 		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "true"}},
 	})
 	if err == nil {
-		t.Fatal("a daemon that would drop the agent's environment must not be given one")
+		t.Fatal("a daemon that cannot read the request must not be given an agent")
 	}
 	t.Logf("the message is:\n%s", err)
 	for _, want := range []string{
-		"daemon on testhost", // which machine, and that it is the daemon
-		"still list and attach",
-		// No stamp means no pid, so the only handle left is the pattern.
-		"pkill -f 'stormlight _wrdaemon'",
+		"testhost",                   // which machine
+		"does not understand",        // and what it could not read
+		"from_a_release_it_predates", // named, so it is actionable
+		"restarting it",              // the cure, in the daemon's own words
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal should carry %q:\n%v", want, err)
 		}
-	}
-}
-
-// TestARefusedDispatchLeavesNoAgentBehind: the point of refusing before
-// the spawn is that nothing is created. An agent recorded here would be
-// one the roster shows and nothing owns.
-func TestARefusedDispatchLeavesNoAgentBehind(t *testing.T) {
-	t.Setenv(helperStaleEnv, "1")
-	runtime := remoteRuntime(t)
-
-	if _, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
-		Provider: agent.Provider("claude"),
-		Cwd:      t.TempDir(),
-		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}},
-	}); err == nil {
-		t.Fatal("this dispatch should have been refused")
-	}
-	agents, err := runtime.ListAgents(context.Background())
-	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
-	}
-	if len(agents) != 0 {
-		t.Fatalf("a refused dispatch left something behind: %+v", agents)
-	}
-}
-
-// TestADaemonNamesTheProcessToEnd: an unstamped daemon can only be found
-// by pattern, but a stamped one that is merely behind names its pid — and
-// killing the right process matters when the wrong one is somebody's
-// afternoon.
-func TestADaemonNamesTheProcessToEnd(t *testing.T) {
-	if got := restartInstruction("mini", 4321); got != "ssh mini kill 4321" {
-		t.Fatalf("restartInstruction = %q", got)
-	}
-	if got := restartInstruction("mini", 0); !strings.Contains(got, "pkill") {
-		t.Fatalf("with no pid it should fall back to a pattern: %q", got)
 	}
 }

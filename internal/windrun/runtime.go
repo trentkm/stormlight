@@ -224,9 +224,6 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	if err != nil {
 		return agent.Agent{}, err
 	}
-	if err := r.daemonCanCarryAnAgent(); err != nil {
-		return agent.Agent{}, err
-	}
 	managedAgent := agent.Agent{
 		ID:          id,
 		Provider:    request.Provider,
@@ -321,6 +318,16 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	}
 	info, err := r.client.Spawn(spawn)
 	if err != nil {
+		// The daemon refuses what it cannot honour — a spawn request
+		// naming a field it has never heard of comes back rejected,
+		// saying which field and that restarting it is the cure. That
+		// message is the whole diagnosis, so it travels intact; all
+		// this adds is the machine, which the daemon has no way to know
+		// is not the one the reader is sitting at.
+		if r.transport != nil {
+			return agent.Agent{}, fmt.Errorf(
+				"start provider on %s: %w", r.transport.Host().Name, err)
+		}
 		return agent.Agent{}, fmt.Errorf("start provider: %w", err)
 	}
 	// The daemon named the session; adopt its id as the agent's id would
@@ -329,56 +336,6 @@ func (r *Runtime) Dispatch(ctx context.Context, request session.DispatchRequest)
 	managedAgent.PaneID = info.ID
 	managedAgent.WindowID = info.ID
 	return managedAgent, nil
-}
-
-// daemonCanCarryAnAgent refuses a dispatch the daemon over there cannot
-// honour, rather than making an agent that cannot work.
-//
-// A remote spawn puts the agent's identity, its Stormlight, its socket
-// directory and its provider's argv in EnvOverride, and a daemon older
-// than that field does not object — it drops it and starts the process
-// regardless. What comes back is an agent whose environment is empty:
-// before #188 that meant hooks that could never report, and since #188 it
-// means a launch that cannot resolve the provider at all. Neither
-// failure mentions the daemon, and the daemon is the whole cause.
-//
-// The refusal is here rather than at the handshake on purpose. The
-// daemon is serving real agents — the one that prompted this held four —
-// and they list, attach, and take input perfectly well. Only starting a
-// new one is broken, so only that is refused.
-func (r *Runtime) daemonCanCarryAnAgent() error {
-	if r.transport == nil {
-		// This machine's daemon is asked for Env, which every daemon
-		// that ever existed understands.
-		return nil
-	}
-	hello := r.transport.Hello()
-	if hello.DaemonCapability >= Capability {
-		return nil
-	}
-	host := r.transport.Host().Name
-	built := "a Stormlight older than this one"
-	if hello.DaemonVersion != "" {
-		built = "Stormlight " + hello.DaemonVersion
-	}
-	return fmt.Errorf(
-		"the windrunner daemon on %s was started by %s and drops the environment "+
-			"an agent needs, so a new agent there would start without one. "+
-			"Agents it already holds are unaffected — they still list and attach. "+
-			"Restarting it takes them with it:\n    %s",
-		host, built, restartInstruction(host, hello.DaemonPID))
-}
-
-// restartInstruction is the only way to replace a running daemon, so it
-// is spelled out rather than alluded to — including that there is no
-// gentle form of it.
-func restartInstruction(host string, pid int) string {
-	if pid > 0 {
-		return fmt.Sprintf("ssh %s kill %d", host, pid)
-	}
-	// An unstamped daemon named no process, which is itself how it was
-	// recognised as too old.
-	return fmt.Sprintf("ssh %s pkill -f 'stormlight _wrdaemon'", host)
 }
 
 // launchCommand is what the daemon on the far side is asked to start.

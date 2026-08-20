@@ -42,24 +42,4 @@ type Hello struct {
 	Bin       string `json:"bin"`
 	SocketDir string `json:"socket_dir"`
 	Hostname  string `json:"hostname"`
-	// DaemonCapability is what the daemon actually serving this socket
-	// can be asked to do — which is not what Version says, and is the
-	// difference that matters.
-	//
-	// The bridge is a fresh process of a known build, but the daemon
-	// behind it is whatever was already listening, started by whatever
-	// binary was installed at the time and outliving every upgrade
-	// since. Version describes the messenger. This describes the
-	// machine that will actually run the agent.
-	//
-	// Zero means the daemon predates saying so, which is an answer:
-	// nothing older can be asked, and nothing older honours the fields a
-	// dispatch depends on.
-	DaemonCapability int `json:"daemon_capability,omitempty"`
-	// DaemonVersion is the build that started that daemon, for a message
-	// that can say how far behind it is.
-	DaemonVersion string `json:"daemon_version,omitempty"`
-	// DaemonPID names the process to end, since ending it is the only
-	// way to replace it and there is no gentler instruction to give.
-	DaemonPID int `json:"daemon_pid,omitempty"`
 }

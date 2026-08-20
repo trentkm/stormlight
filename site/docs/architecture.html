@@ -151,16 +151,23 @@
     persist across dashboard restarts, and the daemon's sessions are the roster — there is
     no second record to reconcile.</p>
     <p>Outliving the dashboard means outliving the binary, so a daemon can be running code
-    from a release nobody has installed for months. That is harmless until a dispatch needs
-    the daemon to do something a daemon that old cannot: an unknown field in a spawn request
-    is not refused, it is dropped, and the agent starts anyway &mdash; missing the
-    environment its whole lifecycle depends on, and failing somewhere that never mentions
-    the daemon. So <code>stormlight _wrdaemon</code> writes <code>daemon.json</code> beside
-    its socket before it listens, naming what it can be asked to do and the process saying
-    so, and removes it when it goes. <code>_wrbridge</code> reads that file rather than
-    reporting its own version, because the daemon it splices onto is whatever was already
-    listening. A daemon too old to carry an agent is refused a new one &mdash; and only a
-    new one, since the agents it already holds list and attach perfectly well.</p>
+    from a release nobody has installed for months. Nothing here tries to detect that. The
+    daemon refuses a request it cannot fully read &mdash; windrunner decodes control requests
+    with unknown fields disallowed &mdash; and answers by naming the field it does not know
+    and saying that restarting it is the cure. The refusal lands before a session exists, so
+    a dispatch that a daemon cannot honour creates nothing.</p>
+    <p>That is deliberately the only mechanism. Stormlight kept a capability stamp beside the
+    socket for a while, and it was worse in every way that mattered: it inferred where the
+    daemon could state, it needed a number maintained by hand for each new field, it could
+    not describe a daemon started by the <code>windrunner</code> CLI on the same socket, and
+    a daemon predating the stamp was indistinguishable from one predating the field &mdash;
+    which refused working daemons and told people to kill live agents to cure a fault they
+    did not have. The daemon's own refusal has none of those failure modes and covers every
+    field added later for free. A remote spawn error is wrapped with the host, which is the
+    one thing the daemon has no way to know.</p>
+    <p>The floor is real but narrow: a daemon started before windrunner began refusing
+    unknown fields still drops them silently. Nothing can create one now, and restarting a
+    daemon is what clears it.</p>
     <p>The daemon never learns what an agent is; that is the library's boundary. Agent
     identity and state ride in the session's opaque metadata as one JSON document under the
     <code>stormlight_agent</code> key — the serialized <code>agent.Agent</code>: id,
