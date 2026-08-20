@@ -80,6 +80,10 @@
       cy: number;
       /** Which line of the buffer the top of the view was showing. */
       top: number;
+      /** The bottom of the scrollback: how much history the buffer holds. */
+      base: number;
+      /** Which screen is live — the alternate one keeps no history. */
+      alt: boolean;
     };
     // Kept on the page rather than in this closure: selecting another
     // agent rebuilds the terminal, and a record that died with it meant
@@ -166,6 +170,8 @@
         cx: buffer.cursorX,
         cy: buffer.cursorY,
         top: buffer.viewportY,
+        base: buffer.baseY,
+        alt: buffer.type === "alternate",
       };
       samples.push(sample);
       if (samples.length > 6000) samples.shift();
@@ -187,7 +193,20 @@
         }
         const jumped = Math.abs(sample.top - previousSample.top);
         if (jumped >= 3) {
-          note(`the view jumped ${jumped} lines to ${sample.top}`, sample);
+          // Which of the two it is turns on whether the history moved
+          // with the view. A base that held still means the view was
+          // merely scrolled and can be scrolled back; a base that went
+          // with it means the buffer was rebuilt underneath, and the
+          // screen it was showing no longer exists to return to.
+          const rebuilt = sample.base !== previousSample.base;
+          note(
+            `the view jumped from ${previousSample.top} to ${sample.top} — ` +
+              `history ${previousSample.base}→${sample.base} ` +
+              `(${rebuilt ? "REBUILT" : "held still, so this was a scroll"}), ` +
+              `${sample.alt ? "alternate" : "normal"} screen` +
+              (previousSample.alt !== sample.alt ? " — SCREEN SWITCHED" : ""),
+            sample,
+          );
         }
       }
       previousSample = sample;
