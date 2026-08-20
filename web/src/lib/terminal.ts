@@ -47,6 +47,24 @@ const batchBackstop = 250;
  */
 const reset = new Uint8Array([0x1b, 0x63]);
 
+/**
+ * Whether this page batches at all.
+ *
+ * `?batch=off` writes every message straight through the way it did
+ * before batching existed, so the two can be compared by reloading. The
+ * batch buys atomicity and costs a frame of latency — output waits for a
+ * frame to be handed over and then waits for another to be painted —
+ * and which of those matters more is a question about a real agent on a
+ * real screen rather than one to settle by reasoning.
+ */
+function batching(): boolean {
+  try {
+    return new URL(window.location.href).searchParams.get("batch") !== "off";
+  } catch {
+    return true;
+  }
+}
+
 function usable(cols: number, rows: number): boolean {
   return cols >= minCols && rows >= minRows;
 }
@@ -120,6 +138,7 @@ export function attach(
    * the write in front of it — which is what keeps a repaint from being
    * reflowed by a size that belongs after it.
    */
+  const batched = batching();
   let batch: Array<Uint8Array | (() => void)> = [];
   let frame: number | undefined;
   let backstop: number | undefined;
@@ -161,6 +180,11 @@ export function attach(
   };
 
   const enqueue = (item: Uint8Array | (() => void)) => {
+    if (!batched) {
+      if (typeof item === "function") term.write("", item);
+      else term.write(item);
+      return;
+    }
     batch.push(item);
     if (frame !== undefined || backstop !== undefined) return;
     frame = window.requestAnimationFrame?.(flush);

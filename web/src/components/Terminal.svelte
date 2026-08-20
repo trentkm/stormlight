@@ -25,29 +25,29 @@
     onenter?: () => void;
   } = $props();
 
-  /**
-   * The GPU renderer, unless this page was asked to do without it.
-   *
-   * `?gpu=off` on the dashboard URL drops back to the DOM renderer the
-   * wall's cells already use. It is here to settle a question by
-   * reloading rather than rebuilding: the two renderers paint the same
-   * bytes, so anything visible in one and not the other belongs to the
-   * renderer rather than to the stream.
-   */
-  function gpuWanted(): boolean {
+  function flag(name: string, fallback: string): string {
     try {
-      return new URL(window.location.href).searchParams.get("gpu") !== "off";
+      return new URL(window.location.href).searchParams.get(name) ?? fallback;
     } catch {
-      return true;
+      return fallback;
     }
   }
 
+  /**
+   * The renderer, which on this branch is the DOM one by default.
+   *
+   * Both paint the same bytes, so anything visible in one and not the
+   * other belongs to the renderer rather than to the stream — and only
+   * the DOM one leaves what it painted where it can be read, which is
+   * what the probe below needs. `?gpu=on` puts the GPU renderer back.
+   */
+  function gpuWanted(): boolean {
+    return flag("gpu", "off") === "on";
+  }
+
+  /** Armed by default on this branch; `?probe=0` turns it off. */
   function probing(): boolean {
-    try {
-      return new URL(window.location.href).searchParams.get("probe") === "1";
-    } catch {
-      return false;
-    }
+    return flag("probe", "1") !== "0";
   }
 
   /**
@@ -79,6 +79,39 @@
     const samples: Sample[] = [];
     const events: string[] = [];
     const armed = Math.round(performance.now());
+
+    // Written bytes, watched for the two things that decide when a paint
+    // happens: whether output is waiting for one, and whether the
+    // terminal is inside a synchronized update — which is the only
+    // reason xterm has to hold one back. Nothing paints between ?2026h
+    // and ?2026l, by design, so a block that stays open is a screen that
+    // stays frozen.
+    const decoder = new TextDecoder();
+    let pendingSince = 0;
+    let syncDepth = 0;
+    let syncSince = 0;
+    const latencies: number[] = [];
+    const write = built.write.bind(built);
+    built.write = (data: Parameters<Terminal["write"]>[0], done?: () => void) => {
+      const now = performance.now();
+      if (!pendingSince) pendingSince = now;
+      const text = typeof data === "string" ? data : decoder.decode(data);
+      for (const marker of text.matchAll(/\x1b\[\?2026([hl])/g)) {
+        if (marker[1] === "h") {
+          if (syncDepth++ === 0) syncSince = now;
+        } else if (--syncDepth <= 0) {
+          syncDepth = 0;
+          syncSince = 0;
+        }
+      }
+      if (syncSince && now - syncSince > 150) {
+        const held = Math.round(now - syncSince);
+        events.push(`flicker: stuck inside a synchronized update ${held}ms`);
+        console.warn(`flicker: stuck inside a synchronized update ${held}ms — nothing can paint until it closes`);
+        syncSince = now;
+      }
+      return write(data, done);
+    };
     // Said out loud as it happens, so catching one is a matter of
     // watching rather than of calling __flicker() at the right instant.
     let hadContent = false;
@@ -127,8 +160,16 @@
       else if (sample.painted >= 0 && sample.painted <= 2 && held >= 5) {
         note("a paint landed blank", sample);
       }
-      if (previous && sample.t - previous > 200) {
-        note(`the renderer stalled ${sample.t - previous}ms`, sample);
+      // Latency, not silence. A gap between paints means nothing on its
+      // own — an agent that produced nothing has nothing to paint. What
+      // counts is output that waited: the time from the write that
+      // carried it to the paint that showed it.
+      if (pendingSince) {
+        const waited = Math.round(sample.t - pendingSince);
+        latencies.push(waited);
+        if (latencies.length > 6000) latencies.shift();
+        if (waited > 200) note(`output waited ${waited}ms to be painted`, sample);
+        pendingSince = 0;
       }
       previous = sample.t;
     });
@@ -157,8 +198,17 @@
         .map((s, index) => ({ s, gap: index ? s.t - samples[index - 1].t : 0 }))
         .filter((x) => x.gap > 250)
         .slice(0, 10);
+      const waits = [...latencies].sort((a, b) => a - b);
       return {
         events,
+        batching: new URL(window.location.href).searchParams.get("batch") !== "off",
+        paintLatencyMs: waits.length
+          ? {
+              median: waits[Math.floor(waits.length / 2)],
+              p95: waits[Math.floor(waits.length * 0.95)],
+              max: waits[waits.length - 1],
+            }
+          : null,
         renders: samples.length,
         seconds: +((samples[samples.length - 1].t - samples[0].t) / 1000).toFixed(1),
         domRenderer: samples[0].painted >= 0,
