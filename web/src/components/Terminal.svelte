@@ -75,6 +75,11 @@
       rows: number;
       w: number;
       h: number;
+      /** Where the cursor sat when this paint went out. */
+      cx: number;
+      cy: number;
+      /** Which line of the buffer the top of the view was showing. */
+      top: number;
     };
     // Kept on the page rather than in this closure: selecting another
     // agent rebuilds the terminal, and a record that died with it meant
@@ -126,6 +131,7 @@
     let hadContent = false;
     let previous = 0;
     let lastGrid = "";
+    let previousSample: Sample | undefined;
     const note = (what: string, sample: Sample) => {
       const line =
         `flicker: ${what} at t=${sample.t}ms — painted ${sample.painted}, ` +
@@ -157,9 +163,34 @@
         rows: built.rows,
         w: box.offsetWidth,
         h: box.offsetHeight,
+        cx: buffer.cursorX,
+        cy: buffer.cursorY,
+        top: buffer.viewportY,
       };
       samples.push(sample);
       if (samples.length > 6000) samples.shift();
+
+      // The two shapes left, and they are told apart by where things
+      // were when the paint went out rather than by anyone's memory of
+      // what it looked like. A cursor painted at home is the drawing
+      // head caught mid-frame; a view that jumped is the buffer being
+      // cleared underneath it.
+      if (previousSample) {
+        const wasHome = sample.cx === 0 && sample.cy === 0;
+        const cameFromElsewhere =
+          previousSample.cx !== 0 || previousSample.cy !== 0;
+        if (wasHome && cameFromElsewhere) {
+          note(
+            `the cursor was painted at home, from ${previousSample.cx},${previousSample.cy}`,
+            sample,
+          );
+        }
+        const jumped = Math.abs(sample.top - previousSample.top);
+        if (jumped >= 3) {
+          note(`the view jumped ${jumped} lines to ${sample.top}`, sample);
+        }
+      }
+      previousSample = sample;
 
       if (lastGrid && lastGrid !== `${built.cols}x${built.rows}`) {
         note(`the grid changed from ${lastGrid}`, sample);
