@@ -86,43 +86,29 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	go s.pumpInput(ctx, cancel, conn, transport)
 	go keepalive(ctx, cancel, conn)
 
-	// Output goes out as it arrives. No coalescing here: the transport
-	// hands over whole chunks already, and holding one back to merge it
-	// with the next would trade the responsiveness this plane exists for
-	// against nothing.
+	// Output goes out in bursts rather than in reads.
+	//
+	// A repaint is not one read. The PTY hands back whatever its buffer
+	// held when the reader got there, so a program that erases the
+	// screen and redraws it in a single breath still arrives split —
+	// measured on this socket, the message carrying codex's ESC[2J and
+	// the message carrying the redraw behind it land a tenth of a
+	// millisecond apart. Relayed separately, a viewer can paint between
+	// them, and what it paints is the erased screen: the pane blanks and
+	// comes back.
+	//
+	// Nothing downstream can repair that. A client writes a message into
+	// its replica indivisibly, so bytes that share a message are painted
+	// together and bytes that do not, may not be. The atomicity has to
+	// be built here, where the pieces are still adjacent: everything
+	// already queued leaves together, and a brief pause lets the rest of
+	// a repaint catch up. It is what a local terminal gets for free by
+	// draining its fd before it renders.
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case message, ok := <-transport.Output():
-			if ok && message.Resync != nil {
-				// State first: a resync carries its own size, and the
-				// resize branch below would otherwise swallow it.
-				//
-				// This viewer fell behind and the daemon sent state
-				// instead of the bytes it missed — the same shape as the
-				// opening seed, and written by the same function, because
-				// they are the same thing at different moments.
-				if err := writeState(ctx, conn, message); err != nil {
-					return
-				}
-				continue
-			}
-			if ok && message.Resize != nil {
-				// A terminal this viewer shares can be moved by anyone
-				// holding it — the dashboard, a full-screen attach — and
-				// a replica painting at a size nobody else is using is a
-				// diverged replica. The notice travels just ahead of the
-				// repaint that belongs to it.
-				if err := writeControl(ctx, conn, controlMessage{
-					Type: controlResize,
-					Cols: message.Resize.Cols,
-					Rows: message.Resize.Rows,
-				}); err != nil {
-					return
-				}
-				continue
-			}
 			if !ok {
 				// The stream ended — and this layer cannot say why. The
 				// agent may have exited, or the attachment may have ended
@@ -133,11 +119,117 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				_ = conn.Close(websocket.StatusNormalClosure, "stream ended")
 				return
 			}
-			if err := conn.Write(ctx, websocket.MessageBinary, message.Bytes); err != nil {
-				return
+			for pending := &message; pending != nil; {
+				next, err := relay(ctx, conn, transport.Output(), *pending)
+				if err != nil {
+					return
+				}
+				pending = next
 			}
 		}
 	}
+}
+
+// relay writes one delivery and returns whatever ended it, so the caller
+// can write that in turn. Ordering is the contract this whole plane rests
+// on, and this is where it is kept: state and sizes go out on their own,
+// output goes out as the burst it belongs to, and a notice that arrived
+// mid-burst waits for the bytes in front of it.
+func relay(
+	ctx context.Context,
+	conn *websocket.Conn,
+	output <-chan pty.Message,
+	message pty.Message,
+) (*pty.Message, error) {
+	switch {
+	case message.Resync != nil:
+		// State first: a resync carries its own size, and the resize
+		// branch below would otherwise swallow it.
+		//
+		// This viewer fell behind and the daemon sent state instead of
+		// the bytes it missed — the same shape as the opening seed, and
+		// written by the same function, because they are the same thing
+		// at different moments.
+		return nil, writeState(ctx, conn, message)
+	case message.Resize != nil:
+		// A terminal this viewer shares can be moved by anyone holding
+		// it — the dashboard, a full-screen attach — and a replica
+		// painting at a size nobody else is using is a diverged replica.
+		// The notice travels just ahead of the repaint that belongs to
+		// it.
+		return nil, writeControl(ctx, conn, controlMessage{
+			Type: controlResize,
+			Cols: message.Resize.Cols,
+			Rows: message.Resize.Rows,
+		})
+	}
+	burst, next := gatherBurst(ctx, output, message.Bytes)
+	if len(burst) == 0 {
+		return next, nil
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, burst); err != nil {
+		return nil, err
+	}
+	return next, nil
+}
+
+const (
+	// burstQuiet is how long output waits for the rest of its repaint.
+	// The pieces of one arrive a fraction of a millisecond apart, so this
+	// is far longer than the gap inside a repaint and far shorter than
+	// the gap a person can see.
+	burstQuiet = 3 * time.Millisecond
+	// burstCap bounds that wait, so a stream that never falls quiet
+	// reaches the viewer on time rather than being held for a pause that
+	// is not coming.
+	burstCap = 16 * time.Millisecond
+	// burstBytes bounds one message. A repaint is kilobytes; this is the
+	// backstop for a program dumping a file, where atomicity buys nothing
+	// and holding megabytes costs.
+	burstBytes = 256 << 10
+)
+
+// gatherBurst collects consecutive output into one message, stopping at
+// the first pause, at the cap, or at a notice that has to be written on
+// its own — which it hands back rather than swallowing.
+func gatherBurst(
+	ctx context.Context,
+	output <-chan pty.Message,
+	first []byte,
+) (burst []byte, next *pty.Message) {
+	burst = append(make([]byte, 0, len(first)), first...)
+	quiet := time.NewTimer(burstQuiet)
+	defer quiet.Stop()
+	deadline := time.NewTimer(burstCap)
+	defer deadline.Stop()
+	for len(burst) < burstBytes {
+		select {
+		case <-ctx.Done():
+			return burst, nil
+		case message, ok := <-output:
+			if !ok {
+				return burst, nil
+			}
+			if message.Resync != nil || message.Resize != nil {
+				held := message
+				return burst, &held
+			}
+			burst = append(burst, message.Bytes...)
+			// Stopped before reset, and drained if it had already fired:
+			// a timer reset with its value still in the channel fires at
+			// once, which would end every burst at its first chunk and
+			// put this right back where it started.
+			if !quiet.Stop() {
+				<-quiet.C
+			}
+			quiet.Reset(burstQuiet)
+		case <-quiet.C:
+			return burst, nil
+		case <-deadline.C:
+			return burst, nil
+		}
+	}
+	return burst, nil
 }
 
 // pumpInput carries the client's keystrokes and resizes to the terminal.

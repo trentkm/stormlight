@@ -24,16 +24,48 @@
      *  decides whether that becomes a walk-in; this only asks. */
     onenter?: () => void;
   } = $props();
+  /**
+   * How long a pane's geometry has to hold still before it is asserted.
+   *
+   * Long enough that a drag lands one resize rather than one per frame,
+   * short enough that letting go feels like it took.
+   */
+  const settleDelay = 120;
 
   let host: HTMLDivElement;
   let connection = $state<Connection>("live");
   let term = $state<Terminal>();
 
+  /**
+   * The agent this pane is bound to, held as a value rather than read
+   * through the prop.
+   *
+   * `agentID` arrives as a getter over `selected().id`, and every roster
+   * push re-proxies every agent — so reading it inside the effect below
+   * makes that effect depend on the roster rather than on the identity
+   * it names. The value never changes; the thing it was read through
+   * does, once a poll.
+   *
+   * What that cost: the terminal was disposed and rebuilt at the
+   * roster's cadence. A fresh socket, a fresh seed, and a replica
+   * rebuilt from nothing — which is the view landing on the first line
+   * of an empty buffer and snapping back a moment later, about once a
+   * second. Worst for the providers that change something every tick;
+   * codex animates its terminal title, and the title is in the roster.
+   *
+   * A $derived settles it. Its value is compared before anything
+   * downstream is disturbed, and the same string disturbs nothing.
+   * AgentScreen takes a plain string prop for the same reason, and says
+   * so; this is that guard, for the pane the wall's cells borrowed it
+   * from.
+   */
+  const boundID = $derived(agentID);
+
   $effect(() => {
     // Re-runs when the selected agent changes: one terminal per agent,
     // torn down and rebuilt rather than re-pointed, so no state from the
     // last one survives into the next.
-    const id = agentID;
+    const id = boundID;
     if (!id || !host) return;
 
     const built = new Terminal({
@@ -87,7 +119,7 @@
     term = built;
     try {
       // The GPU renderer is what makes many live terminals affordable.
-      // It is not available everywhere, and the canvas fallback is fine.
+      // It is not available everywhere, and the DOM fallback is fine.
       built.loadAddon(new WebglAddon());
     } catch {
       // Fallback renderer; nothing to do.
@@ -103,10 +135,26 @@
       laidOut,
       (state) => (connection = state),
     );
-    const observer = new ResizeObserver(() => attachment?.fit());
+    // A layout still in motion is not a size worth asserting.
+    //
+    // The observer fires on every intermediate width — a window being
+    // dragged, the rail and roster folding away under zoom — and this
+    // terminal is shared, so each size named here reflows the replica
+    // and makes the agent repaint for every viewer. Codex clears the
+    // screen and its scrollback outside its synchronized-update block
+    // when it does, so each one is a pane that blanks and comes back.
+    // Waiting for the layout to settle turns a drag from a flash per
+    // frame into a flash per resize, which is the one a terminal
+    // genuinely owes you.
+    let settle: number | undefined;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => attachment?.fit(), settleDelay);
+    });
     observer.observe(host);
 
     return () => {
+      window.clearTimeout(settle);
       observer.disconnect();
       attachment?.close();
       attachment = undefined;

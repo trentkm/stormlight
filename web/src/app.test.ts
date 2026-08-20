@@ -9,6 +9,7 @@
 // whole focus reconciliation with the suite still green.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
+import { stubCanvas } from "./test-canvas";
 
 vi.mock("./lib/api", () => ({
   claimToken: () => true,
@@ -126,6 +127,7 @@ function selected(): string {
 }
 
 beforeEach(() => {
+  stubCanvas();
   fleet.agents = [agent("alpha"), agent("beta"), agent("gamma")];
   fleet.selectedID = "alpha";
   fleet.workspaceID = "";

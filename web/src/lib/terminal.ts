@@ -28,6 +28,54 @@ const minRows = 4;
 const retryFloor = 500;
 const retryCeiling = 10_000;
 
+/**
+ * The backstop for the batch below, in milliseconds.
+ *
+ * A frame is the cadence that matters, and in a tab being painted the
+ * frame always wins this — which is the point of the gap. A hidden tab
+ * is served no frames at all, though, and a replica that simply stopped
+ * applying output would be stale when the tab came back, having held
+ * every unapplied byte until then. The timer is what drains that tab;
+ * the browser throttles it to about a second, which bounds what a hidden
+ * tab holds without ever pacing a visible one.
+ */
+const batchBackstop = 250;
+
+/**
+ * RIS, as bytes, so it batches with the output around it rather than
+ * breaking the run into two writes.
+ */
+const reset = new Uint8Array([0x1b, 0x63]);
+
+/**
+ * DECSET 2026, begin and end: the terminal is told to hold its paint
+ * until the whole thing has landed.
+ *
+ * Rebuilding a replica is a reset followed by a screen and everything
+ * that scrolled off above it, and that is far more than a parser gets
+ * through before it yields to let the renderer run. Painted halfway, the
+ * reset has happened and the history has not: an empty buffer, the view
+ * at its first line, and a pane that appears to leap to the top and back
+ * a moment later. Wrapped, there is no halfway to paint — the same
+ * mechanism the agents themselves use to keep a frame from being seen
+ * half drawn.
+ */
+const beginSync = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68]);
+const endSync = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c]);
+
+/** rebuild is state to replace a replica with, made unpaintable-halfway. */
+function rebuild(state: Uint8Array): Uint8Array {
+  const whole = new Uint8Array(
+    beginSync.length + reset.length + state.length + endSync.length,
+  );
+  let at = 0;
+  for (const part of [beginSync, reset, state, endSync]) {
+    whole.set(part, at);
+    at += part.length;
+  }
+  return whole;
+}
+
 function usable(cols: number, rows: number): boolean {
   return cols >= minCols && rows >= minRows;
 }
@@ -81,6 +129,72 @@ export function attach(
   let retry = retryFloor;
   let retryTimer: number | undefined;
   let closed = false;
+
+  /**
+   * Output reaches xterm one batch per frame, never one write per
+   * message.
+   *
+   * A busy agent sends output in hundreds of small messages a second,
+   * and handing each one to term.write() from the message handler
+   * starves the renderer: the replica keeps parsing — its buffer stays
+   * current — while the screen stops repainting entirely, then snaps
+   * forward when the agent goes quiet. That blank-and-catch-up is the
+   * flash you see while an agent is working, and it is a scheduling
+   * problem rather than a throughput one: the same bytes, delivered in
+   * one batch per frame, paint continuously.
+   *
+   * A batch is a queue rather than a buffer because not everything in it
+   * is bytes. A resize has to land behind the output it follows (see the
+   * resize notice below), so it rides the same queue as a callback on
+   * the write in front of it — which is what keeps a repaint from being
+   * reflowed by a size that belongs after it.
+   */
+  let batch: Array<Uint8Array | (() => void)> = [];
+  let frame: number | undefined;
+  let backstop: number | undefined;
+
+  const flush = () => {
+    if (frame !== undefined) window.cancelAnimationFrame?.(frame);
+    window.clearTimeout(backstop);
+    frame = backstop = undefined;
+    const queued = batch;
+    batch = [];
+    let run: Uint8Array[] = [];
+    let size = 0;
+    // One write per run of bytes, and the run ends where an action has to
+    // be ordered against it.
+    const writeRun = (done?: () => void) => {
+      if (size === 0) {
+        if (done) term.write("", done);
+        return;
+      }
+      const joined = new Uint8Array(size);
+      let at = 0;
+      for (const chunk of run) {
+        joined.set(chunk, at);
+        at += chunk.length;
+      }
+      run = [];
+      size = 0;
+      term.write(joined, done);
+    };
+    for (const item of queued) {
+      if (typeof item === "function") {
+        writeRun(item);
+        continue;
+      }
+      run.push(item);
+      size += item.length;
+    }
+    writeRun();
+  };
+
+  const enqueue = (item: Uint8Array | (() => void)) => {
+    batch.push(item);
+    if (frame !== undefined || backstop !== undefined) return;
+    frame = window.requestAnimationFrame?.(flush);
+    backstop = window.setTimeout(flush, batchBackstop);
+  };
 
   const open = () => {
     if (closed) return;
@@ -149,7 +263,7 @@ export function attach(
           // guarded, because the queue it waits in is not drained by
           // dispose(): switching agents inside that window would resize a
           // terminal that no longer exists.
-          term.write("", () => {
+          enqueue(() => {
             if (closed) return;
             term.resize(cols, rows);
           });
@@ -168,14 +282,21 @@ export function attach(
       const bytes = new Uint8Array(event.data as ArrayBuffer);
       if (replacing) {
         replacing = false;
-        // RIS through the write queue rather than term.reset(), which is
+        // The reset rides with the state it precedes, in one write, held
+        // behind a synchronized update.
+        //
+        // Through the write queue rather than term.reset(), which is
         // synchronous: bytes already handed to write() but not yet parsed
         // would land on the fresh screen after the reset — the doubled
         // screen this exists to prevent, on the one path where there is
-        // certain to be output in flight.
-        term.write("\x1bc");
+        // certain to be output in flight. And wrapped, because a replica
+        // is rebuilt often enough — every attach, and every resync of a
+        // viewer that fell behind — that a half-drawn one is the flicker
+        // rather than a curiosity.
+        enqueue(rebuild(bytes));
+        return;
       }
-      term.write(bytes);
+      enqueue(bytes);
     };
 
     // The socket ends for reasons this side cannot tell apart: the agent
@@ -235,6 +356,13 @@ export function attach(
     close() {
       closed = true;
       window.clearTimeout(retryTimer);
+      // Nothing queued outlives the terminal it was queued for: the
+      // batch is dropped rather than flushed, because the flush would
+      // write into an emulator this pane is about to dispose.
+      if (frame !== undefined) window.cancelAnimationFrame?.(frame);
+      window.clearTimeout(backstop);
+      frame = backstop = undefined;
+      batch = [];
       input.dispose();
       binary.dispose();
       if (socket) {

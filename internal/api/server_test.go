@@ -1092,3 +1092,113 @@ func TestAgentDiff(t *testing.T) {
 		t.Errorf("diff missing the edit:\n%s", diff)
 	}
 }
+
+// A repaint reaches the PTY as one write and comes back as several
+// reads. Relayed one read per message, a viewer can paint between two of
+// them, and what it paints is the screen that has been erased and not
+// yet redrawn. These pin the gathering that stops it.
+func TestBurstGathersOneRepaintIntoOneMessage(t *testing.T) {
+	output := make(chan pty.Message, 8)
+	// The shape measured off a real codex resize: the erase and the
+	// redraw behind it, a fraction of a millisecond apart.
+	output <- pty.Message{Bytes: []byte("\x1b[2J")}
+	output <- pty.Message{Bytes: []byte("\x1b[?2026h")}
+	output <- pty.Message{Bytes: []byte("the screen, redrawn")}
+
+	burst, next := gatherBurst(context.Background(), output, []byte("\x1b[H"))
+
+	if next != nil {
+		t.Fatalf("nothing was held back, but got %+v", next)
+	}
+	want := "\x1b[H\x1b[2J\x1b[?2026hthe screen, redrawn"
+	if got := string(burst); got != want {
+		t.Fatalf("burst is %q, want the whole repaint %q", got, want)
+	}
+}
+
+func TestBurstEndsAtAPause(t *testing.T) {
+	output := make(chan pty.Message, 4)
+	output <- pty.Message{Bytes: []byte("this repaint")}
+	go func() {
+		// Long after the repaint it belongs to. Holding the first one for
+		// it would be latency bought for nothing.
+		time.Sleep(burstQuiet * 6)
+		output <- pty.Message{Bytes: []byte("the next one")}
+	}()
+
+	burst, next := gatherBurst(context.Background(), output, []byte("start "))
+
+	if next != nil {
+		t.Fatalf("nothing was held back, but got %+v", next)
+	}
+	if got, want := string(burst), "start this repaint"; got != want {
+		t.Fatalf("burst is %q, want %q — the pause should have ended it", got, want)
+	}
+}
+
+// A size is not output, and it has to land between the bytes it was
+// wrapped for and the bytes that follow. Swallowed into a burst it would
+// be lost; written ahead of one it would reflow the wrong repaint.
+func TestBurstHandsBackANoticeRatherThanSwallowingIt(t *testing.T) {
+	output := make(chan pty.Message, 4)
+	output <- pty.Message{Bytes: []byte("wrapped for the old size")}
+	output <- pty.Message{Resize: &pty.Size{Cols: 80, Rows: 24}}
+	output <- pty.Message{Bytes: []byte("painted for the new one")}
+
+	burst, next := gatherBurst(context.Background(), output, nil)
+
+	if got, want := string(burst), "wrapped for the old size"; got != want {
+		t.Fatalf("burst is %q, want %q — the notice should have ended it", got, want)
+	}
+	if next == nil || next.Resize == nil {
+		t.Fatalf("the resize was swallowed: %+v", next)
+	}
+	if next.Resize.Cols != 80 || next.Resize.Rows != 24 {
+		t.Fatalf("handed back %+v, want 80x24", next.Resize)
+	}
+}
+
+// A stream that never falls quiet must still reach the viewer. Waiting
+// for a pause that is not coming is how coalescing becomes lag.
+func TestBurstIsCappedByTheDeadline(t *testing.T) {
+	output := make(chan pty.Message)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case output <- pty.Message{Bytes: []byte("x")}:
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	start := time.Now()
+	burst, _ := gatherBurst(context.Background(), output, nil)
+	elapsed := time.Since(start)
+
+	if elapsed > burstCap*4 {
+		t.Fatalf("gathering ran %s, well past the %s cap", elapsed, burstCap)
+	}
+	if len(burst) == 0 {
+		t.Fatal("a capped burst carried nothing")
+	}
+}
+
+// Whatever was gathered is still worth sending: those bytes are the last
+// thing this viewer will ever see of the agent.
+func TestBurstKeepsWhatItHasWhenTheStreamEnds(t *testing.T) {
+	output := make(chan pty.Message, 2)
+	output <- pty.Message{Bytes: []byte("the last thing it said")}
+	close(output)
+
+	burst, next := gatherBurst(context.Background(), output, []byte("before: "))
+
+	if next != nil {
+		t.Fatalf("nothing was held back, but got %+v", next)
+	}
+	if got, want := string(burst), "before: the last thing it said"; got != want {
+		t.Fatalf("burst is %q, want %q", got, want)
+	}
+}

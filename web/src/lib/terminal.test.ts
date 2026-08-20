@@ -110,11 +110,35 @@ function setup(options: { laidOut?: boolean; watching?: boolean } = {}) {
     layout,
     measures,
     socket: () => FakeSocket.live.at(-1)!,
+    /**
+     * What a frame does: hands xterm the batch this tab collected, then
+     * runs the write queue xterm would have run. Output does not reach
+     * the emulator any other way — one batch per frame is what keeps a
+     * chatty agent from starving the renderer.
+     */
+    paint() {
+      runFrames();
+      term.drain();
+    },
   };
+}
+
+/**
+ * The frames this tab is served, run by hand. A real browser serves them
+ * about sixty times a second and a hidden tab not at all, and the
+ * difference is exactly what the batch below has to survive.
+ */
+let frames: Array<(() => void) | undefined> = [];
+
+function runFrames() {
+  const pending = frames;
+  frames = [];
+  for (const frame of pending) frame?.();
 }
 
 beforeEach(() => {
   FakeSocket.live = [];
+  frames = [];
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal("sessionStorage", {
     getItem: () => "test-token",
@@ -125,6 +149,8 @@ beforeEach(() => {
     location: { href: "http://127.0.0.1:7331/", origin: "http://127.0.0.1:7331" },
     setTimeout: (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms),
     clearTimeout: (id: number) => globalThis.clearTimeout(id),
+    requestAnimationFrame: (fn: () => void) => frames.push(fn),
+    cancelAnimationFrame: (id: number) => (frames[id - 1] = undefined),
     history: { replaceState: () => {} },
   });
   vi.useFakeTimers();
@@ -157,7 +183,7 @@ describe("state and output", () => {
   // was wrapped for. The size arrives just ahead of the state, and the
   // replica has to be that size before those bytes land in it.
   test("a seed is sized before it is painted", () => {
-    const { term, socket } = setup({ laidOut: false });
+    const { term, socket, paint } = setup({ laidOut: false });
     socket().open();
 
     // Output first, so the size has something to be ordered against: a
@@ -167,40 +193,60 @@ describe("state and output", () => {
     socket().deliverControl({ type: "resize", cols: 132, rows: 43 });
     socket().deliverControl({ type: "seed" });
     socket().deliverBytes("wrapped for 132 columns");
-    term.drain();
+    paint();
 
+    // The reset and the state behind it are one write because they
+    // arrived in one frame; the size still splits the batch, because it
+    // has to land between the two.
     expect(term.calls).toEqual([
       'write:"from the old size"',
       "resize:132x43",
-      'write:"\\u001bc"',
-      'write:"wrapped for 132 columns"',
+      'write:"\\u001b[?2026h\\u001bcwrapped for 132 columns\\u001b[?2026l"',
+    ]);
+  });
+
+  // Rebuilding a replica is a reset and then everything the terminal
+  // holds, which is more than a parser gets through before it yields to
+  // the renderer. Painted halfway it is an empty buffer with the view at
+  // its first line — the pane leaping to the top and back.
+  test("a rebuilt replica cannot be painted half-drawn", () => {
+    const { term, socket, paint } = setup();
+    socket().open();
+    socket().deliverControl({ type: "seed" });
+    socket().deliverBytes("scrollback, screen and cursor");
+    paint();
+
+    expect(term.calls).toEqual([
+      // One write, and nothing can paint between its first byte and its
+      // last: the reset, the state, and the markers that hold the paint.
+      'write:"\\u001b[?2026h\\u001bcscrollback, screen and cursor\\u001b[?2026l"',
     ]);
   });
 
   test("a seed replaces the replica rather than extending it", () => {
-    const { term, socket } = setup();
+    const { term, socket, paint } = setup();
     socket().open();
     socket().deliverBytes("first output");
+    paint();
     socket().deliverControl({ type: "seed" });
     socket().deliverBytes("exact state");
-    term.drain();
+    paint();
 
     expect(term.calls).toEqual([
       'write:"first output"',
       // RIS through the write queue, so bytes already queued are parsed
       // before the reset rather than after it.
-      'write:"\\u001bc"',
-      'write:"exact state"',
+      'write:"\\u001b[?2026h\\u001bcexact state\\u001b[?2026l"',
     ]);
   });
 
   test("a resize is applied behind the output that preceded it", () => {
-    const { term, socket } = setup();
+    const { term, socket, paint } = setup();
     socket().open();
     socket().deliverBytes("wrapped for the old width");
     socket().deliverControl({ type: "resize", cols: 80, rows: 24 });
     socket().deliverBytes("painted for the new one");
-    term.drain();
+    paint();
 
     // The size lands between the two, not before both: the repaint that
     // belongs to it is the output behind it, and the output ahead of it
@@ -213,18 +259,73 @@ describe("state and output", () => {
   });
 });
 
+/**
+ * The renderer is the scarce thing, not the parser. A busy agent sends
+ * hundreds of small messages a second, and a client that wrote each one
+ * as it arrived kept the replica's buffer perfectly current while the
+ * screen stopped repainting — blank until the agent went quiet, then a
+ * jump to the present. That is the flash; this is what stops it.
+ */
+describe("batching output", () => {
+  test("a burst of messages is one write, on the next frame", () => {
+    const { term, socket, paint } = setup();
+    socket().open();
+
+    for (let index = 0; index < 5; index++) {
+      socket().deliverBytes(`chunk ${index} `);
+    }
+    // Nothing yet: the messages arrived between frames, and handing each
+    // one to the terminal as it landed is the thing being fixed.
+    term.drain();
+    expect(term.calls).toEqual([]);
+
+    paint();
+    expect(term.calls).toEqual([
+      'write:"chunk 0 chunk 1 chunk 2 chunk 3 chunk 4 "',
+    ]);
+  });
+
+  // A hidden tab is served no frames at all. Without this it would hold
+  // every byte until it was looked at again — a replica that is both
+  // stale and unboundedly large.
+  test("a tab served no frames still drains, on a timer", () => {
+    const { term, socket } = setup();
+    socket().open();
+
+    socket().deliverBytes("output while nobody is looking");
+    vi.advanceTimersByTime(300);
+    term.drain();
+
+    expect(term.calls).toEqual(['write:"output while nobody is looking"']);
+  });
+
+  // Both are armed together, so the one that does not win has to be
+  // called off — or the batch after it would be written twice.
+  test("a frame and its backstop deliver a batch once", () => {
+    const { term, socket, paint } = setup();
+    socket().open();
+
+    socket().deliverBytes("said once");
+    paint();
+    vi.advanceTimersByTime(1000);
+    term.drain();
+
+    expect(term.calls).toEqual(['write:"said once"']);
+  });
+});
+
 describe("size negotiation", () => {
   // The daemon's size is the daemon's fact. Treating it as someone
   // else's leaves the next fit() measuring the same grid, comparing it
   // to a stale record, and snapping the replica back to a size nobody
   // else is using.
   test("a size pushed by the daemon is not argued with", () => {
-    const { term, attachment, socket } = setup();
+    const { attachment, socket, paint } = setup();
     socket().open();
     socket().sent.length = 0;
 
     socket().deliverControl({ type: "resize", cols: 80, rows: 24 });
-    term.drain();
+    paint();
     attachment.fit();
 
     expect(socket().sent).toEqual([]);
@@ -341,17 +442,16 @@ describe("watching", () => {
   });
 
   test("still paints what the terminal sends", () => {
-    const { term, socket } = setup({ watching: true });
+    const { term, socket, paint } = setup({ watching: true });
     socket().open();
     socket().deliverControl({ type: "resize", cols: 132, rows: 43 });
     socket().deliverControl({ type: "seed" });
     socket().deliverBytes("what this agent is doing");
-    term.drain();
+    paint();
 
     expect(term.calls).toEqual([
       "resize:132x43",
-      'write:"\\u001bc"',
-      'write:"what this agent is doing"',
+      'write:"\\u001b[?2026h\\u001bcwhat this agent is doing\\u001b[?2026l"',
     ]);
   });
 });
@@ -420,17 +520,22 @@ describe("losing the connection", () => {
   });
 
   test("closing marks the attachment closed, not just the socket", () => {
-    const { term, attachment, socket } = setup();
+    const { term, attachment, socket, paint } = setup();
     socket().open();
 
-    // A resize the daemon pushed, still waiting in the write queue when
-    // the pane goes away. Draining it afterwards must not reach a
-    // terminal that has been disposed.
+    // A resize the daemon pushed, handed to xterm and still waiting in
+    // its write queue when the pane goes away. Draining it afterwards
+    // must not reach a terminal that has been disposed.
     socket().deliverControl({ type: "resize", cols: 80, rows: 24 });
+    runFrames();
     attachment.close();
     term.calls.length = 0;
     term.drain();
 
+    expect(term.calls).toEqual([]);
+    // And a batch that never reached xterm at all is dropped rather than
+    // flushed into a terminal that is going away.
+    paint();
     expect(term.calls).toEqual([]);
   });
 

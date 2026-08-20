@@ -166,6 +166,51 @@ import time passes here and fails there. Reproduce the runner with:
 NODE_OPTIONS=--no-experimental-webstorage npm --prefix web test
 ```
 
+### Never read an agent through the roster in an effect
+
+The server pushes the whole roster whenever any part of it changes, and
+`fleet.agents` is replaced wholesale each time — so every agent object is
+a new proxy several times a second. A prop written `agent.id` therefore
+reaches a component as a *getter* whose dependency is that proxy, and an
+effect that reads it depends on the roster rather than on the identity it
+names. The value never changes. The thing it was read through does, on
+every poll.
+
+The cost is not subtle. The terminal pane cost one whole terminal per
+poll: disposed and rebuilt, which is a new socket, a new seed, and a
+replica rebuilt from nothing — the view landing on the first line of an
+empty buffer and snapping back, about once a second. It read as flicker
+and it took a long time to find, because nothing about the rendered rows
+was ever wrong; only which rows were on screen.
+
+So hold the identity apart from the object it came from, at the top of
+the component:
+
+```svelte
+const id = $derived(agent.id);   // compared by value; the same string
+                                 // disturbs nothing downstream
+```
+
+`WallCell` and `CanvasTile` have always done this. `Terminal` did not,
+which is exactly why the wall stayed steady while the roster's pane
+flickered. `web/src/components/terminal.test.ts` pins it: a push that
+renames nothing must leave the terminal alone.
+
+The general rule: anything long-lived that an effect builds — a socket,
+an emulator, an observer — must key on a value, never on something read
+through a roster object.
+
+### Terminals are rebuilt whole or not at all
+
+Replacing a replica is a reset followed by the screen and everything
+scrolled off above it, which is far more than xterm's parser gets through
+before it yields to the renderer. Painted halfway it is an empty buffer
+with the view on its first line. Any write that replaces the terminal's
+state is wrapped in a synchronized update (`ESC[?2026h` … `ESC[?2026l`)
+so there is no halfway to paint — the same mechanism the agents use on
+their own frames. Codex leans on it hard and Claude Code less so, which
+is why codex flickered far worse than anything else.
+
 
 ## Releasing
 

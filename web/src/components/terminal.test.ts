@@ -63,7 +63,9 @@ const { FakeTerminal } = vi.hoisted(() => {
       this.helper.blur();
     }
     loadAddon() {}
+    disposed = false;
     dispose() {
+      this.disposed = true;
       FakeTerminal.live = FakeTerminal.live.filter((term) => term !== this);
     }
   }
@@ -118,6 +120,39 @@ function show(props: { agentID: string; focused: boolean }) {
   };
   leaked.push(close);
   return { props: reactiveProps, close };
+}
+
+/**
+ * A roster push, as the component sees one.
+ *
+ * `agentID` reaches this component as `agent.id`, where `agent` is
+ * derived from the roster — so the prop is a getter whose dependency is
+ * replaced every poll while the string it returns never changes. This is
+ * that shape: a new agent object, the same id.
+ */
+function showThroughRoster(id: string) {
+  const roster = reactive({ agents: [{ id }] });
+  const props = {
+    get agentID() {
+      return roster.agents[0].id;
+    },
+    focused: false,
+    onenter: () => {},
+  };
+  const target = document.createElement("div");
+  document.body.append(target);
+  const term = mount(Terminal, { target, props });
+  flushSync();
+  leaked.push(() => {
+    unmount(term);
+    target.remove();
+  });
+  return {
+    push: (pushed: string) => {
+      roster.agents = [{ id: pushed }];
+      flushSync();
+    },
+  };
 }
 
 function click() {
@@ -286,5 +321,50 @@ describe("who holds the keyboard", () => {
     expect(focusedElement().inTerminal).toBe(false);
     expect(term.blurs).toBeGreaterThan(0);
     close();
+  });
+});
+
+/**
+ * The bug this pins cost a terminal per roster poll.
+ *
+ * Reading the prop inside the effect made the effect depend on the
+ * roster rather than on the identity the roster named: every push
+ * disposed the terminal and built another, which is a fresh socket, a
+ * fresh seed, and a replica rebuilt from nothing — the pane landing on
+ * the first line of an empty buffer and snapping back, about once a
+ * second. It showed up worst under the providers that change something
+ * every tick; codex animates its terminal title, and the title is in
+ * the roster.
+ *
+ * The wall's cells were never affected, because they hold the id apart
+ * from the object it came from and say why. This is the same guard.
+ */
+describe("the roster's cadence", () => {
+  test("a push that renames nothing leaves the terminal alone", () => {
+    const { push } = showThroughRoster("agent-one");
+    expect(FakeTerminal.live).toHaveLength(1);
+    const built = FakeTerminal.live[0];
+
+    // Three polls, each re-proxying the agent, none of them renaming it.
+    push("agent-one");
+    push("agent-one");
+    push("agent-one");
+
+    expect(FakeTerminal.live).toHaveLength(1);
+    expect(FakeTerminal.live[0]).toBe(built);
+    expect(built.disposed).toBe(false);
+  });
+
+  test("a push that names a different agent builds a new terminal", () => {
+    const { push } = showThroughRoster("agent-one");
+    const first = FakeTerminal.live[0];
+
+    push("agent-two");
+
+    // The old one is gone and a new one stands in its place: one
+    // terminal per agent, torn down rather than re-pointed.
+    expect(first.disposed).toBe(true);
+    expect(FakeTerminal.live).toHaveLength(1);
+    expect(FakeTerminal.live[0]).not.toBe(first);
   });
 });
