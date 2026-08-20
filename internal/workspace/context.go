@@ -14,6 +14,15 @@ const (
 )
 
 // Context describes the workspace grouping and execution boundary for an agent.
+//
+// Every path on it is canonical by the time anyone reads one. normalize
+// puts Root, ExecutionRoot and ComponentRoot through a single canonical
+// form on the way in — symlinks resolved against the filesystem that owns
+// them for a local workspace, cleaned for a remote one, where no local
+// stat could say anything true. That is what makes them comparable with
+// ==, and it is the reason no consumer needs to resolve them again: doing
+// so downstream would be redundant work on the local path and an answer
+// about the wrong machine on the remote one.
 type Context struct {
 	// Host names the machine this workspace is on; empty means this one.
 	// It belongs to identity rather than decoration: two machines can

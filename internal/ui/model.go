@@ -353,6 +353,35 @@ type Model struct {
 	// async open/exit messages to the opening they belong to.
 	overlay           *overlayView
 	overlayGeneration int
+
+	// holdFrame says the message just handled changed nothing that is
+	// drawn, so View may answer with the frame it built last time
+	// instead of building another. Update clears it before every
+	// message; only a handler that knows its work is invisible sets it.
+	//
+	// The wheel is why it exists. Bubble Tea renders after every Update,
+	// and a trackpad flick is thousands of them — each one rebuilding
+	// every pane, every row and every band to arrive at the picture
+	// already on screen, while the keys pressed afterwards waited behind
+	// the pile. A wheel tick moves nothing on its own: the replica scroll
+	// is applied by the coalesced flush a frame later, and a tick
+	// forwarded to a mouse-aware agent comes back as terminal output on
+	// the gate's cadence. Either way the honest answer is the last frame.
+	holdFrame bool
+	// frame is that last frame. It is a pointer because View has a value
+	// receiver over a model the event loop throws away, and because every
+	// copy of a Model is the same dashboard — the terminal herd is held
+	// the same way. Only the event loop touches it: Bubble Tea renders on
+	// the goroutine it updates on.
+	frame *frame
+}
+
+// frame is the dashboard as View last built it. builds counts how many
+// times that happened, which is the measurable form of the bound this
+// whole mechanism exists to keep — see TestWheelBurstBuildsOneFrame.
+type frame struct {
+	content string
+	builds  int
 }
 
 // machineChoices is the Remote tab's rows: what the SSH configuration
@@ -522,6 +551,7 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		machines:           machineChoices(options.Hosts),
 		checkHost:          options.CheckHost,
 		hostInput:          newLineInput("user@host"),
+		frame:              &frame{},
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -546,6 +576,10 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	// Every message repaints unless the handler that takes it says
+	// otherwise, so the exemption has to be re-earned each time rather
+	// than inherited from the message before.
+	m.holdFrame = false
 	if m.ptyEnabled && m.ptyManager != nil {
 		// The coalesced wheel tick goes to the terminal that scheduled
 		// it — selection may have moved since; an unrouted tick would
@@ -840,7 +874,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// the same shape Send uses — never a burst of keystrokes.
 			if widget, ok := m.selectedPTY(); ok {
 				widget.ScrollToBottom()
-				return m, writeTerminalCmd(widget,
+				writeTerminal(widget,
 					[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
 			}
 			return m, nil
@@ -848,8 +882,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.overlay != nil {
 			// Bracketed paste, so a multi-line paste lands in the hosted
 			// program as one paste rather than a burst of keys.
-			return m, writeTerminalCmd(m.overlay.widget,
+			writeTerminal(m.overlay.widget,
 				[]byte("\x1b[200~"+msg.Content+"\x1b[201~"))
+			return m, nil
 		}
 		return m.updatePaste(msg)
 
@@ -970,10 +1005,27 @@ func (m Model) View() tea.View {
 		return view
 	}
 
+	// A held frame is exactly one message old — Bubble Tea renders after
+	// every Update it runs — so reusing it shows what the last message
+	// left on screen, which is what the held message did not change. The
+	// cursor is asked for again rather than kept: it costs a lookup, and
+	// it is where the agent's program put it, not where this frame was
+	// built.
+	if m.holdFrame && m.frame != nil && m.frame.content != "" {
+		view.SetContent(m.frame.content)
+		view.Cursor = m.ptyCursor()
+		return view
+	}
+
 	header := m.renderHeader()
 	body := m.renderBody()
 	footer := m.renderFooter()
-	view.SetContent(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	content := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if m.frame != nil {
+		m.frame.content = content
+		m.frame.builds++
+	}
+	view.SetContent(content)
 	// The real terminal cursor sits where the agent's program put it —
 	// the Spanreed is the terminal, not a picture of one.
 	view.Cursor = m.ptyCursor()

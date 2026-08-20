@@ -162,7 +162,8 @@ func (m Model) updateOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if len(data) == 0 {
 		return m, nil
 	}
-	return m, writeTerminalCmd(m.overlay.widget, data)
+	writeTerminal(m.overlay.widget, data)
+	return m, nil
 }
 
 // cancelOverlay tears the popup down without an answer: the session dies
@@ -372,6 +373,18 @@ func choiceKey(host, path string) string {
 	return host + "\x00" + directoryKey(path)
 }
 
+// evalSymlinks is the one place this package walks a path against the
+// filesystem, named so a test can watch it. Nothing on the render path may
+// reach it: a dashboard frame is built for every message the event loop
+// takes, so an lstat chain in there turns a trackpad flick into thousands
+// of syscalls and starves every later key of its turn. See
+// TestRenderingAnAgentTouchesNoSymlinks.
+var evalSymlinks = filepath.EvalSymlinks
+
+// directoryKey is the comparable form of a path someone typed or a picker
+// returned — an answer about this machine's filesystem, and so a question
+// only the forms ask. Paths that arrive on a workspace.Context are already
+// canonical and compare with ==; see that type.
 func directoryKey(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -381,7 +394,7 @@ func directoryKey(path string) string {
 	if err == nil {
 		path = absolute
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := evalSymlinks(path)
 	if err == nil {
 		path = resolved
 	}

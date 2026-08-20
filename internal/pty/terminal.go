@@ -3,6 +3,7 @@ package pty
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/url"
 	"strings"
@@ -13,13 +14,28 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
+	"github.com/trentkm/stormlight/internal/diagnostic"
 )
 
 const (
 	framePeriod       = 33 * time.Millisecond
 	scrollBurstPeriod = framePeriod
 	DefaultScrollback = 2000
+	// writeQueue is how many unsent chunks a terminal will hold for a
+	// transport that is not draining them. It is the same order as the
+	// stream buffer in the other direction, and it is the whole of the
+	// backpressure: input is produced by a human at a keyboard or a
+	// trackpad, so a queue this deep is only ever reached by a transport
+	// that has stopped moving.
+	writeQueue = 256
 )
+
+// ErrWriteQueueFull is a write refused because the terminal already holds
+// writeQueue chunks the transport has not taken. Refusing is the point:
+// the alternative to a bounded queue is a goroutine per keystroke waiting
+// on a socket that is not answering, which is how a stalled attachment
+// used to take the whole dashboard with it.
+var ErrWriteQueueFull = errors.New("terminal write queue is full")
 
 var lastID atomic.Int64
 
@@ -118,6 +134,17 @@ type state struct {
 	// guarded by mu.
 	view      string
 	viewDirty bool
+	// writes is the terminal's input queue, drained by one goroutine so
+	// the bytes reach the transport in the order they were typed. Neither
+	// half of that is decoration. Ordering: a command per write let the
+	// event loop start a goroutine per keystroke, and goroutines racing
+	// for the attachment's mutex arrive in whatever order the scheduler
+	// picks — a fast burst could deliver a wheel report or a keystroke
+	// out of sequence. Boundedness: nothing capped how many of those
+	// goroutines could exist, so a transport that stopped draining
+	// collected one per raw input event for as long as the human kept
+	// scrolling.
+	writes chan []byte
 }
 
 // New replays the terminal's seed and starts consuming its output stream.
@@ -129,6 +156,7 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 		transport: transport, gate: gate,
 		cols: cols, rows: rows, termCols: cols, termRows: rows,
 		viewDirty: true,
+		writes:    make(chan []byte, writeQueue),
 	}
 	seed := transport.Seed()
 	// The seed names the size it was rendered at when the transport knows
@@ -137,7 +165,20 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 	s.replaceReplica(seed.Resync, seed.Resize)
 	model := Model{id: lastID.Add(1), state: s}
 	go s.pump(model)
+	go s.deliver()
 	return model
+}
+
+// deliver carries queued input to the transport, one chunk at a time and
+// in order. It is the terminal's only writer, so a transport that blocks
+// parks exactly this goroutine — the queue behind it fills, and the
+// dashboard's event loop, which only ever enqueues, never waits on it.
+func (s *state) deliver() {
+	for data := range s.writes {
+		if err := s.transport.Write(data); err != nil {
+			diagnostic.Logger().Warn("terminal write failed", "error", err)
+		}
+	}
 }
 
 // replaceReplica seeds a fresh emulator with exact state and swaps it in,
@@ -351,9 +392,32 @@ func (m Model) Text() []string {
 	return lines
 }
 
-// Write delivers bytes to the hosted terminal.
-func (m Model) Write(data []byte) error { return m.state.transport.Write(data) }
-func (m Model) ID() int64               { return m.id }
+// Write hands bytes to the terminal's writer without waiting for the
+// transport to take them. It never blocks: the caller is the event loop,
+// and a keystroke that waits on a socket is a dashboard that has stopped
+// answering the keyboard.
+func (m Model) Write(data []byte) error {
+	s := m.state
+	// The lock is held across the send, and can be: the send is the
+	// non-blocking form, so it either takes a queue slot or reports a
+	// full one, and returns either way. Dropping the lock first would
+	// leave a window for Close to shut the queue between the check and
+	// the send, which is a send on a closed channel — a panic, on the
+	// event loop, at teardown.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return io.ErrClosedPipe
+	}
+	select {
+	case s.writes <- data:
+		return nil
+	default:
+		return ErrWriteQueueFull
+	}
+}
+
+func (m Model) ID() int64 { return m.id }
 
 // SetSize is the deliberate resize: the dashboard's own window moved, a
 // zoom toggled, an attach returned. It asserts the new size on both the
@@ -576,6 +640,12 @@ func (m Model) Close() {
 		return
 	}
 	s.closed, s.scrollDelta = true, 0
+	// Under the lock, alongside the flag Write reads: the two together
+	// are what stop a write already inside Write from sending into a
+	// closed queue. The drain goroutine ends on the closed channel rather
+	// than parked on a send nothing will ever receive; the early return
+	// above is what makes closing it exactly once.
+	close(s.writes)
 	// Read it here, not after unlocking: a resync replaces this field at
 	// runtime, so an unlocked read races the swap and can close a pipe
 	// that has already been replaced — leaving the live emulator's drain

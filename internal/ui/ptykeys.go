@@ -66,22 +66,28 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	// Typing while scrolled back reads as "take me to the action".
 	widget.ScrollToBottom()
-	send := writeTerminalCmd(widget, data)
+	writeTerminal(widget, data)
 	if selected, ok := m.selectedAgent(); ok &&
 		selected.ProcessLive &&
 		(selected.Attention == agent.AttentionWaiting ||
 			selected.EffectiveMark() == agent.MarkAttention) {
 		m.markAttentionSeen(selected.ID)
-		return m, tea.Batch(send, clearAttentionCmd(m.backend, selected.ID))
+		return m, clearAttentionCmd(m.backend, selected.ID)
 	}
-	return m, send
+	return m, nil
 }
 
-func writeTerminalCmd(widget pty.Model, data []byte) tea.Cmd {
-	return func() tea.Msg {
-		if err := widget.Write(data); err != nil {
-			diagnostic.Logger().Warn("terminal write failed", "error", err)
-		}
-		return nil
+// writeTerminal hands input to a terminal from the event loop itself,
+// with no command and so no goroutine. The widget queues the bytes and
+// its own writer delivers them in order; the call cannot block, so the
+// loop is free to take the next message whatever the transport is doing.
+//
+// It was a tea.Cmd until a trackpad found the flaw: Bubble Tea starts
+// every returned command in its own goroutine, and a mouse-aware agent
+// turns each raw wheel tick into one write, so a burst against a stalled
+// attachment grew a goroutine per tick with nothing bounding the pile.
+func writeTerminal(widget pty.Model, data []byte) {
+	if err := widget.Write(data); err != nil {
+		diagnostic.Logger().Warn("terminal write failed", "error", err)
 	}
 }
