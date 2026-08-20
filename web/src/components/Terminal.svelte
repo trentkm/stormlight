@@ -124,6 +124,7 @@
     // watching rather than of calling __flicker() at the right instant.
     let hadContent = false;
     let previous = 0;
+    let lastGrid = "";
     const note = (what: string, sample: Sample) => {
       const line =
         `flicker: ${what} at t=${sample.t}ms — painted ${sample.painted}, ` +
@@ -158,6 +159,11 @@
       };
       samples.push(sample);
       if (samples.length > 6000) samples.shift();
+
+      if (lastGrid && lastGrid !== `${built.cols}x${built.rows}`) {
+        note(`the grid changed from ${lastGrid}`, sample);
+      }
+      lastGrid = `${built.cols}x${built.rows}`;
 
       // Three shapes worth shouting about, each a different culprit.
       // The screen emptying is the terminal being cleared and not yet
@@ -237,6 +243,14 @@
       };
     };
   }
+
+  /**
+   * How long a pane's geometry has to hold still before it is asserted.
+   *
+   * Long enough that a drag lands one resize rather than one per frame,
+   * short enough that letting go feels like it took.
+   */
+  const settleDelay = 120;
 
   let host: HTMLDivElement;
   let connection = $state<Connection>("live");
@@ -319,10 +333,26 @@
       laidOut,
       (state) => (connection = state),
     );
-    const observer = new ResizeObserver(() => attachment?.fit());
+    // A layout still in motion is not a size worth asserting.
+    //
+    // The observer fires on every intermediate width — a window being
+    // dragged, the rail and roster folding away under zoom — and this
+    // terminal is shared, so each size named here reflows the replica
+    // and makes the agent repaint for every viewer. Codex clears the
+    // screen and its scrollback outside its synchronized-update block
+    // when it does, so each one is a pane that blanks and comes back.
+    // Waiting for the layout to settle turns a drag from a flash per
+    // frame into a flash per resize, which is the one a terminal
+    // genuinely owes you.
+    let settle: number | undefined;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => attachment?.fit(), settleDelay);
+    });
     observer.observe(host);
 
     return () => {
+      window.clearTimeout(settle);
       observer.disconnect();
       attachment?.close();
       attachment = undefined;
