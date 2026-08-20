@@ -151,12 +151,25 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 func (s *state) replaceReplica(seed []byte, size *Size) {
 	// A windrunner snapshot has already passed through x/vt once. Normalize
 	// its reversed OSC 8 fields before replaying it through this second x/vt.
+	// Sampled before a byte of the seed is touched, because the window a
+	// resize has to be noticed in starts here rather than at the parse.
+	// The two passes below are a pass each over the whole snapshot —
+	// hundreds of kilobytes for a viewer deep in debt — and a resize
+	// landing in that prefix was invisible to the check further down:
+	// this read the already-moved generation, found it unmoved at the
+	// end, and installed the snapshot's stale size over it. Reading it
+	// early can only over-report movement, and over-reporting is the
+	// safe direction — the answer to it is to adopt the terminal's
+	// current size, which is what a viewer that just resized wants.
+	s.mu.Lock()
+	generation := s.sizeGeneration
+	s.mu.Unlock()
+
 	seed = []byte(repairVTHyperlinks(string(seed)))
 	s.observeModes(seed)
 
 	s.mu.Lock()
 	cols, rows := s.termCols, s.termRows
-	generation := s.sizeGeneration
 	s.mu.Unlock()
 	if size != nil && size.Cols >= 2 && size.Rows >= 2 {
 		// The snapshot's bytes were rendered at this size, and the two
