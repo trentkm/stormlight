@@ -42,6 +42,89 @@
     }
   }
 
+  function probing(): boolean {
+    try {
+      return new URL(window.location.href).searchParams.get("probe") === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A frame-by-frame record of what this pane actually shows.
+   *
+   * `?gpu=off&probe=1` arms it. Every animation frame it counts the rows
+   * the DOM renderer has painted and the rows the emulator is holding,
+   * alongside the grid and the box. A pane that blanks for an instant
+   * leaves a frame where the paint is empty and the buffer is not, and
+   * the grid and box recorded beside it say whether the terminal was
+   * being resized underneath the paint. window.__flicker() reads it
+   * back.
+   */
+  function probe(built: Terminal, box: HTMLDivElement): void {
+    type Sample = {
+      t: number;
+      painted: number;
+      held: number;
+      cols: number;
+      rows: number;
+      w: number;
+      h: number;
+    };
+    const samples: Sample[] = [];
+    const tick = () => {
+      const painted = box.querySelector(".xterm-rows");
+      let drawn = -1;
+      if (painted) {
+        drawn = 0;
+        for (const row of painted.children) {
+          if ((row.textContent ?? "").trim() !== "") drawn++;
+        }
+      }
+      const buffer = built.buffer.active;
+      let held = 0;
+      for (let index = 0; index < built.rows; index++) {
+        const line = buffer.getLine(buffer.viewportY + index);
+        if (line && line.translateToString(true).trim() !== "") held++;
+      }
+      samples.push({
+        t: Math.round(performance.now()),
+        painted: drawn,
+        held,
+        cols: built.cols,
+        rows: built.rows,
+        w: box.offsetWidth,
+        h: box.offsetHeight,
+      });
+      if (samples.length > 6000) samples.shift();
+      window.requestAnimationFrame(tick);
+    };
+    window.requestAnimationFrame(tick);
+
+    (window as { __flicker?: () => unknown }).__flicker = () => {
+      if (!samples.length) return "no frames sampled";
+      const blanks = samples.filter((s) => s.painted >= 0 && s.painted <= 2 && s.held >= 5);
+      const grids = new Set(samples.map((s) => `${s.cols}x${s.rows}`));
+      const boxes = new Set(samples.map((s) => `${s.w}x${s.h}`));
+      const drops: Sample[][] = [];
+      for (const blank of blanks.slice(0, 8)) {
+        const at = samples.indexOf(blank);
+        drops.push(samples.slice(Math.max(0, at - 2), at + 3));
+      }
+      return {
+        frames: samples.length,
+        seconds: +((samples[samples.length - 1].t - samples[0].t) / 1000).toFixed(1),
+        domRenderer: samples[0].painted >= 0,
+        blankFrames: blanks.length,
+        paintedMin: Math.min(...samples.map((s) => s.painted)),
+        heldMin: Math.min(...samples.map((s) => s.held)),
+        gridsSeen: [...grids],
+        boxesSeen: [...boxes],
+        aroundBlanks: drops,
+      };
+    };
+  }
+
   let host: HTMLDivElement;
   let connection = $state<Connection>("live");
   let term = $state<Terminal>();
@@ -102,6 +185,7 @@
     built.loadAddon(fitAddon);
     built.open(host);
     term = built;
+    if (probing()) probe(built, host);
     if (gpuWanted()) {
       try {
         // The GPU renderer is what makes many live terminals affordable.
