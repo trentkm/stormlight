@@ -51,15 +51,20 @@
   }
 
   /**
-   * A frame-by-frame record of what this pane actually shows.
+   * A record of what this pane actually shows, taken from the renderer
+   * rather than alongside it.
    *
-   * `?gpu=off&probe=1` arms it. Every animation frame it counts the rows
-   * the DOM renderer has painted and the rows the emulator is holding,
-   * alongside the grid and the box. A pane that blanks for an instant
-   * leaves a frame where the paint is empty and the buffer is not, and
-   * the grid and box recorded beside it say whether the terminal was
-   * being resized underneath the paint. window.__flicker() reads it
-   * back.
+   * `?gpu=off&probe=1` arms it. It samples on the terminal's own render
+   * event, so it neither requests frames nor holds the frame loop open —
+   * an earlier version sampled on requestAnimationFrame and could have
+   * masked a stall in the very loop it was there to catch.
+   *
+   * Two things leave a mark. A paint that lands blank while the emulator
+   * holds content shows up as a sample with an empty screen; a renderer
+   * that stops paints nothing at all, and shows up as a gap between
+   * samples. The grid and the box travel with each one, so a resize
+   * happening underneath the paint is visible too. window.__flicker()
+   * reads it back.
    */
   function probe(built: Terminal, box: HTMLDivElement): void {
     type Sample = {
@@ -72,7 +77,8 @@
       h: number;
     };
     const samples: Sample[] = [];
-    const tick = () => {
+    const armed = Math.round(performance.now());
+    built.onRender(() => {
       const painted = box.querySelector(".xterm-rows");
       let drawn = -1;
       if (painted) {
@@ -97,29 +103,49 @@
         h: box.offsetHeight,
       });
       if (samples.length > 6000) samples.shift();
-      window.requestAnimationFrame(tick);
-    };
-    window.requestAnimationFrame(tick);
+    });
 
     (window as { __flicker?: () => unknown }).__flicker = () => {
-      if (!samples.length) return "no frames sampled";
-      const blanks = samples.filter((s) => s.painted >= 0 && s.painted <= 2 && s.held >= 5);
-      const grids = new Set(samples.map((s) => `${s.cols}x${s.rows}`));
-      const boxes = new Set(samples.map((s) => `${s.w}x${s.h}`));
+      if (!samples.length) {
+        return {
+          renders: 0,
+          note: "the renderer never reported a paint — armed at " + armed,
+        };
+      }
+      const blanks = samples.filter(
+        (s) => s.painted >= 0 && s.painted <= 2 && s.held >= 5,
+      );
+      const gaps: number[] = [];
+      for (let index = 1; index < samples.length; index++) {
+        gaps.push(samples[index].t - samples[index - 1].t);
+      }
+      const sorted = [...gaps].sort((a, b) => a - b);
       const drops: Sample[][] = [];
       for (const blank of blanks.slice(0, 8)) {
         const at = samples.indexOf(blank);
         drops.push(samples.slice(Math.max(0, at - 2), at + 3));
       }
+      const stalls = samples
+        .map((s, index) => ({ s, gap: index ? s.t - samples[index - 1].t : 0 }))
+        .filter((x) => x.gap > 250)
+        .slice(0, 10);
       return {
-        frames: samples.length,
+        renders: samples.length,
         seconds: +((samples[samples.length - 1].t - samples[0].t) / 1000).toFixed(1),
         domRenderer: samples[0].painted >= 0,
-        blankFrames: blanks.length,
+        blankPaints: blanks.length,
         paintedMin: Math.min(...samples.map((s) => s.painted)),
         heldMin: Math.min(...samples.map((s) => s.held)),
-        gridsSeen: [...grids],
-        boxesSeen: [...boxes],
+        gapMs: sorted.length
+          ? {
+              median: sorted[Math.floor(sorted.length / 2)],
+              p95: sorted[Math.floor(sorted.length * 0.95)],
+              max: sorted[sorted.length - 1],
+            }
+          : null,
+        stalls: stalls.map((x) => x.gap + "ms before t=" + x.s.t),
+        gridsSeen: [...new Set(samples.map((s) => `${s.cols}x${s.rows}`))],
+        boxesSeen: [...new Set(samples.map((s) => `${s.w}x${s.h}`))],
         aroundBlanks: drops,
       };
     };
