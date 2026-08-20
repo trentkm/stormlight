@@ -201,7 +201,25 @@ describe("state and output", () => {
     expect(term.calls).toEqual([
       'write:"from the old size"',
       "resize:132x43",
-      'write:"\\u001bcwrapped for 132 columns"',
+      'write:"\\u001b[?2026h\\u001bcwrapped for 132 columns\\u001b[?2026l"',
+    ]);
+  });
+
+  // Rebuilding a replica is a reset and then everything the terminal
+  // holds, which is more than a parser gets through before it yields to
+  // the renderer. Painted halfway it is an empty buffer with the view at
+  // its first line — the pane leaping to the top and back.
+  test("a rebuilt replica cannot be painted half-drawn", () => {
+    const { term, socket, paint } = setup();
+    socket().open();
+    socket().deliverControl({ type: "seed" });
+    socket().deliverBytes("scrollback, screen and cursor");
+    paint();
+
+    expect(term.calls).toEqual([
+      // One write, and nothing can paint between its first byte and its
+      // last: the reset, the state, and the markers that hold the paint.
+      'write:"\\u001b[?2026h\\u001bcscrollback, screen and cursor\\u001b[?2026l"',
     ]);
   });
 
@@ -218,7 +236,7 @@ describe("state and output", () => {
       'write:"first output"',
       // RIS through the write queue, so bytes already queued are parsed
       // before the reset rather than after it.
-      'write:"\\u001bcexact state"',
+      'write:"\\u001b[?2026h\\u001bcexact state\\u001b[?2026l"',
     ]);
   });
 
@@ -433,7 +451,7 @@ describe("watching", () => {
 
     expect(term.calls).toEqual([
       "resize:132x43",
-      'write:"\\u001bcwhat this agent is doing"',
+      'write:"\\u001b[?2026h\\u001bcwhat this agent is doing\\u001b[?2026l"',
     ]);
   });
 });

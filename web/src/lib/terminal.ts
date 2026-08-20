@@ -48,6 +48,35 @@ const batchBackstop = 250;
 const reset = new Uint8Array([0x1b, 0x63]);
 
 /**
+ * DECSET 2026, begin and end: the terminal is told to hold its paint
+ * until the whole thing has landed.
+ *
+ * Rebuilding a replica is a reset followed by a screen and everything
+ * that scrolled off above it, and that is far more than a parser gets
+ * through before it yields to let the renderer run. Painted halfway, the
+ * reset has happened and the history has not: an empty buffer, the view
+ * at its first line, and a pane that appears to leap to the top and back
+ * a moment later. Wrapped, there is no halfway to paint — the same
+ * mechanism the agents themselves use to keep a frame from being seen
+ * half drawn.
+ */
+const beginSync = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68]);
+const endSync = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c]);
+
+/** rebuild is state to replace a replica with, made unpaintable-halfway. */
+function rebuild(state: Uint8Array): Uint8Array {
+  const whole = new Uint8Array(
+    beginSync.length + reset.length + state.length + endSync.length,
+  );
+  let at = 0;
+  for (const part of [beginSync, reset, state, endSync]) {
+    whole.set(part, at);
+    at += part.length;
+  }
+  return whole;
+}
+
+/**
  * Whether this page batches at all.
  *
  * `?batch=off` writes every message straight through the way it did
@@ -62,6 +91,22 @@ function batching(): boolean {
     return new URL(window.location.href).searchParams.get("batch") !== "off";
   } catch {
     return true;
+  }
+}
+
+/**
+ * Whether this page narrates what the socket is doing.
+ *
+ * A replica rebuilt is a screen that jumps, and the two reasons — the
+ * daemon resyncing a viewer that fell behind, and the socket coming back
+ * after a drop — look identical from the buffer's side. They do not look
+ * identical from here.
+ */
+function narrating(): boolean {
+  try {
+    return new URL(window.location.href).searchParams.get("probe") !== "0";
+  } catch {
+    return false;
   }
 }
 
@@ -139,6 +184,9 @@ export function attach(
    * reflowed by a size that belongs after it.
    */
   const batched = batching();
+  const narrate = narrating();
+  let seeds = 0;
+  let sockets = 0;
   let batch: Array<Uint8Array | (() => void)> = [];
   let frame: number | undefined;
   let backstop: number | undefined;
@@ -211,6 +259,13 @@ export function attach(
       : { cols: 0, rows: 0 };
     announced = opening;
 
+    sockets++;
+    if (narrate) {
+      console.log(
+        `flicker: opening terminal socket #${sockets}` +
+          (sockets > 1 ? " — THE SOCKET DROPPED AND CAME BACK" : ""),
+      );
+    }
     const live = new WebSocket(
       socketURL(
         `/api/agents/${id}/terminal`,
@@ -239,6 +294,16 @@ export function attach(
       if (typeof event.data === "string") {
         const control: Control = JSON.parse(event.data);
         if (control.type === "seed") {
+          seeds++;
+          if (narrate) {
+            console.log(
+              `flicker: the daemon seeded this replica (#${seeds} on socket ` +
+                `#${sockets})` +
+                (seeds > 1
+                  ? " — A RESYNC: this viewer fell behind and was handed state"
+                  : ""),
+            );
+          }
           // The attach worked. Not `onopen`: this server upgrades before
           // it attaches, so a failed attach is an accepted socket that
           // closes a moment later — and treating that as success resets
@@ -277,12 +342,19 @@ export function attach(
       const bytes = new Uint8Array(event.data as ArrayBuffer);
       if (replacing) {
         replacing = false;
-        // RIS through the write queue rather than term.reset(), which is
+        // The reset rides with the state it precedes, in one write, held
+        // behind a synchronized update.
+        //
+        // Through the write queue rather than term.reset(), which is
         // synchronous: bytes already handed to write() but not yet parsed
         // would land on the fresh screen after the reset — the doubled
         // screen this exists to prevent, on the one path where there is
-        // certain to be output in flight.
-        enqueue(reset);
+        // certain to be output in flight. And wrapped, because a replica
+        // is rebuilt often enough — every attach, and every resync of a
+        // viewer that fell behind — that a half-drawn one is the flicker
+        // rather than a curiosity.
+        enqueue(rebuild(bytes));
+        return;
       }
       enqueue(bytes);
     };

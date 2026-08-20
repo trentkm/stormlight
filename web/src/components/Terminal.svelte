@@ -67,6 +67,12 @@
    * reads it back.
    */
   function probe(built: Terminal, box: HTMLDivElement): void {
+    // Only over a terminal that can answer. A double in a test provides
+    // what the component uses and no more, and a probe that assumed
+    // otherwise took the component down with it.
+    if (typeof built.write !== "function" || typeof built.onRender !== "function") {
+      return;
+    }
     type Sample = {
       t: number;
       painted: number;
