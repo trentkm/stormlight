@@ -76,8 +76,17 @@
       w: number;
       h: number;
     };
-    const samples: Sample[] = [];
-    const events: string[] = [];
+    // Kept on the page rather than in this closure: selecting another
+    // agent rebuilds the terminal, and a record that died with it meant
+    // every reading started from nothing a moment before it was read.
+    const store = window as unknown as {
+      __flickerSamples?: Sample[];
+      __flickerEvents?: string[];
+      __flickerWaits?: number[];
+    };
+    const samples: Sample[] = (store.__flickerSamples ??= []);
+    const events: string[] = (store.__flickerEvents ??= []);
+    const latencies: number[] = (store.__flickerWaits ??= []);
     const armed = Math.round(performance.now());
 
     // Written bytes, watched for the two things that decide when a paint
@@ -90,7 +99,6 @@
     let pendingSince = 0;
     let syncDepth = 0;
     let syncSince = 0;
-    const latencies: number[] = [];
     const write = built.write.bind(built);
     built.write = (data: Parameters<Terminal["write"]>[0], done?: () => void) => {
       const now = performance.now();
@@ -156,9 +164,14 @@
       // redrawn; a blank paint is the renderer showing nothing while
       // the emulator holds a screen; a stall is the renderer stopping.
       if (held >= 5) hadContent = true;
-      if (hadContent && held <= 2) note("the screen emptied", sample);
-      else if (sample.painted >= 0 && sample.painted <= 2 && held >= 5) {
-        note("a paint landed blank", sample);
+      if (hadContent && held <= 2) {
+        note("the screen emptied", sample);
+      } else if (drawn >= 0 && held >= 8 && drawn * 2 < held) {
+        // Not only a paint that shows nothing. A frame that shows a
+        // third of the screen while the emulator holds all of it reads
+        // as a flash just the same, and it is the likelier shape: a
+        // screen erased and half redrawn.
+        note(`a paint showed ${drawn} of ${held} rows`, sample);
       }
       // Latency, not silence. A gap between paints means nothing on its
       // own — an agent that produced nothing has nothing to paint. What
@@ -194,10 +207,6 @@
         const at = samples.indexOf(blank);
         drops.push(samples.slice(Math.max(0, at - 2), at + 3));
       }
-      const stalls = samples
-        .map((s, index) => ({ s, gap: index ? s.t - samples[index - 1].t : 0 }))
-        .filter((x) => x.gap > 250)
-        .slice(0, 10);
       const waits = [...latencies].sort((a, b) => a - b);
       return {
         events,
@@ -222,7 +231,6 @@
               max: sorted[sorted.length - 1],
             }
           : null,
-        stalls: stalls.map((x) => x.gap + "ms before t=" + x.s.t),
         gridsSeen: [...new Set(samples.map((s) => `${s.cols}x${s.rows}`))],
         boxesSeen: [...new Set(samples.map((s) => `${s.w}x${s.h}`))],
         aroundBlanks: drops,
