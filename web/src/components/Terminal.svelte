@@ -114,8 +114,9 @@
       }
       if (syncSince && now - syncSince > 150) {
         const held = Math.round(now - syncSince);
-        events.push(`flicker: stuck inside a synchronized update ${held}ms`);
-        console.warn(`flicker: stuck inside a synchronized update ${held}ms — nothing can paint until it closes`);
+        const line = `flicker: stuck inside a synchronized update ${held}ms`;
+        events.push(line);
+        console.log(line);
         syncSince = now;
       }
       return write(data, done);
@@ -131,7 +132,7 @@
         `held ${sample.held}, grid ${sample.cols}x${sample.rows}, ` +
         `box ${sample.w}x${sample.h}`;
       events.push(line);
-      console.warn(line);
+      console.log(line);
     };
     built.onRender(() => {
       const painted = box.querySelector(".xterm-rows");
@@ -214,7 +215,18 @@
         drops.push(samples.slice(Math.max(0, at - 2), at + 3));
       }
       const waits = [...latencies].sort((a, b) => a - b);
+      // What kind, and how many of each: the shape of the trouble in one
+      // line rather than a transcript to read.
+      const kinds: Record<string, number> = {};
+      for (const line of events) {
+        const kind = line
+          .replace(/^flicker: /, "")
+          .replace(/\d+/g, "N")
+          .replace(/ at t=.*$/, "");
+        kinds[kind] = (kinds[kind] ?? 0) + 1;
+      }
       return {
+        summary: kinds,
         events,
         batching: new URL(window.location.href).searchParams.get("batch") !== "off",
         paintLatencyMs: waits.length
