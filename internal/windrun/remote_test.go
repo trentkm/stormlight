@@ -798,4 +798,16 @@ func TestADaemonTooOldForTheRequestRefusesItItself(t *testing.T) {
 			t.Fatalf("the refusal should carry %q:\n%v", want, err)
 		}
 	}
+	// A refusal costs the request and nothing else. The daemon rejects
+	// before it builds anything, so no session exists to be orphaned —
+	// and the connection that carried the refusal is still the one this
+	// asks on, which is the half that had to be fixed over in windrunner
+	// before it could be asserted from here at all.
+	agents, err := runtime.ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("a refused dispatch should not cost the connection: %v", err)
+	}
+	if len(agents) != 0 {
+		t.Fatalf("a refused dispatch left something behind: %+v", agents)
+	}
 }
