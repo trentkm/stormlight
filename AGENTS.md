@@ -247,24 +247,38 @@ and what has landed since it, rather than assuming the next one.
 
 **Never run `goreleaser release` locally.** It is the same pipeline CI runs,
 so a local invocation does not preview the release — it *performs* one,
-creating the GitHub release, uploading the archives, and pushing the formula
-to the tap. The tag push then starts CI, which arrives at a release that is
-already complete and fails on the first asset collision. Every release from
-v0.1.0 through v0.2.2 failed this way while appearing to publish correctly,
-because the local run had already done the work CI was reporting on. To
-check the config without publishing, use `goreleaser release --snapshot
---clean`, which builds into `dist/` and touches nothing remote.
+creating the GitHub release, uploading the archives, and pushing the cask to
+the tap. Worse, it publishes from whatever your worktree holds rather than
+from `origin/main`, which is the one thing the tagging rule above exists to
+prevent. Every release from v0.1.0 through v0.2.2 failed this way: CI
+arrived at a release the local run had already completed and died on the
+first asset collision. `replace_existing_artifacts` in `release:` closes
+that particular hole — it exists so a half-finished release can be re-run
+rather than burning a version number — so today CI would overwrite the local
+run's assets instead of erroring, which is quieter but no better. To check
+the config without publishing, use `goreleaser release --snapshot --clean`,
+which builds into `dist/` and touches nothing remote.
 
 The workflow needs one secret beyond the automatic `GITHUB_TOKEN`:
 `HOMEBREW_TAP_GITHUB_TOKEN`, a fine-grained PAT with `contents: write` on
 `trentkm/homebrew-stormlight`. Without it goreleaser builds and publishes the
-release, then fails pushing the formula — a half-shipped version where the
+release, then fails pushing the cask — a half-shipped version where the
 binaries exist but `brew upgrade` never sees them.
 
-A published version is immutable. The tap formula pins the tarball's
-`sha256`, so re-tagging a version that users may already have fetched swaps
-the bytes under a checksum Homebrew has cached and breaks installs with a
-mismatch. A bad release is superseded by the next version, never rewritten.
+What lands in the tap is a cask, not a formula: `Casks/stormlight.rb`, whose
+`on_macos`/`on_linux` blocks name a prebuilt archive per platform. Casks are
+the supported shape for shipping a binary — goreleaser's `brews` is
+soft-deprecated as of v2.10 and removed in v2.16 — and Homebrew's cask code
+is cross-platform, so Linux keeps its `brew install` path. `.goreleaser.yaml`
+carries the reasoning at the `homebrew_casks` block, along with the two
+things the cask does beyond naming URLs: it depends on `yazi`, and its
+post-install hook strips the quarantine attribute on macOS so an unsigned
+binary is not stopped by Gatekeeper on first run.
+
+A published version is immutable. The cask pins a `sha256` for each of the
+four archives, so re-tagging a version that users may already have fetched
+swaps the bytes under a checksum Homebrew has cached and breaks installs with
+a mismatch. A bad release is superseded by the next version, never rewritten.
 
 Versions are semver with a pre-1.0 reading: user-visible features bump the
 minor, fixes bump the patch.
