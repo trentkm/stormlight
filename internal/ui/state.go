@@ -294,12 +294,23 @@ type checkoutBadge struct {
 // agentCheckout names the execution root an agent runs in. Git gets its
 // familiar checkout/worktree language; custom resolvers may provide an
 // execution_root_label, with a generic root label as fallback.
+//
+// The two roots are compared as strings because they arrive comparable:
+// every context reaching here passed through workspace normalization,
+// which put Root and ExecutionRoot through the same canonical form — real
+// symlink resolution for a local machine, cleaning for a remote one.
+// Resolving them again here would have been redundant on the local path
+// and wrong on the remote one, since the only filesystem this process can
+// stat is the wrong one. It also cost a pair of EvalSymlinks walks per
+// render: this is read from the terminal bar, which the dashboard rebuilds
+// on every message, so a wheel burst turned into a burst of lstat calls.
+// Context.Tail has always compared them this way.
 func agentCheckout(managedAgent agent.Agent) checkoutBadge {
 	value := effectiveWorkspace(managedAgent)
 	if value.ExecutionRoot == "" {
 		return checkoutBadge{}
 	}
-	primary := directoryKey(value.ExecutionRoot) == directoryKey(value.Root)
+	primary := value.ExecutionRoot == value.Root
 	if label := strings.TrimSpace(value.Metadata["execution_root_label"]); label != "" {
 		return checkoutBadge{text: label, primary: primary}
 	}

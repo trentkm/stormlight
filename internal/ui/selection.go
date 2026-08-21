@@ -72,14 +72,21 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				if direction > 0 {
 					button = 65
 				}
-				return m, writeTerminalCmd(widget, []byte(fmt.Sprintf(
+				writeTerminal(widget, []byte(fmt.Sprintf(
 					"\x1b[<%d;%d;%dM", button, col+1, row+1)))
 			}
+			// Forwarding the tick changed nothing this frame draws; what
+			// the program makes of it arrives as terminal output, on the
+			// gate's own cadence.
+			m.holdFrame = true
 			return m, nil
 		}
 		// Wheel deltas coalesce through the widget, so a trackpad burst
 		// lands as one update; the scheduled flush returns through
-		// Update's message forwarding.
+		// Update's message forwarding. Until that flush the replica has
+		// not moved, so this frame is the last one over again — say so,
+		// and the burst costs one dashboard build instead of hundreds.
+		m.holdFrame = true
 		return m, widget.QueueScroll(-direction * 3)
 	}
 	m.moveSelectionIn(paneInteraction, direction*3)
@@ -159,7 +166,8 @@ func (m Model) handleTerminalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if col, row, ok := m.gridCellAt(mouse.X, mouse.Y); ok {
 				press := fmt.Sprintf("\x1b[<0;%d;%dM", col+1, row+1)
 				release := fmt.Sprintf("\x1b[<0;%d;%dm", col+1, row+1)
-				return m, writeTerminalCmd(widget, []byte(press+release))
+				writeTerminal(widget, []byte(press+release))
+				return m, nil
 			}
 		}
 		return m, nil

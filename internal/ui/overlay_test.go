@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -120,16 +121,29 @@ func TestOverlayFloatsOverTheDashboardAndOwnsTheKeyboard(t *testing.T) {
 		t.Fatalf("popup is missing its frame:\n%s", body)
 	}
 
-	// Keys land in the hosted program, byte for byte.
+	// Keys land in the hosted program, byte for byte. The write leaves
+	// through the terminal's own writer rather than a command the test
+	// can run, so the assertion waits for it instead of firing it.
 	updated, cmd := model.updateOverlayKey(tea.KeyPressMsg{Text: "j", Code: 'j'})
 	model = updated.(Model)
-	if cmd == nil {
-		t.Fatal("keypress produced no write")
+	if cmd != nil {
+		t.Fatal("keypress returned a command; writes are queued, not commanded")
 	}
-	cmd()
-	if got := session.recorded(); got != "j" {
-		t.Fatalf("forwarded bytes = %q, want %q", got, "j")
+	waitForWrites(t, session, "j")
+}
+
+// waitForWrites waits for the terminal's writer goroutine to deliver what
+// the event loop queued.
+func waitForWrites(t *testing.T, session *fakeOverlaySession, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if session.recorded() == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
+	t.Fatalf("forwarded bytes = %q, want %q", session.recorded(), want)
 }
 
 func TestOverlayCancelDestroysTheSessionUnread(t *testing.T) {
