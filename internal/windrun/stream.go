@@ -18,30 +18,46 @@ func (r *Runtime) AttachTerminal(ctx context.Context, id string, cols, rows int)
 	if err != nil {
 		return nil, err
 	}
-	// Size first, so the snapshot arrives pre-wrapped for the view it is
-	// about to fill — but only when the caller has a size to assert. The
-	// terminal belongs to the session and every viewer shares it, so a
-	// caller that does not know its own geometry must not move it: a
-	// viewer with no layout would otherwise reflow the agent for everyone
-	// and leave it that way, since nothing re-asserts the size a
-	// dashboard pane had (#155).
-	if cols >= 2 && rows >= 2 {
-		if err := r.client.Resize(sessionID, cols, rows); err != nil {
-			return nil, err
-		}
-	}
-	// Resync rather than be dropped. Everything attaching here is a
-	// viewer — the dashboard's terminal box, a browser — and a viewer
-	// that falls behind a burst wants the screen as it now stands, not to
-	// be cut off mid-stream with no way to know it happened. Without this
-	// a build log scrolling past a slow client freezes its terminal for
-	// good.
-	attachment, err := r.client.AttachWith(sessionID, client.AttachOptions{
+	usable := cols >= 2 && rows >= 2
+	options := client.AttachOptions{
+		// Resync rather than be dropped. Everything attaching here is a
+		// viewer — the dashboard's terminal box, a browser — and a viewer
+		// that falls behind a burst wants the screen as it now stands,
+		// not to be cut off mid-stream with no way to know it happened.
+		// Without this a build log scrolling past a slow client freezes
+		// its terminal for good.
 		Buffer: 256,
 		Resync: true,
-	})
+	}
+	// The size rides in the attach as this viewer's statement: the daemon
+	// follows the newest statement among a session's viewers and retires
+	// this one when the attachment ends, so a closed dashboard cannot
+	// leave its geometry behind on a terminal others share. Stated in the
+	// attach rather than asserted beforehand so the snapshot arrives
+	// already wrapped for it — and not stated at all by a caller that
+	// does not know its own geometry, which has no size to state (#155).
+	if usable {
+		options.Cols, options.Rows = cols, rows
+	}
+	attachment, err := r.client.AttachWith(sessionID, options)
 	if err != nil {
 		return nil, err
+	}
+	// The snapshot answers with the size the daemon actually holds. A
+	// daemon from before viewer statements ignores the fields above and
+	// answers at whatever size it had — so a mismatch means the statement
+	// did not land, and one resize on the attachment repairs it: on that
+	// older daemon it is the plain session resize this method used to
+	// issue, and on a current one it is a legitimate re-statement. The
+	// snapshot arrives unwrapped for this viewer in that case, exactly as
+	// the old resize-then-attach gap allowed, and the resize's own
+	// repaint corrects it.
+	if snapshot := attachment.Snapshot(); usable &&
+		(snapshot.Cols != cols || snapshot.Rows != rows) {
+		if err := attachment.Resize(cols, rows); err != nil {
+			attachment.Close()
+			return nil, err
+		}
 	}
 	return newTerminalStream(attachment), nil
 }

@@ -171,6 +171,47 @@ func TestAttachWithoutASizeLeavesTheTerminalAlone(t *testing.T) {
 	}
 }
 
+// The other half of sharing a terminal: a viewer's size must leave when
+// the viewer does. This was the dashboard pane "stuck in the upper-left
+// corner" — a browser tab or a second dashboard attached, moved the
+// shared terminal, and closed, and its geometry stayed behind with
+// nothing entitled to reclaim it (#155). The daemon now derives the size
+// from the attachments standing, so the departure itself is the repair.
+func TestAViewersSizeRetiresWithItsAttachment(t *testing.T) {
+	runtime := remoteRuntime(t)
+
+	dispatched, err := runtime.Dispatch(context.Background(), session.DispatchRequest{
+		Provider: agent.Provider("claude"),
+		Name:     "shared",
+		Task:     "hold a terminal",
+		Cwd:      t.TempDir(),
+		Launch:   session.Launch{Path: "/bin/sh", Args: []string{"-c", "sleep 60"}},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The dashboard's pane, staying for the duration.
+	dashboard, err := runtime.AttachTerminal(context.Background(), dispatched.ID, 130, 46)
+	if err != nil {
+		t.Fatalf("AttachTerminal: %v", err)
+	}
+	defer dashboard.Close()
+	waitForSize(t, runtime, dispatched.ID, 130, 46)
+
+	// The visitor: newer, smaller, and gone in a moment.
+	visitor, err := runtime.AttachTerminal(context.Background(), dispatched.ID, 98, 38)
+	if err != nil {
+		t.Fatalf("AttachTerminal (visitor): %v", err)
+	}
+	waitForSize(t, runtime, dispatched.ID, 98, 38)
+
+	// The visitor leaves, and nobody re-asserts anything: the terminal
+	// must come back to the viewer still watching, on its own.
+	visitor.Close()
+	waitForSize(t, runtime, dispatched.ID, 130, 46)
+}
+
 // The snapshot's bytes are wrapped for a width, and the seed has to say
 // which — otherwise a viewer that asserted no geometry paints them at its
 // own assumption, which is how a snapshot arrives pre-mangled.
