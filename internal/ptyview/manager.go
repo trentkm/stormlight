@@ -110,7 +110,7 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	}
 	var commands []tea.Cmd
 	for _, widget := range existing {
-		if cols, rows := widget.Size(); cols != width || rows != height {
+		if needsSize(widget, width, height) {
 			_, cmd := widget.SetSize(width, height)
 			if cmd != nil {
 				commands = append(commands, cmd)
@@ -135,6 +135,29 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 		}
 	}
 	return commands
+}
+
+// needsSize reports whether a terminal is due an assertion: either its
+// box moved, or the last one this widget sent never landed.
+//
+// The second half is the whole difference between a resize that is
+// asserted and a resize that is *held*. An assertion can be refused,
+// time out, or be dropped for a newer one that then loses the race to
+// the daemon, and in every one of those cases the box is already the
+// size the dashboard wants — so a reconcile comparing only the box sees
+// nothing to do, and the agent keeps painting at whatever size the
+// terminal was left holding (#155, #164).
+//
+// Comparing what the widget asserted, rather than the terminal's current
+// size, is what keeps this from fighting other viewers. A browser that
+// resizes the shared terminal moves the emulator and not this, so the
+// dashboard follows it as before instead of flapping against it.
+func needsSize(widget pty.Model, width, height int) bool {
+	if cols, rows := widget.Size(); cols != width || rows != height {
+		return true
+	}
+	cols, rows := widget.Asserted()
+	return cols != width || rows != height
 }
 
 // open builds an agent's terminal over the runtime's attachment.

@@ -117,7 +117,23 @@ type state struct {
 	// sizeGeneration counts changes to the terminal's size. A resync
 	// parses its state off-lock, which takes long enough for a resize to
 	// land in the middle; the counter is how the swap notices.
-	sizeGeneration        int
+	sizeGeneration int
+	// resizeSeq numbers the size assertions this widget has decided on;
+	// the newest is the only one still worth sending. assertedCols and
+	// assertedRows are the last size the hosted terminal actually took,
+	// which is not the same as the last one asked for — see assert.
+	resizeSeq                  uint64
+	assertedCols, assertedRows int
+	// assertFailing marks a run of failed assertions, so a terminal
+	// that refuses every one — a session whose process has exited is
+	// the usual way — is reported once rather than at the reconcile's
+	// cadence for as long as the dashboard is open (#100).
+	assertFailing bool
+	// resizeMu serializes assertions so a slow one cannot be overtaken
+	// by a newer one and land after it. It is held across the transport
+	// call, so it must never be taken while holding mu.
+	resizeMu sync.Mutex
+
 	scroll, scrollDelta   int
 	scrollPending, closed bool
 	// visible marks the terminal as on screen: only visible terminals
@@ -155,6 +171,9 @@ func New(transport Transport, gate *Gate, cols, rows int) Model {
 	s := &state{
 		transport: transport, gate: gate,
 		cols: cols, rows: rows, termCols: cols, termRows: rows,
+		// The attach asserted this size on the way in, so the widget
+		// starts already agreeing with the terminal it just opened.
+		assertedCols: cols, assertedRows: rows,
 		viewDirty: true,
 		writes:    make(chan []byte, writeQueue),
 	}
@@ -433,13 +452,76 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 		s.sizeGeneration++
 		s.viewDirty = true
 	}
+	s.resizeSeq++
+	seq := s.resizeSeq
 	s.mu.Unlock()
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.transport.Resize(ctx, cols, rows)
+		s.assert(seq, cols, rows)
 		return nil
 	}
+}
+
+// assert carries a decided size to the hosted terminal, and is the only
+// thing that does.
+//
+// The dashboard reconciles on every refresh and on every window size, and
+// Bubble Tea runs each returned command on a goroutine of its own — so a
+// drag across the screen puts several assertions in flight at once, each
+// naming the size the pane had when it was decided. They race, and the
+// one that reaches the daemon last is the one the agent's PTY keeps.
+// Nothing afterward disagrees with it: the widget believes its box, the
+// box is already right, and a reconcile that compares only the box has
+// nothing to correct. An intermediate size from the middle of a drag
+// therefore sticks, and the agent paints its narrow screen into the
+// corner of a wide pane until something else moves it (#155, #164).
+//
+// Two rules make that unreachable. A superseded assertion is dropped
+// rather than sent, and the send is serialized, so no assertion can
+// overtake a newer one on the way out.
+func (s *state) assert(seq uint64, cols, rows int) {
+	s.resizeMu.Lock()
+	defer s.resizeMu.Unlock()
+	s.mu.Lock()
+	stale := seq != s.resizeSeq || s.closed
+	s.mu.Unlock()
+	if stale {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := s.transport.Resize(ctx, cols, rows)
+
+	s.mu.Lock()
+	if err == nil {
+		s.assertedCols, s.assertedRows = cols, rows
+	}
+	// The failure is left unrecorded in the size on purpose: the
+	// terminal is still whatever size it was, and Asserted disagreeing
+	// with the box is what makes the next reconcile try again.
+	first := err != nil && !s.assertFailing
+	s.assertFailing = err != nil
+	s.mu.Unlock()
+	if first {
+		diagnostic.Logger().Warn("terminal resize failed",
+			"cols", cols, "rows", rows, "error", err)
+	}
+}
+
+// Asserted is the size the hosted terminal last accepted from this
+// widget. It trails Size whenever an assertion has not landed — refused,
+// timed out, or still in flight — and a reconcile that finds the two
+// apart re-asserts rather than assuming its last word was taken.
+//
+// It deliberately says nothing about what other viewers have done. A
+// terminal is shared, and a browser that resizes it moves this widget's
+// emulator through setTerminalSize without touching what this widget
+// asserted — so the dashboard insists on its own assertion landing
+// without fighting anyone else's (#155).
+func (m Model) Asserted() (int, int) {
+	s := m.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.assertedCols, s.assertedRows
 }
 
 func (m Model) TerminalSize() (int, int) {
