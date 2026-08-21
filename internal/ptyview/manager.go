@@ -28,20 +28,31 @@ type Manager struct {
 
 	mu      sync.Mutex
 	entries map[string]pty.Model
-	// starting marks agents whose open is in flight, so overlapping
-	// reconciles never build two terminals over one agent.
-	starting map[string]bool
-	draining bool
-	width    int
-	height   int
+	// pending is the newest desired state an Ensure has recorded and no
+	// reconcile has applied yet; reconciling marks the one caller
+	// working through it. Together they are the single-flight: however
+	// many refreshes and window sizes land at once, exactly one
+	// reconcile runs, always toward the newest state, and the ones in
+	// between are never applied at all.
+	pending     *roster
+	reconciling bool
+	draining    bool
+	width       int
+	height      int
+}
+
+// roster is one desired state of the herd: which agents exist and what
+// size their boxes are.
+type roster struct {
+	ids           []string
+	width, height int
 }
 
 func NewManager(backend Backend) *Manager {
 	return &Manager{
-		backend:  backend,
-		gate:     pty.NewGate(),
-		entries:  make(map[string]pty.Model),
-		starting: make(map[string]bool),
+		backend: backend,
+		gate:    pty.NewGate(),
+		entries: make(map[string]pty.Model),
 	}
 }
 
@@ -71,18 +82,45 @@ func (g *Manager) SetVisible(ids ...string) {
 }
 
 // Ensure reconciles the terminals against the roster: agents without one
-// get one, departed agents lose theirs, and boxes follow the grid. The
-// returned commands carry transport resizes; run them like any tea.Cmd.
+// get one, departed agents lose theirs, and boxes follow the grid.
 // Errors are logged and retried on the next reconcile.
-func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height int) []tea.Cmd {
+//
+// Concurrent calls coalesce rather than race. Ensure runs on every
+// refresh and every window size, each on its own command goroutine — a
+// drag across the screen is a burst of them — and reconciles running
+// side by side would assert sizes in whatever order the scheduler
+// picked, with the daemon keeping whichever landed last. So one caller
+// reconciles while the others only record what the world should look
+// like now and leave; the reconciler re-reads that record until it is
+// empty. Intermediate states are superseded before they are ever
+// applied, and what is applied is always the newest thing anyone asked
+// for.
+func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height int) {
 	g.mu.Lock()
-	if g.draining {
+	g.pending = &roster{ids: agentIDs, width: width, height: height}
+	if g.reconciling || g.draining {
 		g.mu.Unlock()
-		return nil
+		return
 	}
-	g.width, g.height = width, height
-	wanted := make(map[string]bool, len(agentIDs))
-	for _, id := range agentIDs {
+	g.reconciling = true
+	for g.pending != nil && !g.draining {
+		want := *g.pending
+		g.pending = nil
+		g.width, g.height = want.width, want.height
+		g.mu.Unlock()
+		g.reconcile(ctx, want)
+		g.mu.Lock()
+	}
+	g.reconciling = false
+	g.mu.Unlock()
+}
+
+// reconcile applies one desired state: the single-flight's working half,
+// running on whichever goroutine won the flight.
+func (g *Manager) reconcile(ctx context.Context, want roster) {
+	g.mu.Lock()
+	wanted := make(map[string]bool, len(want.ids))
+	for _, id := range want.ids {
 		wanted[id] = true
 	}
 	var closing []pty.Model
@@ -96,11 +134,10 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	for _, widget := range g.entries {
 		existing = append(existing, widget)
 	}
-	missing := make([]string, 0, len(agentIDs))
-	for _, id := range agentIDs {
-		if _, ok := g.entries[id]; !ok && !g.starting[id] {
+	missing := make([]string, 0, len(want.ids))
+	for _, id := range want.ids {
+		if _, ok := g.entries[id]; !ok {
 			missing = append(missing, id)
-			g.starting[id] = true
 		}
 	}
 	g.mu.Unlock()
@@ -108,19 +145,16 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 	for _, widget := range closing {
 		widget.Close()
 	}
-	var commands []tea.Cmd
 	for _, widget := range existing {
-		if needsSize(widget, width, height) {
-			_, cmd := widget.SetSize(width, height)
-			if cmd != nil {
-				commands = append(commands, cmd)
+		if needsSize(widget, want.width, want.height) {
+			if _, resize := widget.SetSize(want.width, want.height); resize != nil {
+				resize()
 			}
 		}
 	}
 	for _, id := range missing {
-		widget, err := g.open(ctx, id, width, height)
+		widget, err := g.open(ctx, id, want.width, want.height)
 		g.mu.Lock()
-		delete(g.starting, id)
 		surplus := err == nil && g.draining
 		if err == nil && !g.draining {
 			g.entries[id] = widget
@@ -134,7 +168,6 @@ func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height i
 				"agent_id", id, "error", err)
 		}
 	}
-	return commands
 }
 
 // needsSize reports whether a terminal is due an assertion: either its

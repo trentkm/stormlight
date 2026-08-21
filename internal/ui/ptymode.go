@@ -142,9 +142,7 @@ func (m Model) ensurePTYCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		for _, resize := range manager.Ensure(ctx, ids, width, height) {
-			resize()
-		}
+		manager.Ensure(ctx, ids, width, height)
 		return ptyEnsuredMsg{}
 	}
 }

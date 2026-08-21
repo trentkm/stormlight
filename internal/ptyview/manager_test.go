@@ -17,6 +17,11 @@ type fakeTransport struct {
 	mu      sync.Mutex
 	applied []pty.Size
 	refuse  bool
+	// entered signals each Resize as it begins; hold, when set, parks it
+	// there until released. Together they let a test stand inside one
+	// assertion while more Ensure calls arrive.
+	entered chan struct{}
+	hold    chan struct{}
 	output  chan pty.Message
 }
 
@@ -31,8 +36,17 @@ func (t *fakeTransport) Close()                     {}
 
 func (t *fakeTransport) Resize(_ context.Context, cols, rows int) error {
 	t.mu.Lock()
+	entered, hold, refuse := t.entered, t.hold, t.refuse
+	t.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+	}
+	if hold != nil {
+		<-hold
+	}
+	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.refuse {
+	if refuse {
 		return errors.New("daemon said no")
 	}
 	t.applied = append(t.applied, pty.Size{Cols: cols, Rows: rows})
@@ -47,10 +61,10 @@ func (t *fakeTransport) refusing(refuse bool) {
 	t.refuse = refuse
 }
 
-func (t *fakeTransport) count() int {
+func (t *fakeTransport) sizes() []pty.Size {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return len(t.applied)
+	return append([]pty.Size(nil), t.applied...)
 }
 
 // last is the size the daemon is left holding.
@@ -63,6 +77,12 @@ func (t *fakeTransport) last() pty.Size {
 	return t.applied[len(t.applied)-1]
 }
 
+func (t *fakeTransport) count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.applied)
+}
+
 type fakeBackend struct{ transport *fakeTransport }
 
 func (b *fakeBackend) AttachTerminal(
@@ -72,63 +92,96 @@ func (b *fakeBackend) AttachTerminal(
 }
 
 // A drag across the screen is a burst of window sizes, and the dashboard
-// answers each one with its own Ensure — Bubble Tea runs every returned
-// command on its own goroutine, so the assertions race. The one that
-// reaches the daemon last decides the agent's real PTY size, and it is
-// not necessarily the last one the dashboard decided on.
-//
-// When a stale intermediate lands after the final size, the widget is
-// left believing its box, the daemon holding something smaller, and
-// nothing reconciles the two: Ensure re-asserts only when the box
-// changes, and the box is already right. The agent then paints its
-// narrow screen into the corner of a wide pane for good (#155, #164).
-func TestAStaleResizeCannotLandAfterANewerOne(t *testing.T) {
+// answers each one with its own Ensure on its own goroutine. Left to run
+// side by side, their assertions would race for the daemon, and the one
+// landing last — not the one decided last — would own the agent's PTY
+// (#155, #164). Ensure single-flights instead: while one reconcile is in
+// the air, later calls only record the newest desired state, and the
+// reconciler drains that record before it stops. An intermediate size is
+// superseded before it is ever applied.
+func TestOverlappingEnsuresCoalesceOntoTheNewest(t *testing.T) {
 	transport := newFakeTransport()
 	manager := NewManager(&fakeBackend{transport: transport})
 	ctx := context.Background()
 
 	manager.Ensure(ctx, []string{"agent"}, 100, 40)
 
-	// Two overlapping reconciles, as two window sizes from one drag.
-	// Holding the first's command and running it second is exactly what
-	// two command goroutines are free to do.
-	stale := manager.Ensure(ctx, []string{"agent"}, 168, 42)
-	current := manager.Ensure(ctx, []string{"agent"}, 249, 71)
-	for _, resize := range current {
-		resize()
-	}
-	for _, resize := range stale {
-		resize()
-	}
+	// Park the next assertion mid-flight.
+	entered := make(chan struct{}, 1)
+	hold := make(chan struct{})
+	transport.mu.Lock()
+	transport.entered, transport.hold = entered, hold
+	transport.mu.Unlock()
 
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		manager.Ensure(ctx, []string{"agent"}, 168, 42)
+	}()
+	<-entered
+
+	// Two more window sizes land while the first is still in the air.
+	// Both return without reconciling; only the newest survives.
+	manager.Ensure(ctx, []string{"agent"}, 200, 55)
+	manager.Ensure(ctx, []string{"agent"}, 249, 71)
+
+	transport.mu.Lock()
+	transport.entered, transport.hold = nil, nil
+	transport.mu.Unlock()
+	close(hold)
+	<-done
+
+	for _, size := range transport.sizes() {
+		if size.Cols == 200 {
+			t.Error("the superseded 200x55 reached the daemon; " +
+				"it should have been coalesced away")
+		}
+	}
+	if got := transport.last(); got.Cols != 249 || got.Rows != 71 {
+		t.Errorf("daemon left at %dx%d, want 249x71 — the newest size "+
+			"anyone asked for", got.Cols, got.Rows)
+	}
 	widget, ok := manager.Widget("agent")
 	if !ok {
 		t.Fatal("no widget for the agent")
 	}
-	cols, rows := widget.Size()
-	if cols != 249 || rows != 71 {
-		t.Fatalf("box = %dx%d, want 249x71", cols, rows)
-	}
-	if got := transport.last(); got.Cols != 249 || got.Rows != 71 {
-		t.Errorf("daemon left at %dx%d, want 249x71 — the size the "+
-			"dashboard last decided on", got.Cols, got.Rows)
-	}
-
-	// And the reconcile that follows must repair it, whatever landed:
-	// the box has not changed, so this is the only chance left.
-	for _, resize := range manager.Ensure(ctx, []string{"agent"}, 249, 71) {
-		resize()
-	}
-	if got := transport.last(); got.Cols != 249 || got.Rows != 71 {
-		t.Errorf("after a further reconcile the daemon is still %dx%d, "+
-			"want 249x71: nothing reclaims the pane", got.Cols, got.Rows)
+	if cols, rows := widget.Size(); cols != 249 || rows != 71 {
+		t.Errorf("box = %dx%d, want 249x71", cols, rows)
 	}
 }
 
-// A refused assertion is the same failure wearing different clothes: the
-// box is the size the dashboard wants, so nothing about it says the
-// terminal never moved. The next reconcile is the only thing standing
-// between that and a pane stuck at the wrong size for good.
+// The single-flight covers Ensure against itself, but SetSize commands
+// can still run on whatever goroutine Bubble Tea gives them — ResizeAll
+// after an external attach, a zoom toggle. The widget itself must refuse
+// to let a stale decision overtake a newer one on the way to the daemon.
+func TestAStaleResizeCannotLandAfterANewerOne(t *testing.T) {
+	transport := newFakeTransport()
+	manager := NewManager(&fakeBackend{transport: transport})
+	ctx := context.Background()
+
+	manager.Ensure(ctx, []string{"agent"}, 100, 40)
+	widget, ok := manager.Widget("agent")
+	if !ok {
+		t.Fatal("no widget for the agent")
+	}
+
+	// Two decisions, run in the wrong order — exactly what two command
+	// goroutines are free to do.
+	_, stale := widget.SetSize(168, 42)
+	_, current := widget.SetSize(249, 71)
+	current()
+	stale()
+
+	if got := transport.last(); got.Cols != 249 || got.Rows != 71 {
+		t.Errorf("daemon left at %dx%d, want 249x71 — the size decided "+
+			"last", got.Cols, got.Rows)
+	}
+}
+
+// A refused assertion leaves the box the size the dashboard wants, so
+// nothing about it says the terminal never moved. The next reconcile is
+// the only thing standing between that and a pane stuck at the wrong
+// size for good.
 func TestARefusedResizeIsTriedAgain(t *testing.T) {
 	transport := newFakeTransport()
 	manager := NewManager(&fakeBackend{transport: transport})
@@ -136,17 +189,13 @@ func TestARefusedResizeIsTriedAgain(t *testing.T) {
 
 	manager.Ensure(ctx, []string{"agent"}, 100, 40)
 	transport.refusing(true)
-	for _, resize := range manager.Ensure(ctx, []string{"agent"}, 249, 71) {
-		resize()
-	}
+	manager.Ensure(ctx, []string{"agent"}, 249, 71)
 	if got := transport.last(); got.Cols == 249 {
 		t.Fatal("the refusal did not take; the test proves nothing")
 	}
 
 	transport.refusing(false)
-	for _, resize := range manager.Ensure(ctx, []string{"agent"}, 249, 71) {
-		resize()
-	}
+	manager.Ensure(ctx, []string{"agent"}, 249, 71)
 	if got := transport.last(); got.Cols != 249 || got.Rows != 71 {
 		t.Errorf("daemon left at %dx%d after the refusal cleared, "+
 			"want 249x71", got.Cols, got.Rows)
@@ -163,9 +212,7 @@ func TestAnUnchangedTerminalAssertsNothing(t *testing.T) {
 
 	manager.Ensure(ctx, []string{"agent"}, 249, 71)
 	for range 5 {
-		for _, resize := range manager.Ensure(ctx, []string{"agent"}, 249, 71) {
-			resize()
-		}
+		manager.Ensure(ctx, []string{"agent"}, 249, 71)
 	}
 	if count := transport.count(); count != 0 {
 		t.Errorf("%d resizes asserted on a terminal that never moved, "+
@@ -173,11 +220,11 @@ func TestAnUnchangedTerminalAssertsNothing(t *testing.T) {
 	}
 }
 
-// The other half of #155, and the reason this compares what the widget
-// asserted rather than the terminal's own size: a terminal is shared,
-// and a viewer that moves it is not something the dashboard argues with.
-// Two dashboards of different sizes would otherwise resize each other's
-// agents forever.
+// The other half of #155, and the reason needsSize compares what the
+// widget asserted rather than the terminal's own size: a terminal is
+// shared, and a viewer that moves it is not something the dashboard
+// argues with. Two dashboards of different sizes would otherwise resize
+// each other's agents forever.
 func TestAnotherViewersResizeIsFollowedNotFought(t *testing.T) {
 	transport := newFakeTransport()
 	manager := NewManager(&fakeBackend{transport: transport})
@@ -188,7 +235,7 @@ func TestAnotherViewersResizeIsFollowedNotFought(t *testing.T) {
 	if !ok {
 		t.Fatal("no widget for the agent")
 	}
-	// A browser lays itself out and moves the shared terminal.
+	// Another viewer states its own geometry and the daemon follows it.
 	transport.output <- pty.Message{Resize: &pty.Size{Cols: 80, Rows: 24}}
 	waitFor(t, func() bool {
 		cols, rows := widget.TerminalSize()
@@ -196,9 +243,7 @@ func TestAnotherViewersResizeIsFollowedNotFought(t *testing.T) {
 	}, "the emulator never followed the other viewer")
 
 	for range 3 {
-		for _, resize := range manager.Ensure(ctx, []string{"agent"}, 249, 71) {
-			resize()
-		}
+		manager.Ensure(ctx, []string{"agent"}, 249, 71)
 	}
 	if count := transport.count(); count != 0 {
 		t.Errorf("%d resizes sent back at the other viewer, want none", count)

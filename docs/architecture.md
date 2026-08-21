@@ -84,6 +84,16 @@ their own streams and repaint. Sharing the size is what keeps the replicas
 identical — the alternative is each client rendering a different reflow of the
 same program's output.
 
+Which size that is, the daemon derives rather than remembers. Each attachment
+states its viewer's geometry — with the attach, so the snapshot comes back
+already wrapped for it, and again whenever its pane moves — and the newest
+statement standing is the terminal's size. A statement retires with its
+attachment: close the browser tab, quit the second dashboard, and the daemon
+itself settles the terminal on the newest viewer still watching, falling back
+to the spawn geometry when none is. No viewer can own a terminal it has
+stopped looking at, and no client carries recovery logic for a size some
+other client left behind.
+
 The server binds loopback only. Every `/api` route requires a per-run token —
 these routes dispatch agents and stream terminals in every workspace the
 catalog knows. The page itself is served without one, because a browser
@@ -334,8 +344,10 @@ way through.
 `F` is the full-screen escape hatch: the runtime's `Attach` returns a
 command (`stormlight _wrattach <session>`) that the dashboard runs through
 `tea.ExecProcess`, suspending itself while the attachment owns the whole
-terminal; `ctrl+q` detaches and the dashboard returns, reasserting every
-widget's size because the attached client resized the daemon's sessions.
+terminal; `ctrl+q` detaches, the attachment's size retires with it, and the
+dashboard returns and re-states every widget's geometry — the daemon has
+already settled the terminals, so the re-statement is the dashboard speaking
+for itself again, not a repair.
 
 The transcript view renders the conversation from the provider's own JSONL
 transcript once hooks have reported its path — the terminal screen is all a
