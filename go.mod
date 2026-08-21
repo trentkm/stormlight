@@ -12,7 +12,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
-	github.com/trentkm/windrunner v0.0.0-20260821040656-27e6bb2a9b42
+	github.com/trentkm/windrunner v0.0.0-20260821041823-3dbf71104374
 )
 
 require (
