@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { chooseMode, followMode, mode, toggleMode } from "./mode.svelte";
 
 /**
@@ -10,6 +10,18 @@ import { chooseMode, followMode, mode, toggleMode } from "./mode.svelte";
  * guarding is that the two never disagree — a module that decided the
  * theme for itself would paint one answer and store another.
  */
+
+// Not jsdom's storage and not Node's: newer Node ships an experimental
+// localStorage global that shadows jsdom's and throws on use — the same
+// webstorage trap AGENTS.md documents for CI. A ten-line Map is the
+// same on every runner.
+const stored = new Map<string, string>();
+vi.stubGlobal("localStorage", {
+  getItem: (key: string) => stored.get(key) ?? null,
+  setItem: (key: string, value: string) => stored.set(key, String(value)),
+  removeItem: (key: string) => stored.delete(key),
+  clear: () => stored.clear(),
+});
 
 /** A stand-in for the media query jsdom does not implement. */
 function preferring(light: boolean) {
