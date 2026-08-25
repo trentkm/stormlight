@@ -76,7 +76,22 @@ class StillObserver {
   unobserve() {}
   disconnect() {}
 }
-vi.stubGlobal("IntersectionObserver", StillObserver);
+/** The visibility observers, held so a test can scroll every tile off
+ *  screen at once — jsdom lays nothing out, so nothing ever really
+ *  leaves the viewport. */
+const watchers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> =
+  [];
+class HeldObserver extends StillObserver {
+  constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
+    super();
+    watchers.push(callback);
+  }
+}
+const scrollAllAway = () => {
+  for (const watcher of watchers) watcher([{ isIntersecting: false }]);
+  flushSync();
+};
+vi.stubGlobal("IntersectionObserver", HeldObserver);
 vi.stubGlobal("ResizeObserver", StillObserver);
 
 // Not jsdom's storage and not Node's: newer Node ships an experimental
@@ -152,6 +167,7 @@ function pointer(
 ): MouseEvent {
   const event = new MouseEvent(type, {
     bubbles: true,
+    cancelable: true,
     clientX: x,
     clientY: y,
     button: 0,
@@ -181,6 +197,7 @@ beforeEach(() => {
   lifecycle.length = 0;
   contracts.length = 0;
   focusCalls.length = 0;
+  watchers.length = 0;
   localStorage.clear();
   fleet.agents = [];
   fleet.selectedID = "";
@@ -506,10 +523,18 @@ describe("gestures", () => {
     done();
   });
 
-  test("the label's open button is the way to the roster", () => {
+  // Whether a button takes focus on click is the browser's opinion,
+  // and the walk must not be: ↗ opens the roster to look, on every
+  // browser, even from a tile that was being typed into.
+  test("the label's open button is the way to the roster, not walked in", () => {
     let opened = 0;
     const done = mountCanvas(() => opened++);
     push({ id: "a" }, { id: "b" });
+    const a = tileFor("a");
+    a.dispatchEvent(pointer("pointerdown", 100, 100));
+    a.dispatchEvent(pointer("pointerup", 100, 100));
+    flushSync();
+    expect(ui.walkedIn).toBe(true);
 
     tileFor("b").querySelector<HTMLButtonElement>(".open")!.click();
     flushSync();
@@ -517,6 +542,99 @@ describe("gestures", () => {
     expect(opened).toBe(1);
     expect(fleet.selectedID).toBe("b");
     expect(ui.walkedIn).toBe(false);
+    done();
+  });
+
+  // A press that begins a gesture moves no focus. Left to the browser,
+  // a mousedown on tile B lands focus on B — the tile itself, or xterm's
+  // textarea inside it — and blurs the terminal in A that holds the
+  // keyboard: rearranging one tile ended the typing in another.
+  test("a gesture's press is cancelled, so it moves no focus", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const a = tileFor("a");
+    a.dispatchEvent(pointer("pointerdown", 100, 100));
+    a.dispatchEvent(pointer("pointerup", 100, 100));
+    flushSync();
+
+    // Another tile's screen: a drag surface, cancelled.
+    const b = tileFor("b");
+    const onB = pointer("pointerdown", 100, 100);
+    b.querySelector<HTMLElement>(".screen")!.dispatchEvent(onB);
+    expect(onB.defaultPrevented).toBe(true);
+    b.dispatchEvent(pointer("pointermove", 200, 200));
+    b.dispatchEvent(pointer("pointerup", 200, 200));
+    flushSync();
+    expect(ui.walkedIn).toBe(true);
+    expect(tileFor("a").classList.contains("focused")).toBe(true);
+
+    // The focused tile's own label and grip: gestures, cancelled.
+    const onLabel = pointer("pointerdown", 100, 100);
+    a.querySelector<HTMLElement>(".label")!.dispatchEvent(onLabel);
+    expect(onLabel.defaultPrevented).toBe(true);
+    a.dispatchEvent(pointer("pointerup", 100, 100));
+    const onGrip = pointer("pointerdown", 100, 100);
+    a.querySelector<HTMLElement>(".grip")!.dispatchEvent(onGrip);
+    expect(onGrip.defaultPrevented).toBe(true);
+    a.dispatchEvent(pointer("pointerup", 100, 100));
+
+    // The focused tile's screen is the terminal's: xterm needs that
+    // press to select text, so it is left alone.
+    const onScreen = pointer("pointerdown", 100, 100);
+    a.querySelector<HTMLElement>(".screen")!.dispatchEvent(onScreen);
+    expect(onScreen.defaultPrevented).toBe(false);
+    done();
+  });
+
+  // The walk's anchor is the whole tile. Focus that lands on the tile
+  // itself — the browser's answer to a press on its label — is still
+  // inside the walk, and must not read as walking out.
+  test("the walk's anchor is the tile, not the screen inside it", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const a = tileFor("a");
+    a.dispatchEvent(pointer("pointerdown", 100, 100));
+    a.dispatchEvent(pointer("pointerup", 100, 100));
+    flushSync();
+
+    expect(a.hasAttribute("data-walk-target")).toBe(true);
+    done();
+  });
+
+  // A terminal disposed for scrolling off screen takes the focus with
+  // it, and the walk with the focus. The one holding the keyboard is
+  // the one that must never be.
+  test("the focused tile stays attached wherever the camera goes", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" }, { id: "c" });
+    const b = tileFor("b");
+    b.dispatchEvent(pointer("pointerdown", 100, 100));
+    b.dispatchEvent(pointer("pointerup", 100, 100));
+    flushSync();
+    lifecycle.length = 0;
+
+    scrollAllAway();
+
+    expect(lifecycle.filter((e) => e.startsWith("close:")).sort()).toEqual([
+      "close:a",
+      "close:c",
+    ]);
+    done();
+  });
+
+  test("walking into a tile that scrolled away brings its terminal back", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    scrollAllAway();
+    lifecycle.length = 0;
+
+    const b = tileFor("b");
+    b.dispatchEvent(pointer("pointerdown", 100, 100));
+    b.dispatchEvent(pointer("pointerup", 100, 100));
+    flushSync();
+
+    expect(lifecycle).toEqual(["attach:b"]);
+    expect(focusCalls.at(-1)).toBe("focus:false");
     done();
   });
 
@@ -603,6 +721,25 @@ describe("the cursor and the camera", () => {
     flushSync();
 
     expect(camera()).not.toBe(panned);
+    done();
+  });
+
+  // The camera follows the cursor, not the tile: a hand that drags the
+  // selected tile away and lets go must not watch the camera chase it.
+  test("dragging the selected tile away does not drag the camera after it", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    fleet.selectedID = "a";
+    flushSync();
+    const before = camera();
+
+    const a = tileFor("a");
+    a.dispatchEvent(pointer("pointerdown", 100, 100));
+    a.dispatchEvent(pointer("pointermove", 5000, 5000));
+    a.dispatchEvent(pointer("pointerup", 5000, 5000));
+    flushSync();
+
+    expect(camera()).toBe(before);
     done();
   });
 

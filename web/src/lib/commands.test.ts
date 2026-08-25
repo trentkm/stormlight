@@ -597,11 +597,18 @@ describe("agent actions", () => {
 });
 
 describe("the palette's destinations", () => {
-  test("jumping to an agent selects it and shows the roster", () => {
-    ui.view = "canvas";
+  test("jumping to an agent selects it, and leaves only the wall", () => {
+    ui.view = "wall";
     run("select-agent", "c");
     expect(fleet.selectedID).toBe("c");
     expect(ui.view).toBe("roster");
+
+    // The canvas can show the choice — as the selected tile — so the
+    // arrangement it was chosen from is kept.
+    ui.view = "canvas";
+    run("select-agent", "a");
+    expect(fleet.selectedID).toBe("a");
+    expect(ui.view).toBe("canvas");
   });
 
   test("jumping to a workspace selects its first agent", () => {
@@ -639,6 +646,70 @@ describe("the palette's destinations", () => {
       expect(ui.view).toBe(view);
       expect(fleet.workspaceID).toBe("other");
     }
+  });
+
+  // The cursor moves to an agent nobody walked into; the palette can
+  // do this without a click ever leaving the terminal.
+  test("choosing a workspace lets go of the keyboard", () => {
+    run("walk-in");
+    run("select-workspace", "other");
+    expect(ui.walkedIn).toBe(false);
+  });
+});
+
+/**
+ * The queue and the palette draw on the whole fleet; the canvas draws
+ * only the rail's workspace. A cursor landing past the filter has no
+ * tile, so the rail widens to where it landed.
+ */
+describe("the rail follows the cursor", () => {
+  const elsewhere = () =>
+    agent("far", {
+      attention: "question",
+      workspace: {
+        id: "other",
+        kind: "git",
+        name: "other",
+        root: "/o",
+        execution_root: "/o",
+      },
+    });
+
+  test("the queue widens the rail to the agent it lands on", () => {
+    fleet.agents = [agent("a"), elsewhere()];
+    fleet.workspaceID = "ws";
+    ui.view = "canvas";
+    run("queue-next");
+    expect(fleet.selectedID).toBe("far");
+    expect(fleet.workspaceID).toBe("other");
+    expect(ui.view).toBe("canvas");
+  });
+
+  test("the palette's agent does too, and keeps the canvas", () => {
+    fleet.agents = [agent("a"), elsewhere()];
+    fleet.workspaceID = "ws";
+    ui.view = "canvas";
+    run("select-agent", "far");
+    expect(fleet.workspaceID).toBe("other");
+    expect(ui.view).toBe("canvas");
+  });
+
+  test("walking in follows too, so the tile is there to type into", () => {
+    fleet.agents = [agent("a"), elsewhere()];
+    fleet.workspaceID = "ws";
+    fleet.selectedID = "far";
+    ui.view = "canvas";
+    run("walk-in");
+    expect(fleet.workspaceID).toBe("other");
+    expect(ui.walkedIn).toBe(true);
+  });
+
+  test("All agents already shows everyone and is left alone", () => {
+    fleet.agents = [agent("a"), elsewhere()];
+    fleet.workspaceID = "";
+    run("queue-next");
+    expect(fleet.selectedID).toBe("far");
+    expect(fleet.workspaceID).toBe("");
   });
 });
 
@@ -712,6 +783,15 @@ describe("keeping the walk honest", () => {
   test("with no terminal to hand it back to, the walk ends", () => {
     reconcileFocus(null);
     expect(ui.walkedIn).toBe(false);
+  });
+
+  // A canvas tile the cursor just landed on carries the hook before its
+  // terminal exists — the terminal is a frame away and focuses itself
+  // on arrival. The gap is not the walk ending.
+  test("a target whose terminal is still arriving keeps the walk", () => {
+    make('<div class="tile" data-walk-target></div>');
+    reconcileFocus(document.body);
+    expect(ui.walkedIn).toBe(true);
   });
 
   test("an overlay taking focus does not end it", () => {

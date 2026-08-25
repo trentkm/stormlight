@@ -127,6 +127,40 @@ export function fitView(
   };
 }
 
+/**
+ * The view that shows a box at its centre, no further out than half
+ * size: a jump lands somewhere legible even from a far-flung survey
+ * view, and stays as close as the camera already was.
+ */
+export function centeredOn(
+  view: View,
+  box: Box,
+  viewport: { w: number; h: number },
+): View {
+  const z = Math.max(view.z, 0.5);
+  return {
+    x: viewport.w / 2 - (box.x + box.w / 2) * z,
+    y: viewport.h / 2 - (box.y + box.h / 2) * z,
+    z,
+  };
+}
+
+/** Whether any part of a box is inside the viewport under this view. */
+export function showing(
+  view: View,
+  box: Box,
+  viewport: { w: number; h: number },
+): boolean {
+  const left = view.x + box.x * view.z;
+  const top = view.y + box.y * view.z;
+  return (
+    left + box.w * view.z > 0 &&
+    top + box.h * view.z > 0 &&
+    left < viewport.w &&
+    top < viewport.h
+  );
+}
+
 function overlaps(a: Box, b: Box): boolean {
   return (
     a.x < b.x + b.w + placeGap &&

@@ -4,9 +4,11 @@
   import { agentsIn, fleet } from "../lib/state.svelte";
   import { canvasLayout } from "../lib/layout.svelte";
   import {
+    centeredOn,
     fitView,
     homeView,
     panBy,
+    showing,
     zoomAt,
     type Box,
     type View,
@@ -67,43 +69,30 @@
     fit();
   });
 
+  const viewport = () => ({ w: clip!.clientWidth, h: clip!.clientHeight });
+
   /** The camera, centred on a box at a zoom it can be read at. */
   const centerOn = (box: Box) => {
     if (!clip) return;
-    const z = Math.max(view.z, 0.5);
-    view = {
-      x: clip.clientWidth / 2 - (box.x + box.w / 2) * z,
-      y: clip.clientHeight / 2 - (box.y + box.h / 2) * z,
-      z,
-    };
-  };
-
-  /** Whether any of a box is on screen. */
-  const inView = (box: Box): boolean => {
-    if (!clip) return true;
-    const left = view.x + box.x * view.z;
-    const top = view.y + box.y * view.z;
-    return (
-      left + box.w * view.z > 0 &&
-      top + box.h * view.z > 0 &&
-      left < clip.clientWidth &&
-      top < clip.clientHeight
-    );
+    view = centeredOn(view, box, viewport());
   };
 
   // The cursor can move by key — alt+j, alt+n — onto a tile the hand
   // never went near, and on a canvas that may be ten screens away. A
   // selection nobody can see is not one, so a tile wholly off screen is
   // brought to the centre; one that is even partly on screen is left
-  // where the hand put the camera. The view is read untracked: this
-  // follows the cursor, not the camera, and tracking the camera would
-  // snap it back the moment a pan carried the tile off the edge.
+  // where the hand put the camera.
+  //
+  // Only the cursor is tracked. The camera is not, or a pan that
+  // carried the tile off the edge would snap it back; and the tile's
+  // box is not, or the hand that dragged the selected tile off screen
+  // and let go would watch the camera chase it there.
   $effect(() => {
     const id = fleet.selectedID;
-    const box = layout.tiles[id];
-    if (!box) return;
     untrack(() => {
-      if (!inView(box)) centerOn(box);
+      const box = layout.tiles[id];
+      if (!box || !clip) return;
+      if (!showing(view, box, viewport())) centerOn(box);
     });
   });
 
@@ -178,11 +167,22 @@
   };
 
   /** A click on a tile: the cursor moves there and the keyboard with
-   *  it. The command is the roster's walk-in, which on this view stays
+   *  it. Both are the roster's own commands, which on this view stay
    *  on this view. */
   const enter = (id: string) => {
-    fleet.selectedID = id;
+    run("select-agent", id);
     run("walk-in");
+  };
+
+  /** The label's ↗: the roster's full pane, to look at. Letting go of
+   *  the keyboard is said here rather than left to focus, because
+   *  whether a button takes focus on click is the browser's opinion —
+   *  and arriving on the roster typing to an agent nobody walked into
+   *  is the wrong answer on any of them. */
+  const open = (id: string) => {
+    ui.walkedIn = false;
+    run("select-agent", id);
+    onopen();
   };
 </script>
 
@@ -216,10 +216,7 @@
           focused={focused === agent.id}
           oncommit={(box) => layout.put(agent.id, box)}
           onenter={() => enter(agent.id)}
-          onopen={() => {
-            fleet.selectedID = agent.id;
-            onopen();
-          }}
+          onopen={() => open(agent.id)}
         />
       {/if}
     {/each}

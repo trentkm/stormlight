@@ -1,5 +1,5 @@
 import { api } from "./api";
-import { act, agentsIn, fleet, workspaceList } from "./state.svelte";
+import { act, agentsIn, fleet, selected, workspaceList } from "./state.svelte";
 import { isUrgent, type Agent } from "./types";
 
 /**
@@ -84,11 +84,42 @@ export function reconcileFocus(active: Element | null): void {
   // The pane's own terminal, named by its hook — never `.terminal`,
   // which xterm also emits and which a wall cell would answer to first
   // in document order.
-  const helper = document.querySelector<HTMLElement>(
-    "[data-walk-target] textarea",
-  );
-  if (helper) helper.focus();
-  else ui.walkedIn = false;
+  const target = document.querySelector<HTMLElement>("[data-walk-target]");
+  if (!target) {
+    ui.walkedIn = false;
+    return;
+  }
+  // A target with no terminal in it yet is a canvas tile the cursor
+  // just landed on, whose terminal is a frame from being built; it
+  // takes the focus itself when it arrives. The walk waits for it
+  // rather than ending on the gap.
+  target.querySelector<HTMLElement>("textarea")?.focus();
+}
+
+/**
+ * The views with somewhere to type: the roster's pane, and the canvas
+ * in place. The wall only watches, so a command that ends at a keyboard
+ * leaves it for the roster and stays anywhere else.
+ */
+function typesHere(): boolean {
+  return ui.view === "roster" || ui.view === "canvas";
+}
+
+/**
+ * The rail follows a selection made past its filter.
+ *
+ * The attention queue and the palette draw on the whole fleet, and the
+ * canvas draws only the rail's workspace — so a cursor that lands on an
+ * agent elsewhere has no tile to land on, and the key looks like it did
+ * nothing. Widening the rail to that agent's workspace is what makes
+ * the selection one you can see. "All agents" is left alone; it already
+ * shows everyone.
+ */
+function followSelection(): void {
+  const agent = selected();
+  if (!agent || fleet.workspaceID === "") return;
+  const home = agent.workspace?.id ?? "";
+  if (home !== fleet.workspaceID) fleet.workspaceID = home;
 }
 
 /** The columns, left to right, as the TUI orders its panes. */
@@ -174,6 +205,11 @@ function selectWorkspace(id: string): void {
   // pane beside the roster never shows an agent from somewhere else.
   const list = visible();
   fleet.selectedID = list.length > 0 ? list[0].id : "";
+  // And lets go of the keyboard: the cursor just moved to an agent
+  // nobody walked into, and keystrokes following it there — the
+  // palette can do this without a click ever leaving the terminal —
+  // would be a walk-in with no Enter.
+  ui.walkedIn = false;
 }
 
 /**
@@ -248,11 +284,10 @@ function stepQueue(by: number): void {
   const at = waiting.findIndex((agent) => agent.id === fleet.selectedID);
   const next = at === -1 ? 0 : (at + by + waiting.length) % waiting.length;
   fleet.selectedID = waiting[next].id;
+  followSelection();
   // Somewhere the answer can be typed — but not walked in: the TUI's
-  // queue keys move the cursor and leave walking in to Enter. The
-  // canvas types in place and brings the tile into view itself; only
-  // the wall has nowhere to type, so only the wall is left.
-  if (ui.view === "wall") ui.view = "roster";
+  // queue keys move the cursor and leave walking in to Enter.
+  if (!typesHere()) ui.view = "roster";
 }
 
 /** Runs the command an id names. Unknown ids are ignored rather than
@@ -296,11 +331,14 @@ export function run(id: string, argument?: string): void {
     case "walk-in":
       if (fleet.selectedID === "") return;
       // The canvas types in place: its selected tile takes the
-      // keyboard where it sits. Anywhere else the roster's pane is the
-      // terminal, so the walk brings that view with it. The pane state
-      // is set either way — it is what a later 1 lands on, and landing
-      // walked-in on a hidden terminal is a keyboard nobody holds.
-      if (ui.view !== "canvas") ui.view = "roster";
+      // keyboard where it sits — so the tile has to be there, which is
+      // what following the selection guarantees. Anywhere else the
+      // roster's pane is the terminal, and the walk brings that view
+      // with it. The pane state is set either way: it is what a later
+      // 1 lands on, and landing walked-in on a hidden terminal is a
+      // keyboard nobody holds.
+      followSelection();
+      if (!typesHere()) ui.view = "roster";
       ui.column = "spanreed";
       ui.pane = "terminal";
       ui.walkedIn = true;
@@ -418,17 +456,18 @@ export function run(id: string, argument?: string): void {
       return;
     }
 
-    // Palette destinations
+    // Palette destinations. Both keep the view they were chosen from
+    // when it can show the choice: the canvas of a workspace is the
+    // arrangement someone made, and leaving it for the roster on every
+    // pick threw that away.
     case "select-agent":
       if (argument) {
         fleet.selectedID = argument;
-        ui.view = "roster";
+        followSelection();
+        if (!typesHere()) ui.view = "roster";
         ui.column = "agents";
       }
       return;
-    // The rail filters whatever view is showing rather than bringing
-    // the roster: a workspace chosen from the canvas is a canvas of
-    // that workspace, arranged as it was left.
     case "select-workspace":
       if (argument !== undefined) {
         ui.column = "agents";

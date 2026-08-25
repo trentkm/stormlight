@@ -78,6 +78,15 @@
    * whole tile on it would make the one terminal you are using the one
    * you cannot select text in.
    *
+   * A gesture's press is cancelled (preventDefault) so that it moves no
+   * focus. Left alone, a mousedown lands focus on the nearest thing
+   * that takes it — this tile (tabindex) or, on a screen, xterm's own
+   * textarea, which xterm focuses itself — and either one blurs the
+   * terminal that holds the keyboard. That is a walk-out nobody asked
+   * for: dragging tile B while typing into A ended the typing. The
+   * focused tile's screen is the one press left uncancelled, because
+   * xterm needs that mousedown to select text.
+   *
    * Deltas accumulate step by step at whatever the zoom is at that
    * step, rather than dividing one grand total by the current zoom —
    * a pinch mid-drag (reflexive on a trackpad) would otherwise rescale
@@ -103,6 +112,7 @@
     // ignored, and its later up fails the pointerId check below, so
     // the first hand keeps its grip.
     if (gesture) return;
+    event.preventDefault();
     gesture = {
       kind,
       pointer: event.pointerId,
@@ -199,6 +209,10 @@
   };
 </script>
 
+<!-- data-walk-target while focused: the walked-in keyboard's anchor is
+     the whole tile, so focus moving anywhere inside it — the label, the
+     grip, xterm's textarea — is still the walk. A canvas has many
+     screens; only the one holding the keyboard carries the hook. -->
 <div
   class="tile"
   class:urgent={isUrgent(agent)}
@@ -209,6 +223,7 @@
   role="button"
   tabindex="0"
   aria-label="Type to {agent.name || agent.task || agent.id}"
+  data-walk-target={focused ? "" : undefined}
   bind:this={host}
   style:left="{shown.x}px"
   style:top="{shown.y}px"
@@ -242,7 +257,10 @@
       ↗
     </button>
   </div>
-  <AgentScreen {id} {visible} typing {focused} />
+  <!-- The tile holding the keyboard stays attached wherever the camera
+       goes: a terminal disposed for scrolling off screen takes the
+       focus with it, and the walk with the focus. -->
+  <AgentScreen {id} visible={visible || focused} typing {focused} />
   {#if isUrgent(agent)}
     <p class="needs">needs input</p>
   {/if}

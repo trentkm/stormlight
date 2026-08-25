@@ -65,14 +65,18 @@
       // input at all, keyboard or mouse report, and the one that cannot
       // type never opens.
       disableStdin: true,
-      cursorBlink: false,
+      // The cursor is drawn only while xterm has focus, which is only
+      // ever the tile holding the keyboard. A watched screen shows
+      // none: a block cursor on every tile reads as a fleet mid-type.
+      // Said at construction rather than by rewriting the theme on
+      // focus, because a theme write is a full restyle of the terminal
+      // — and this runs once per tile across the fleet.
+      cursorInactiveStyle: "none",
+      cursorBlink: true,
       theme: {
         background: terminal.background,
         foreground: terminal.foreground,
-        // The cursor, hidden: a watched screen takes no keystrokes, and
-        // a block cursor on every tile reads as a fleet mid-type. Focus
-        // shows it again.
-        cursor: terminal.background,
+        cursor: terminal.cursor,
       },
     });
     // The wheel is the surface's, never the agent's: there is no
@@ -132,16 +136,12 @@
   });
 
   // The keyboard changing hands, on the terminal that already exists.
-  // Focus opens stdin and shows the cursor; losing it closes both, so a
-  // tile that was typed into and left goes back to being a picture.
+  // Focus opens stdin; losing it closes stdin again, so a tile that was
+  // typed into and left goes back to being a picture. The cursor
+  // follows xterm's own focus, per the construction above.
   $effect(() => {
     if (!term || !typing) return;
     term.options.disableStdin = !focused;
-    term.options.cursorBlink = focused;
-    term.options.theme = {
-      ...term.options.theme,
-      cursor: focused ? terminal.cursor : terminal.background,
-    };
     if (focused) term.focus();
     else term.blur();
   });
@@ -152,16 +152,8 @@
      transform. Collapse them and the clip runs at layout size, before
      the transform — a terminal wider than the tile loses its right and
      bottom edges first, and the scale then shrinks the surviving crop:
-     a corner, smaller, instead of the whole screen.
-
-     data-walk-target only while focused: the walked-in keyboard's
-     anchor names the one terminal that holds it, and a canvas has many
-     screens that could. -->
-<div
-  class="screen"
-  bind:this={viewport}
-  data-walk-target={focused ? "" : undefined}
->
+     a corner, smaller, instead of the whole screen. -->
+<div class="screen" bind:this={viewport}>
   <div
     class="frame"
     bind:this={screen}

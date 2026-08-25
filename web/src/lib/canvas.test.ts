@@ -13,6 +13,8 @@ import {
   tileSize,
   zoomAt,
   type Box,
+  centeredOn,
+  showing,
 } from "./canvas";
 
 describe("zooming", () => {
@@ -231,5 +233,44 @@ describe("resizing", () => {
       w: 600,
       h: 420,
     });
+  });
+});
+
+describe("centeredOn", () => {
+  const viewport = { w: 1000, h: 600 };
+  const box = { x: 2000, y: 3000, w: 400, h: 300 };
+
+  test("puts the box's middle at the viewport's", () => {
+    const view = centeredOn({ x: 0, y: 0, z: 1 }, box, viewport);
+    expect(view.x + (box.x + box.w / 2) * view.z).toBe(500);
+    expect(view.y + (box.y + box.h / 2) * view.z).toBe(300);
+  });
+
+  test("keeps a close camera close, and lifts a far one to half size", () => {
+    expect(centeredOn({ x: 0, y: 0, z: 2 }, box, viewport).z).toBe(2);
+    expect(centeredOn({ x: 0, y: 0, z: 0.05 }, box, viewport).z).toBe(0.5);
+  });
+});
+
+describe("showing", () => {
+  const viewport = { w: 1000, h: 600 };
+  const box = { x: 0, y: 0, w: 400, h: 300 };
+
+  test("a box entirely inside or partly across the edge is showing", () => {
+    expect(showing({ x: 100, y: 100, z: 1 }, box, viewport)).toBe(true);
+    // Half off the left edge: still something to see.
+    expect(showing({ x: -200, y: 100, z: 1 }, box, viewport)).toBe(true);
+    // Its last pixel just inside the right edge, scaled.
+    expect(showing({ x: 999, y: 0, z: 0.5 }, box, viewport)).toBe(true);
+  });
+
+  test("a box wholly past any edge is not", () => {
+    expect(showing({ x: -400, y: 0, z: 1 }, box, viewport)).toBe(false);
+    expect(showing({ x: 1000, y: 0, z: 1 }, box, viewport)).toBe(false);
+    expect(showing({ x: 0, y: -300, z: 1 }, box, viewport)).toBe(false);
+    expect(showing({ x: 0, y: 600, z: 1 }, box, viewport)).toBe(false);
+    // Zoom counts: at z = 0.5 the box ends at 200px, short of an
+    // origin 200px past the edge.
+    expect(showing({ x: -200, y: 0, z: 0.5 }, box, viewport)).toBe(false);
   });
 });
