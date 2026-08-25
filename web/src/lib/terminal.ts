@@ -100,6 +100,17 @@ export interface Options {
    * already is, which the seed tells it.
    */
   watching?: boolean;
+  /**
+   * typing lets a watcher speak after all — keystrokes only, never a
+   * size. A canvas tile is watched most of the time and typed into when
+   * it holds the keyboard, and the two halves of the watching contract
+   * come apart exactly there: input needs no geometry of its own, since
+   * what is typed lands at the shared terminal's cursor wherever this
+   * viewer scales it, while a size named from a tile would still reflow
+   * the fleet. Whether keys are produced at all is the terminal's
+   * business (xterm's disableStdin); this only says where they go.
+   */
+  typing?: boolean;
 }
 
 /**
@@ -122,6 +133,7 @@ export function attach(
   options: Options = {},
 ): Attachment {
   const watching = options.watching ?? false;
+  const typing = !watching || (options.typing ?? false);
   let socket: WebSocket | null = null;
   // Zero until this viewer has measured itself: it has asserted no
   // geometry, so it has none to compare against.
@@ -315,10 +327,10 @@ export function attach(
     if (socket?.readyState === WebSocket.OPEN) socket.send(data);
   };
 
-  // A watcher registers no input handlers at all, rather than dropping
-  // what they produce: a cell that quietly swallowed keystrokes would
-  // look like an agent ignoring you.
-  const input = watching
+  // A watcher that cannot type registers no input handlers at all,
+  // rather than dropping what they produce: a cell that quietly
+  // swallowed keystrokes would look like an agent ignoring you.
+  const input = !typing
     ? { dispose: () => {} }
     : term.onData((data) => {
         const encoded = new TextEncoder().encode(data);
@@ -326,7 +338,7 @@ export function attach(
         bytes.set(encoded);
         send(bytes);
       });
-  const binary = watching
+  const binary = !typing
     ? { dispose: () => {} }
     : term.onBinary((data) => {
         const bytes = new Uint8Array(new ArrayBuffer(data.length));

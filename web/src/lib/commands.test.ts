@@ -483,6 +483,21 @@ describe("the attention queue", () => {
     run("queue-next");
     expect(fleet.selectedID).toBe("a");
   });
+
+  // The queue key lands somewhere the answer can be typed. The wall
+  // has no such place; the canvas types in place and brings the tile
+  // into view itself, so leaving it would throw away the arrangement
+  // the key was pressed over.
+  test("leaves the wall for the roster, and stays on the canvas", () => {
+    fleet.agents = [agent("calm"), agent("asking", { attention: "question" })];
+    ui.view = "wall";
+    run("queue-next");
+    expect(ui.view).toBe("roster");
+
+    ui.view = "canvas";
+    run("queue-next");
+    expect(ui.view).toBe("canvas");
+  });
 });
 
 describe("walking in and out", () => {
@@ -497,6 +512,25 @@ describe("walking in and out", () => {
     fleet.selectedID = "";
     run("walk-in");
     expect(ui.walkedIn).toBe(false);
+  });
+
+  // The canvas types in place: the walk stays on it, and lands the
+  // roster's pane state on the terminal tab for whenever 1 is pressed
+  // — arriving walked-in on a hidden diff is a keyboard nobody holds.
+  test("on the canvas, Enter walks into the tile where it sits", () => {
+    ui.view = "canvas";
+    ui.pane = "diff";
+    run("walk-in");
+    expect(ui.walkedIn).toBe(true);
+    expect(ui.view).toBe("canvas");
+    expect(ui.pane).toBe("terminal");
+  });
+
+  test("from the wall, Enter brings the roster", () => {
+    ui.view = "wall";
+    run("walk-in");
+    expect(ui.walkedIn).toBe(true);
+    expect(ui.view).toBe("roster");
   });
 
   test("Ctrl-space walks out", () => {
@@ -593,6 +627,18 @@ describe("the palette's destinations", () => {
   test("a workspace with no agents clears the selection rather than lying", () => {
     run("select-workspace", "empty");
     expect(fleet.selectedID).toBe("");
+  });
+
+  // The rail filters the view that is showing. Choosing a workspace
+  // from the canvas used to land on the roster — a navigation nobody
+  // asked for, from the one view whose arrangement is worth keeping.
+  test("choosing a workspace keeps the view it was chosen from", () => {
+    for (const view of ["canvas", "wall", "roster"] as const) {
+      ui.view = view;
+      run("select-workspace", "other");
+      expect(ui.view).toBe(view);
+      expect(fleet.workspaceID).toBe("other");
+    }
   });
 });
 

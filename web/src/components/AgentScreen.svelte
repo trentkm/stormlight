@@ -14,27 +14,43 @@
    * this plus chrome; the contract lives here so it cannot drift between
    * them.
    *
-   * Watching: no keystrokes, and no size. The terminal is shared, so a
-   * viewer that announced its own geometry would reflow the agent for
-   * everyone — including the dashboard reading it.
+   * Watching: no size, ever. The terminal is shared, so a viewer that
+   * announced its own geometry would reflow the agent for everyone —
+   * including the dashboard reading it.
+   *
+   * Typing is the half that can be handed back. A screen that `typing`
+   * names as able to speak sends keystrokes down the socket while it is
+   * `focused` — what is typed lands at the shared cursor wherever this
+   * screen scales it, so it needs no geometry of its own. A screen that
+   * cannot type (the wall's) registers no input at all.
    */
-  let { id, visible }: { id: string; visible: boolean } = $props();
+  let {
+    id,
+    visible,
+    typing = false,
+    focused = false,
+  }: { id: string; visible: boolean; typing?: boolean; focused?: boolean } =
+    $props();
 
   let viewport: HTMLDivElement;
   let screen: HTMLDivElement;
   let scale = $state(1);
   let shiftX = $state(0);
   let shiftY = $state(0);
+  let term = $state<Terminal>();
 
   $effect(() => {
     if (!visible || !screen) return;
     // `id` is a string prop, deliberately never the agent object: every
     // roster push re-proxies every agent, and an effect depending on the
     // object would tear down and re-attach every terminal at the
-    // roster's cadence.
+    // roster's cadence. `typing` is a capability fixed at mount, and
+    // `focused` is read by the effect below, never here — the keyboard
+    // changing hands must not rebuild the terminal it is handed to.
     const agentID = id;
+    const canType = typing;
 
-    const term = new Terminal({
+    const built = new Terminal({
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: 12,
       lineHeight: 1.1,
@@ -45,27 +61,36 @@
       // the fleet.
       scrollback: 0,
       allowProposedApi: true,
+      // Closed until focus opens it: an unfocused screen produces no
+      // input at all, keyboard or mouse report, and the one that cannot
+      // type never opens.
       disableStdin: true,
       cursorBlink: false,
       theme: {
         background: terminal.background,
         foreground: terminal.foreground,
         // The cursor, hidden: a watched screen takes no keystrokes, and
-        // a block cursor on every tile reads as a fleet mid-type.
+        // a block cursor on every tile reads as a fleet mid-type. Focus
+        // shows it again.
         cursor: terminal.background,
       },
     });
+    // The wheel is the surface's, never the agent's: there is no
+    // scrollback to move, and a tile that reported the wheel to an agent
+    // in mouse mode would scroll its history while the canvas panned.
+    built.attachCustomWheelEventHandler(() => false);
     const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(screen);
+    built.loadAddon(fitAddon);
+    built.open(screen);
+    term = built;
 
     const attachment: Attachment = attach(
-      term,
+      built,
       fitAddon,
       agentID,
       () => false,
       () => {},
-      { watching: true },
+      { watching: true, typing: canType },
     );
 
     // The whole screen, shrunk, rather than a corner of it: a fleet is
@@ -101,8 +126,24 @@
       clearInterval(frames);
       sizes.disconnect();
       attachment.close();
-      term.dispose();
+      term = undefined;
+      built.dispose();
     };
+  });
+
+  // The keyboard changing hands, on the terminal that already exists.
+  // Focus opens stdin and shows the cursor; losing it closes both, so a
+  // tile that was typed into and left goes back to being a picture.
+  $effect(() => {
+    if (!term || !typing) return;
+    term.options.disableStdin = !focused;
+    term.options.cursorBlink = focused;
+    term.options.theme = {
+      ...term.options.theme,
+      cursor: focused ? terminal.cursor : terminal.background,
+    };
+    if (focused) term.focus();
+    else term.blur();
   });
 </script>
 
@@ -111,8 +152,16 @@
      transform. Collapse them and the clip runs at layout size, before
      the transform — a terminal wider than the tile loses its right and
      bottom edges first, and the scale then shrinks the surviving crop:
-     a corner, smaller, instead of the whole screen. -->
-<div class="screen" bind:this={viewport}>
+     a corner, smaller, instead of the whole screen.
+
+     data-walk-target only while focused: the walked-in keyboard's
+     anchor names the one terminal that holds it, and a canvas has many
+     screens that could. -->
+<div
+  class="screen"
+  bind:this={viewport}
+  data-walk-target={focused ? "" : undefined}
+>
   <div
     class="frame"
     bind:this={screen}

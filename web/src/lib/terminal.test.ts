@@ -70,9 +70,11 @@ function fakeTerminal() {
       this.rows = rows;
     },
     handlers: [] as string[],
+    /** What a keystroke reaches, once something is listening. */
+    type: undefined as ((data: string) => void) | undefined,
     onData(fn: (data: string) => void) {
       this.handlers.push("data");
-      void fn;
+      this.type = fn;
       return { dispose: () => {} };
     },
     onBinary(fn: (data: string) => void) {
@@ -87,7 +89,9 @@ function fakeTerminal() {
   };
 }
 
-function setup(options: { laidOut?: boolean; watching?: boolean } = {}) {
+function setup(
+  options: { laidOut?: boolean; watching?: boolean; typing?: boolean } = {},
+) {
   const term = fakeTerminal();
   const states: Connection[] = [];
   const layout = { laidOut: options.laidOut ?? true };
@@ -101,7 +105,7 @@ function setup(options: { laidOut?: boolean; watching?: boolean } = {}) {
     "agent-one",
     () => layout.laidOut,
     (state) => states.push(state),
-    { watching: options.watching },
+    { watching: options.watching, typing: options.typing },
   );
   return {
     term,
@@ -439,6 +443,28 @@ describe("watching", () => {
     attachment.fit();
 
     expect(measures.count).toBe(0);
+  });
+
+  // A canvas tile that holds the keyboard: the two halves of watching
+  // come apart, and only the geometry half is load-bearing. Keystrokes
+  // land at the shared cursor wherever this viewer scales it; a size
+  // would still reflow the fleet.
+  test("typing sends keystrokes and still names no size", () => {
+    const { term, attachment, socket } = setup({
+      watching: true,
+      typing: true,
+      laidOut: true,
+    });
+    socket().open();
+    socket().sent.length = 0;
+    term.cols = 200;
+    term.rows = 60;
+    attachment.fit();
+    expect(socket().url).not.toContain("cols=");
+    expect(socket().sent).toEqual([]);
+
+    term.type!("ls\r");
+    expect(socket().sent).toEqual([new TextEncoder().encode("ls\r")]);
   });
 
   test("still paints what the terminal sends", () => {

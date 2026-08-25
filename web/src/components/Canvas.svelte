@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import { run, ui } from "../lib/commands.svelte";
   import { agentsIn, fleet } from "../lib/state.svelte";
   import { canvasLayout } from "../lib/layout.svelte";
   import {
@@ -18,6 +20,11 @@
   // A fresh store per workspace: switching workspaces in the rail swaps
   // the whole arrangement, each remembered separately.
   const layout = $derived(canvasLayout(fleet.workspaceID));
+
+  // The tile with the keyboard: the selected agent's, while walked in.
+  // The canvas types in place, so the walk that puts the keyboard in
+  // the roster's pane puts it here instead when this is the view.
+  const focused = $derived(ui.walkedIn ? fleet.selectedID : "");
 
   let clip = $state<HTMLDivElement>();
   let view = $state<View>(homeView);
@@ -58,6 +65,46 @@
     if (fittedFor === workspace || agents.length === 0 || !clip) return;
     fittedFor = workspace;
     fit();
+  });
+
+  /** The camera, centred on a box at a zoom it can be read at. */
+  const centerOn = (box: Box) => {
+    if (!clip) return;
+    const z = Math.max(view.z, 0.5);
+    view = {
+      x: clip.clientWidth / 2 - (box.x + box.w / 2) * z,
+      y: clip.clientHeight / 2 - (box.y + box.h / 2) * z,
+      z,
+    };
+  };
+
+  /** Whether any of a box is on screen. */
+  const inView = (box: Box): boolean => {
+    if (!clip) return true;
+    const left = view.x + box.x * view.z;
+    const top = view.y + box.y * view.z;
+    return (
+      left + box.w * view.z > 0 &&
+      top + box.h * view.z > 0 &&
+      left < clip.clientWidth &&
+      top < clip.clientHeight
+    );
+  };
+
+  // The cursor can move by key — alt+j, alt+n — onto a tile the hand
+  // never went near, and on a canvas that may be ten screens away. A
+  // selection nobody can see is not one, so a tile wholly off screen is
+  // brought to the centre; one that is even partly on screen is left
+  // where the hand put the camera. The view is read untracked: this
+  // follows the cursor, not the camera, and tracking the camera would
+  // snap it back the moment a pan carried the tile off the edge.
+  $effect(() => {
+    const id = fleet.selectedID;
+    const box = layout.tiles[id];
+    if (!box) return;
+    untrack(() => {
+      if (!inView(box)) centerOn(box);
+    });
   });
 
   /**
@@ -118,9 +165,8 @@
     // burning an index on one minted a tick from now would silently
     // skip an agent per press.
     let box;
-    let target;
     for (let step = 0; step < urgent.length; step++) {
-      target = urgent[(jumpAt + step) % urgent.length];
+      const target = urgent[(jumpAt + step) % urgent.length];
       box = layout.tiles[target.id];
       if (box) {
         jumpAt = (jumpAt + step + 1) % urgent.length;
@@ -128,12 +174,15 @@
       }
     }
     if (!box) return;
-    const z = Math.max(view.z, 0.5);
-    view = {
-      x: clip.clientWidth / 2 - (box.x + box.w / 2) * z,
-      y: clip.clientHeight / 2 - (box.y + box.h / 2) * z,
-      z,
-    };
+    centerOn(box);
+  };
+
+  /** A click on a tile: the cursor moves there and the keyboard with
+   *  it. The command is the roster's walk-in, which on this view stays
+   *  on this view. */
+  const enter = (id: string) => {
+    fleet.selectedID = id;
+    run("walk-in");
   };
 </script>
 
@@ -163,7 +212,10 @@
           box={layout.tiles[agent.id]}
           zoom={view.z}
           {clip}
+          selected={fleet.selectedID === agent.id}
+          focused={focused === agent.id}
           oncommit={(box) => layout.put(agent.id, box)}
+          onenter={() => enter(agent.id)}
           onopen={() => {
             fleet.selectedID = agent.id;
             onopen();

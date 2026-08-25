@@ -60,8 +60,8 @@ export function reconcileFocus(active: Element | null): void {
   if (active instanceof HTMLElement && active.closest("dialog")) return;
   // The hook, not `.terminal`: a watching wall cell carries xterm's own
   // class, and reading one as the walk would keep the walk alive over a
-  // terminal that cannot hear it. Unreachable today — walking in forces
-  // the roster view — but the cost of being right is one selector.
+  // terminal that cannot hear it. On the canvas every tile is one of
+  // those, and only the tile holding the keyboard carries the hook.
   if (active instanceof HTMLElement && active.closest("[data-walk-target]")) {
     return;
   }
@@ -248,10 +248,11 @@ function stepQueue(by: number): void {
   const at = waiting.findIndex((agent) => agent.id === fleet.selectedID);
   const next = at === -1 ? 0 : (at + by + waiting.length) % waiting.length;
   fleet.selectedID = waiting[next].id;
-  // The roster, because that is where the answer gets typed — but not
-  // walked in: the TUI's queue keys move the cursor and leave walking
-  // in to Enter.
-  ui.view = "roster";
+  // Somewhere the answer can be typed — but not walked in: the TUI's
+  // queue keys move the cursor and leave walking in to Enter. The
+  // canvas types in place and brings the tile into view itself; only
+  // the wall has nowhere to type, so only the wall is left.
+  if (ui.view === "wall") ui.view = "roster";
 }
 
 /** Runs the command an id names. Unknown ids are ignored rather than
@@ -294,7 +295,12 @@ export function run(id: string, argument?: string): void {
     // The terminal
     case "walk-in":
       if (fleet.selectedID === "") return;
-      ui.view = "roster";
+      // The canvas types in place: its selected tile takes the
+      // keyboard where it sits. Anywhere else the roster's pane is the
+      // terminal, so the walk brings that view with it. The pane state
+      // is set either way — it is what a later 1 lands on, and landing
+      // walked-in on a hidden terminal is a keyboard nobody holds.
+      if (ui.view !== "canvas") ui.view = "roster";
       ui.column = "spanreed";
       ui.pane = "terminal";
       ui.walkedIn = true;
@@ -420,9 +426,11 @@ export function run(id: string, argument?: string): void {
         ui.column = "agents";
       }
       return;
+    // The rail filters whatever view is showing rather than bringing
+    // the roster: a workspace chosen from the canvas is a canvas of
+    // that workspace, arranged as it was left.
     case "select-workspace":
       if (argument !== undefined) {
-        ui.view = "roster";
         ui.column = "agents";
         selectWorkspace(argument);
       }

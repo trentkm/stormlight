@@ -45,8 +45,12 @@ vi.mock("../lib/terminal", () => ({
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
+    options = {};
     open() {}
     loadAddon() {}
+    attachCustomWheelEventHandler() {}
+    focus() {}
+    blur() {}
     resize() {}
     write() {}
     dispose() {}

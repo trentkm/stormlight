@@ -9,7 +9,10 @@
     box,
     zoom,
     clip,
+    selected = false,
+    focused = false,
     oncommit,
+    onenter,
     onopen,
   }: {
     agent: Agent;
@@ -18,7 +21,14 @@
     zoom: number;
     /** The canvas viewport, root for the visibility observer. */
     clip: HTMLElement | undefined;
+    /** The roster's cursor is on this agent. */
+    selected?: boolean;
+    /** Walked in: this tile holds the keyboard. */
+    focused?: boolean;
     oncommit: (box: Box) => void;
+    /** A click: someone wants to type here. */
+    onenter: () => void;
+    /** The label's open button: someone wants the roster's full pane. */
     onopen: () => void;
   } = $props();
 
@@ -58,9 +68,15 @@
 
   /**
    * One pointer gesture: drag from anywhere on the tile, resize from
-   * the grip. A press that never travels is a click, and a click opens
-   * the agent in the roster — a watching tile takes no keystrokes, so
-   * the click a hand makes on "their" terminal has to lead somewhere.
+   * the grip. A press that never travels is a click, and a click walks
+   * in — the tile takes the keyboard and what you type goes to the
+   * agent, in place.
+   *
+   * The tile that already holds the keyboard drags by its label alone.
+   * Its screen belongs to the terminal then, the way a window's does:
+   * a press there is a selection or a mouse report, and lifting the
+   * whole tile on it would make the one terminal you are using the one
+   * you cannot select text in.
    *
    * Deltas accumulate step by step at whatever the zoom is at that
    * step, rather than dividing one grand total by the current zoom —
@@ -102,7 +118,13 @@
     host.setPointerCapture?.(event.pointerId);
   };
 
-  const down = (event: PointerEvent) => begin(event, "move");
+  const onLabel = (target: EventTarget | null) =>
+    target instanceof Element && target.closest(".label") !== null;
+
+  const down = (event: PointerEvent) => {
+    if (focused && !onLabel(event.target)) return;
+    begin(event, "move");
+  };
 
   const grip = (event: PointerEvent) => {
     // The grip is on the tile, but its press is not a drag.
@@ -144,7 +166,7 @@
     gesture = null;
     if (travel <= 4) {
       inFlight = null;
-      if (kind === "move") onopen();
+      if (kind === "move") onenter();
       return;
     }
     if (inFlight) oncommit(inFlight);
@@ -161,10 +183,19 @@
   };
 
   const key = (event: KeyboardEvent) => {
+    // The tile's own keys, for a tile reached by Tab — never the
+    // terminal's. Its keystrokes bubble up through here, and an Enter
+    // typed at the agent must not also be an Enter pressed on the tile.
+    if (event.target !== host) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      onopen();
+      onenter();
     }
+  };
+
+  const open = (event: MouseEvent) => {
+    event.stopPropagation();
+    onopen();
   };
 </script>
 
@@ -173,9 +204,11 @@
   class:urgent={isUrgent(agent)}
   class:done={!agent.process_live}
   class:lifted={inFlight !== null}
+  class:selected
+  class:focused
   role="button"
   tabindex="0"
-  aria-label="Open {agent.name || agent.task || agent.id}"
+  aria-label="Type to {agent.name || agent.task || agent.id}"
   bind:this={host}
   style:left="{shown.x}px"
   style:top="{shown.y}px"
@@ -192,9 +225,24 @@
       >{status.glyph}</span
     >
     <span class="name">{agent.name || agent.task || agent.id.slice(0, 8)}</span>
-    <span class="where">{agent.workspace?.name ?? ""}</span>
+    <!-- Walking in is invisible otherwise: the keyboard changes hands
+         and nothing on screen says so. -->
+    {#if focused}
+      <span class="typing">typing · ctrl-space leaves</span>
+    {:else}
+      <span class="where">{agent.workspace?.name ?? ""}</span>
+    {/if}
+    <button
+      class="open"
+      title="Open in the roster"
+      aria-label="Open {agent.name || agent.task || agent.id} in the roster"
+      onclick={open}
+      onpointerdown={(event) => event.stopPropagation()}
+    >
+      ↗
+    </button>
   </div>
-  <AgentScreen {id} {visible} />
+  <AgentScreen {id} {visible} typing {focused} />
   {#if isUrgent(agent)}
     <p class="needs">needs input</p>
   {/if}
@@ -218,6 +266,9 @@
   .tile:hover {
     border-color: var(--accent);
   }
+  .tile.selected {
+    border-color: var(--accent);
+  }
   .tile.lifted {
     cursor: grabbing;
     border-color: var(--accent);
@@ -229,6 +280,17 @@
     border-color: var(--waiting);
     box-shadow: 0 0 14px var(--attention-glow);
   }
+  /* The tile you are typing into is lit at its own edge, the way the
+     roster's pane is when it has the keyboard — and its screen is the
+     terminal's, so the grab cursor retreats to the label. */
+  .tile.focused {
+    border-color: var(--aim);
+    box-shadow: inset 0 0 0 1px var(--aim);
+    cursor: default;
+  }
+  .tile.focused .label {
+    cursor: grab;
+  }
   .tile.done {
     opacity: 0.72;
   }
@@ -238,7 +300,7 @@
     gap: 8px;
     flex: 0 0 auto;
     height: 26px;
-    padding: 0 10px;
+    padding: 0 6px 0 10px;
     background: var(--bg-raised);
     border-bottom: 1px solid var(--border);
     color: var(--text);
@@ -258,7 +320,29 @@
     color: var(--muted);
     font-size: 11px;
   }
+  .typing {
+    color: var(--aim);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
   .tile.urgent .where {
+    color: var(--attention-ink-dim);
+  }
+  .open {
+    flex: 0 0 auto;
+    padding: 0 5px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .open:hover {
+    color: var(--accent);
+  }
+  .tile.urgent .open {
     color: var(--attention-ink-dim);
   }
   .needs {
