@@ -15,6 +15,16 @@ import (
 func (m Model) renderAgents(width, height int) string {
 	agents := m.agentsForSelectedWorkspace()
 	if len(agents) == 0 {
+		// An empty column has two meanings and they are not
+		// interchangeable. This workspace has no agents in it, or the
+		// machine it is on has not finished answering — which is what a
+		// dashboard reopened after a while, or after a laptop woke up, is
+		// looking at for as long as the handshake takes.
+		selected, _ := m.selectedWorkspace()
+		if note := m.reachingNote(
+			width, m.reachingFor(selected.Host)...); note != "" {
+			return note
+		}
 		return mutedStyle().Render(" No agents")
 	}
 	expanded := m.expandedRows()

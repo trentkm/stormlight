@@ -144,8 +144,21 @@ func (m Model) updateAddWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) renderWorkspaces(width, height int) string {
+	// The catalog holds directories on machines this one has to ask, and
+	// a machine that has not answered contributes no rows. Without a word
+	// about it the pane is a short list that grows on its own a second
+	// later; with one it is a list that says what is still coming.
+	note := m.reachingBar(width)
 	if len(m.groups) == 0 {
+		if note != "" {
+			return note
+		}
 		return mutedStyle().Render(" No workspaces")
+	}
+	if note != "" {
+		// The note costs a row, taken from the list rather than from the
+		// pane, so nothing below it moves.
+		height = max(1, height-1)
 	}
 
 	expanded := m.expandedRows()
@@ -166,7 +179,11 @@ func (m Model) renderWorkspaces(width, height int) string {
 	if expanded {
 		separator = "\n\n"
 	}
-	return strings.Join(rows, separator)
+	list := strings.Join(rows, separator)
+	if note != "" {
+		list += "\n" + note
+	}
+	return list
 }
 
 func (m Model) renderWorkspaceRow(

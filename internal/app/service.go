@@ -3,6 +3,7 @@ package app
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -48,10 +49,14 @@ type Service struct {
 
 	// resolved caches catalog-path resolution (one git spawn per path per
 	// call otherwise); the dashboard polls fast, directories change slowly.
-	// Keyed by catalog path, so added or removed workspaces never consult
+	// Keyed by host and path, so added or removed workspaces never consult
 	// a stale entry.
-	resolveMu sync.Mutex
-	resolved  map[workspace.Entry]resolvedWorkspace
+	resolved away[workspace.Context]
+
+	// roots caches what each machine says its workspaces' execution roots
+	// are — a second question, over the same wire, with the same rule
+	// about who waits for it.
+	roots away[[]workspace.Context]
 
 	// transcripts caches renders of transcripts that had to cross a
 	// tunnel to get here.
@@ -84,16 +89,6 @@ type cachedTranscript struct {
 // anyone waiting for it; long enough that a refresh loop is not a file
 // transfer.
 const remoteTranscriptTTL = 2 * time.Second
-
-type resolvedWorkspace struct {
-	value workspace.Context
-	// failure is why it did not resolve, remembered as deliberately as a
-	// success: a host that is asleep costs a connection attempt to
-	// discover, and re-discovering it on every refresh is a dashboard
-	// that spends its whole life waiting on a machine nobody is using.
-	failure error
-	at      time.Time
-}
 
 // workspaceResolveTTL bounds how stale a cached resolution can get; a
 // checkout converted to a worktree (or similar) is noticed within this.
@@ -280,12 +275,16 @@ func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, erro
 		if resolveErr != nil {
 			// A host that is asleep cannot describe its workspaces, and
 			// that is not a reason to fail the listing — the rest of the
-			// catalog is still answerable.
-			diagnostic.Logger().Warn("catalog workspace resolution failed",
-				"host", entry.Host,
-				"path", entry.Path,
-				"error", resolveErr,
-			)
+			// catalog is still answerable. A host being asked right now is
+			// not even that: it is a listing that is not finished, which
+			// Reaching reports and nothing needs to log.
+			if !errors.Is(resolveErr, errReaching) {
+				diagnostic.Logger().Warn("catalog workspace resolution failed",
+					"host", entry.Host,
+					"path", entry.Path,
+					"error", resolveErr,
+				)
+			}
 			continue
 		}
 		if seen[value.ID] {
@@ -311,9 +310,21 @@ func (s *Service) ListWorkspaceRoots(ctx context.Context) ([]workspace.Context, 
 	}
 	var roots []workspace.Context
 	for _, value := range workspaces {
-		values, rootErr := s.workspaces.ExecutionRoots(ctx, value)
+		values, rootErr := s.executionRoots(ctx, value)
 		if rootErr != nil {
-			return nil, rootErr
+			// A machine that cannot list its worktrees costs its own
+			// worktrees, not the picker. The workspace itself is still a
+			// place to dispatch into, and it is the place the catalog
+			// actually names.
+			if !errors.Is(rootErr, errReaching) {
+				diagnostic.Logger().Warn("workspace execution roots unavailable",
+					"host", value.Host,
+					"workspace", value.ID,
+					"error", rootErr,
+				)
+			}
+			roots = append(roots, value)
+			continue
 		}
 		roots = append(roots, values...)
 	}
@@ -367,44 +378,53 @@ func sortWorkspaceRoots(values []workspace.Context) {
 	})
 }
 
+// resolveCached turns a catalog entry into a workspace. A directory on
+// this machine is read now; one on another machine is answered from what
+// that machine last said, and asked again behind the refresh rather than
+// in front of it. See away.go for why.
 func (s *Service) resolveCached(
 	ctx context.Context,
 	entry workspace.Entry,
 ) (workspace.Context, error) {
-	s.resolveMu.Lock()
-	cached, ok := s.resolved[entry]
-	s.resolveMu.Unlock()
-	if ok && time.Since(cached.at) < s.resolveTTL(entry) {
-		return cached.value, cached.failure
+	question := func(ctx context.Context) (workspace.Context, error) {
+		return s.workspaces.ResolveOn(ctx, entry.Host, entry.Path)
 	}
-	value, err := s.workspaces.ResolveOn(ctx, entry.Host, entry.Path)
-	s.resolveMu.Lock()
-	if s.resolved == nil {
-		s.resolved = map[workspace.Entry]resolvedWorkspace{}
+	key := entry.Host + "\x00" + entry.Path
+	if entry.Host == "" {
+		return s.resolved.here(ctx, key, question)
 	}
-	s.resolved[entry] = resolvedWorkspace{value: value, failure: err, at: time.Now()}
-	s.resolveMu.Unlock()
-	if err != nil {
-		return workspace.Context{}, err
-	}
-	return value, nil
+	return s.resolved.ask(key, entry.Host, question)
 }
 
-// resolveTTL is how long an answer stands. A directory on this machine
-// changes shape rarely and costs nothing to re-read; a machine that could
-// not be reached costs a connection attempt to ask again, so it is left
-// alone for longer — the same reasoning the fleet applies to its members.
-func (s *Service) resolveTTL(entry workspace.Entry) time.Duration {
-	if entry.Host == "" {
-		return workspaceResolveTTL
+// executionRoots expands a workspace into the checkouts an agent can be
+// dispatched into. The worktree list of a repository on another machine
+// is that machine's answer to give, and asking for it is a second trip
+// down the same tunnel — so it obeys the same rule the resolution does.
+func (s *Service) executionRoots(
+	ctx context.Context,
+	value workspace.Context,
+) ([]workspace.Context, error) {
+	if value.Host == "" {
+		// The registry already caches this one, and re-reading a local
+		// worktree list is a process spawn rather than a handshake.
+		return s.workspaces.ExecutionRoots(ctx, value)
 	}
-	s.resolveMu.Lock()
-	cached, ok := s.resolved[entry]
-	s.resolveMu.Unlock()
-	if ok && cached.failure != nil {
-		return unreachableResolveTTL
+	return s.roots.ask(value.ID, value.Host, func(ctx context.Context) ([]workspace.Context, error) {
+		return s.workspaces.ExecutionRoots(ctx, value)
+	})
+}
+
+// Reaching names the machines with a question outstanding: hosts the
+// fleet is connecting to, and hosts being asked about their directories.
+// Nothing from them can be drawn yet, and "reaching devbox…" is what a
+// dashboard should say in the place it would otherwise leave empty.
+func (s *Service) Reaching() []string {
+	hosts := append(s.resolved.hosts(), s.roots.hosts()...)
+	if runtime, ok := s.runtime.(interface{ Reaching() []string }); ok {
+		hosts = append(hosts, runtime.Reaching()...)
 	}
-	return workspaceResolveTTL
+	slices.Sort(hosts)
+	return slices.Compact(hosts)
 }
 
 // applyWorkspaceNames overlays user-chosen display names from the catalog.

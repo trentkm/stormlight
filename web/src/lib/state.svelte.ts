@@ -4,7 +4,10 @@ import type { Agent, Provider, Workspace } from "./types";
 /**
  * The roster, live. One event socket serves the whole page — the server
  * pushes the entire roster whenever it changes, so there is nothing to
- * poll and nothing to merge.
+ * poll and nothing to merge. The catalog beside it is asked for on a
+ * timer instead: it is a request rather than a stream, and a workspace
+ * on a machine the server was still reaching arrives in a later answer
+ * than the first.
  */
 export const fleet = $state({
   agents: [] as Agent[],
@@ -17,9 +20,22 @@ export const fleet = $state({
   lost: "",
 });
 
+/**
+ * How often the workspace catalog is re-read.
+ *
+ * The server does not wait on another machine to answer a listing: a
+ * workspace on a host it is still reaching is simply absent from the
+ * first response and present in a later one. Asking once at start-up
+ * would therefore leave a remote workspace missing until a reload. The
+ * catalog is small and, since nothing in it blocks on SSH any more,
+ * cheap to ask for.
+ */
+const catalogInterval = 5000;
+
 export function start(): () => void {
   void refreshCatalog();
-  return roster((agents) => {
+  const catalog = setInterval(() => void refreshCatalog(), catalogInterval);
+  const stopRoster = roster((agents) => {
     fleet.agents = agents;
     // A selection that outlived its agent — deleted here or elsewhere —
     // is not a selection.
@@ -32,6 +48,10 @@ export function start(): () => void {
   }, (reason) => {
     fleet.lost = reason;
   });
+  return () => {
+    clearInterval(catalog);
+    stopRoster();
+  };
 }
 
 export async function refreshCatalog(): Promise<void> {

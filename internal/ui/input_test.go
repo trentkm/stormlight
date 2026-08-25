@@ -2455,6 +2455,8 @@ func (stubBackend) ListWorkspaceRoots(context.Context) ([]workspace.Context, err
 	return nil, nil
 }
 
+func (stubBackend) Reaching() []string { return nil }
+
 func (stubBackend) AddWorkspace(
 	_ context.Context,
 	host, path string,

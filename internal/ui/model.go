@@ -27,6 +27,11 @@ type Backend interface {
 	ListAgents(context.Context) ([]agent.Agent, error)
 	ListWorkspaces(context.Context) ([]workspace.Context, error)
 	ListWorkspaceRoots(context.Context) ([]workspace.Context, error)
+	// Reaching names the machines with a question outstanding. A listing
+	// that came back without them is not the whole answer yet, and the
+	// dashboard says which machine it is still waiting on rather than
+	// drawing an empty pane it has no evidence for.
+	Reaching() []string
 	AddWorkspace(ctx context.Context, host, path string) (workspace.Context, error)
 	RemoveWorkspace(context.Context, workspace.Context) error
 	Dispatch(context.Context, app.DispatchRequest) (agent.Agent, error)
@@ -319,6 +324,17 @@ type Model struct {
 	shimmerPhase   int
 	shimmerRunning bool
 
+	// loaded is set by the first refresh that came back at all. Before
+	// it, an empty pane means nobody has answered yet — which is a
+	// different sentence from "there is nothing here", and the only
+	// honest one to draw in the first moments of a launch.
+	loaded bool
+	// reachingHosts are the machines the last refresh was still waiting on:
+	// a daemon being connected to, a directory being asked about. Their
+	// agents and workspaces are missing from what it returned, and
+	// saying so is what keeps the gap from reading as an empty morning.
+	reachingHosts []string
+
 	normalPrefix   string
 	sortMode       sortMode
 	dispatchPrefix string
@@ -409,7 +425,10 @@ type dashboardMsg struct {
 	agents     []agent.Agent
 	workspaces []workspace.Context
 	roots      []workspace.Context
-	err        error
+	// reaching are the machines this refresh could not include because
+	// they had not answered yet.
+	reaching []string
+	err      error
 }
 
 type interactionMsg struct {
@@ -648,7 +667,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shimmerTickMsg:
-		if !m.anyAgentsActive() && !m.machineState.running {
+		if !m.anyAgentsActive() && !m.machineState.running && !m.stillReaching() {
 			m.shimmerRunning = false
 			m.shimmerPhase = 0
 			return m, nil
@@ -665,6 +684,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		agentID := m.selectedAgentID()
 		previous, _ := m.selectedAgent()
+		m.loaded = true
+		m.reachingHosts = msg.reaching
 		if msg.err != nil {
 			m.raisePolled(msg.err)
 			diagnostic.Logger().Error("dashboard refresh failed", "error", msg.err)
@@ -700,7 +721,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// new agents get sessions, deleted agents lose them, and when
 		// nothing changed this is a cheap map diff.
 		cmds = append(cmds, m.ensurePTYCmd())
-		if m.anyAgentsActive() && !m.shimmerRunning {
+		if (m.anyAgentsActive() || m.stillReaching()) && !m.shimmerRunning {
 			m.shimmerRunning = true
 			cmds = append(cmds, shimmerTickCmd())
 		}
@@ -1343,6 +1364,14 @@ func marksResultSeen(key string, active pane) bool {
 
 func (m Model) anyAgentsActive() bool {
 	return agent.Count(m.agents).Working > 0
+}
+
+// stillReaching is whether anything is outstanding — the first refresh
+// itself, or a machine that has not finished answering it. It keeps the
+// animation tick alive, because a spinner that has stopped moving is a
+// worse lie than no spinner at all.
+func (m Model) stillReaching() bool {
+	return !m.loaded || len(m.reachingHosts) > 0
 }
 
 // shimmerPhaseOrRest returns the sweep phase while the shimmer is running

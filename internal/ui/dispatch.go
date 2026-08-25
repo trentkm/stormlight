@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -305,20 +304,6 @@ func (m Model) renderAddWorkspaceTabs(width int) string {
 	return tabs
 }
 
-// reaching is the animation for a machine being contacted: Bubbles' own
-// Points spinner, whose ∙ and ● are already this dashboard's vocabulary
-// for quiet and working. The frames and the pace both come from the
-// library rather than being invented here.
-//
-// It rides the tick the working glow already runs on — 90ms — rather
-// than starting a second loop, so each frame is held for as many ticks
-// as the spinner's own FPS asks for.
-var reaching = spinner.Points
-
-// reachingHold is how many 90ms ticks one frame lasts, from the
-// spinner's declared rate.
-var reachingHold = max(1, int(reaching.FPS/(90*time.Millisecond)))
-
 // renderMachineStatus says what is happening with the machine the modal
 // has opened — reaching it, what it lacks, or why it could not be
 // reached. Empty for this machine, which needs no explaining.
@@ -331,12 +316,7 @@ func (m Model) renderMachineStatus(width int) string {
 		return ""
 	}
 	if m.machineState.running {
-		frame := reaching.Frames[0]
-		if phase := m.shimmerPhaseOrRest(); phase >= 0 {
-			frame = reaching.Frames[(phase/reachingHold)%len(reaching.Frames)]
-		}
-		return truncate(accentStyle().Render(frame)+" "+
-			mutedStyle().Render("Reaching "+host+"…"), width)
+		return m.reachingNote(width, host)
 	}
 	switch {
 	case m.machineState.err != nil:

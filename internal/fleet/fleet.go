@@ -16,6 +16,7 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -50,7 +51,19 @@ type member struct {
 	runtime  session.Runtime
 	failure  error
 	failedAt time.Time
+	// reaching is set while a dial is in flight, and settled is closed
+	// when that dial finishes. Together they make one connection attempt
+	// serve everyone who wants it: the refresh that started it and walked
+	// away, and the dispatch that arrived mid-dial and must wait.
+	reaching bool
+	settled  chan struct{}
 }
+
+// errReaching is a member that has not answered yet — not a failure, and
+// not an empty machine. It is the difference between "there is nothing
+// there" and "nobody has asked yet", which is the whole reason a
+// dashboard can say so.
+var errReaching = errors.New("still being reached")
 
 // Discover supplies a member for a host that was not passed to New.
 //
@@ -95,8 +108,12 @@ func (f *Runtime) roster() []*member {
 // Status is one member's reachability, for a dashboard that wants to say
 // so rather than silently listing fewer agents.
 type Status struct {
-	Host  string
-	Error error
+	Host string
+	// Reaching is a connection in flight. It is not success and it is not
+	// failure; it is the state every remote host passes through, and the
+	// one a dashboard has until now had no way to draw.
+	Reaching bool
+	Error    error
 }
 
 func (f *Runtime) Status() []Status {
@@ -104,31 +121,122 @@ func (f *Runtime) Status() []Status {
 	statuses := make([]Status, 0, len(members))
 	for _, m := range members {
 		m.mu.Lock()
-		statuses = append(statuses, Status{Host: m.host, Error: m.failure})
+		status := Status{Host: m.host, Reaching: m.reaching}
+		if !m.reaching {
+			status.Error = m.failure
+		}
 		m.mu.Unlock()
+		statuses = append(statuses, status)
 	}
 	return statuses
 }
 
+// Reaching names the machines being connected to right now, so a caller
+// can say "reaching devbox…" instead of "no agents".
+func (f *Runtime) Reaching() []string {
+	var hosts []string
+	for _, status := range f.Status() {
+		if status.Reaching && status.Host != "" {
+			hosts = append(hosts, status.Host)
+		}
+	}
+	return hosts
+}
+
 // resolve connects the member if it is not connected, honouring the retry
 // window so an unreachable host is not dialled on every refresh.
+//
+// This is the blocking form, and it is for the things a human just asked
+// for: a dispatch, an attach, a keystroke on its way to an agent. Those
+// cannot be served by a machine that is not connected yet, so they wait
+// for the dial — including one already in flight, whose answer they take
+// rather than opening a second connection beside it.
 func (m *member) resolve() (session.Runtime, error) {
+	for {
+		m.mu.Lock()
+		if m.runtime != nil {
+			runtime := m.runtime
+			m.mu.Unlock()
+			return runtime, nil
+		}
+		if m.reaching {
+			settled := m.settled
+			m.mu.Unlock()
+			<-settled
+			continue
+		}
+		if m.failure != nil && time.Since(m.failedAt) < m.retryWindow() {
+			failure := m.failure
+			m.mu.Unlock()
+			return nil, failure
+		}
+		m.beginLocked()
+		m.mu.Unlock()
+		return m.dial()
+	}
+}
+
+// listing is resolve for a poll rather than for a person.
+//
+// A refresh runs several times a second and redraws whatever answered;
+// nothing about it is worth a machine's connection time. So a member that
+// is not connected is dialled in the background and reports errReaching,
+// and the roster is drawn from the machines that can answer now. The one
+// exception is this machine, whose daemon is a unix socket away and is
+// started by the very act of dialling it — backgrounding that would trade
+// a millisecond for a whole poll interval of an empty dashboard.
+func (m *member) listing() (session.Runtime, error) {
+	if m.host == "" {
+		return m.resolve()
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.runtime != nil {
-		return m.runtime, nil
+		runtime := m.runtime
+		m.mu.Unlock()
+		return runtime, nil
+	}
+	if m.reaching {
+		m.mu.Unlock()
+		return nil, errReaching
 	}
 	if m.failure != nil && time.Since(m.failedAt) < m.retryWindow() {
-		return nil, m.failure
+		failure := m.failure
+		m.mu.Unlock()
+		return nil, failure
 	}
+	m.beginLocked()
+	m.mu.Unlock()
+	// Nothing here reads the outcome; the next refresh does.
+	go func() { _, _ = m.dial() }()
+	return nil, errReaching
+}
+
+// beginLocked claims the dial. The caller holds mu.
+func (m *member) beginLocked() {
+	m.reaching = true
+	m.settled = make(chan struct{})
+}
+
+// dial connects, records what happened, and releases everyone waiting on
+// the attempt.
+func (m *member) dial() (session.Runtime, error) {
 	runtime, err := m.connect()
+	m.mu.Lock()
 	if err != nil {
 		m.failure = err
 		m.failedAt = time.Now()
+	} else {
+		m.runtime = runtime
+		m.failure = nil
+	}
+	m.reaching = false
+	settled := m.settled
+	m.settled = nil
+	m.mu.Unlock()
+	close(settled)
+	if err != nil {
 		return nil, err
 	}
-	m.runtime = runtime
-	m.failure = nil
 	return runtime, nil
 }
 
@@ -159,7 +267,17 @@ func (m *member) drop(err error) {
 	m.failedAt = time.Now()
 }
 
+// ListAgents is the poll: it reports what the fleet can answer for now
+// and leaves anything still connecting to the next one.
 func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
+	return f.listAgents(ctx, false)
+}
+
+// listAgents fans the listing out over every member. When wait is set,
+// each member is dialled and waited for — which is what a question about
+// one named agent needs, because "not on any host" is only true once
+// every host has been asked.
+func (f *Runtime) listAgents(ctx context.Context, wait bool) ([]agent.Agent, error) {
 	type result struct {
 		member *member
 		agents []agent.Agent
@@ -167,13 +285,17 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	}
 	members := f.roster()
 	results := make([]result, len(members))
-	var wait sync.WaitGroup
+	var listings sync.WaitGroup
 	for index, m := range members {
-		wait.Add(1)
+		listings.Add(1)
 		go func() {
-			defer wait.Done()
+			defer listings.Done()
 			results[index] = result{member: m}
-			runtime, err := m.resolve()
+			connect := m.listing
+			if wait {
+				connect = m.resolve
+			}
+			runtime, err := connect()
 			if err != nil {
 				results[index].err = err
 				return
@@ -187,12 +309,17 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 			results[index].agents = agents
 		}()
 	}
-	wait.Wait()
+	listings.Wait()
 
 	owner := make(map[string]*member)
 	var agents []agent.Agent
 	var failures []error
 	for _, item := range results {
+		if errors.Is(item.err, errReaching) {
+			// Nothing to report and nothing to worry about. The dial is
+			// running; whatever is over there joins the next refresh.
+			continue
+		}
 		if item.err != nil {
 			failures = append(failures, fmt.Errorf("%s: %w", hostName(item.member.host), item.err))
 			diagnostic.Logger().Warn("host unavailable",
@@ -234,6 +361,11 @@ func (f *Runtime) ListAgents(ctx context.Context) ([]agent.Agent, error) {
 	// A host being down is its own absence, not the dashboard's failure —
 	// unless every host is, in which case there is nothing to show and
 	// saying so beats an empty roster that looks like an idle morning.
+	//
+	// A host still being reached is neither, so it holds the verdict: a
+	// dial in flight may yet produce agents, and calling that a failed
+	// refresh would put an error card over a dashboard that is merely
+	// loading. The refresh after it decides.
 	if len(failures) == len(members) && len(failures) > 0 {
 		return nil, failures[0]
 	}
@@ -250,7 +382,10 @@ func (f *Runtime) memberFor(ctx context.Context, id string) (session.Runtime, er
 	if runtime, ok := f.lookup(id); ok {
 		return runtime, nil
 	}
-	if _, err := f.ListAgents(ctx); err != nil {
+	// This one waits. An agent nobody has listed is the ordinary state of
+	// a command line, and answering "no such agent" because a machine had
+	// not finished connecting would be a lie with a keystroke behind it.
+	if _, err := f.listAgents(ctx, true); err != nil {
 		return nil, err
 	}
 	if runtime, ok := f.lookup(id); ok {

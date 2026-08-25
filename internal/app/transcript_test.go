@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -204,6 +205,15 @@ func TestAnUnreachableHostIsNotAskedEveryRefresh(t *testing.T) {
 	)
 
 	entry := workspace.Entry{Host: "devbox", Path: "/srv/api"}
+	// The refresh that first wants this answer does not wait for it. It
+	// says the machine is being reached and asks behind itself.
+	if _, err := service.resolveCached(context.Background(), entry); !errors.Is(err, errReaching) {
+		t.Fatalf("a machine nobody has finished asking should say so, got %v", err)
+	}
+	waitFor(t, "the attempt to fail", func() bool {
+		_, err := service.resolveCached(context.Background(), entry)
+		return err != nil && !errors.Is(err, errReaching)
+	})
 	for range 4 {
 		if _, err := service.resolveCached(context.Background(), entry); err == nil {
 			t.Fatal("an unreachable host should not resolve")
@@ -216,6 +226,20 @@ func TestAnUnreachableHostIsNotAskedEveryRefresh(t *testing.T) {
 	if got := strings.Count(string(content), "attempt"); got != 1 {
 		t.Fatalf("dialled %d times across four refreshes, want 1", got)
 	}
+}
+
+// waitFor polls for something a background ask will settle. Nothing in a
+// refresh waits on another machine any more, so the tests that care what
+// the machine said have to wait where the refresh does not.
+func waitFor(t *testing.T, what string, check func() bool) {
+	t.Helper()
+	for range 500 {
+		if check() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 // historyRuntime is a runtime spanning machines that keep their own logs.

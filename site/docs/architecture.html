@@ -257,6 +257,22 @@
     and a failed member is left alone for a retry window rather than dialled on every tick.
     And an agent's host is discovered by asking rather than remembered, so ownership is
     rebuilt from every listing and never persisted anywhere.</p>
+    <p>Nothing on the refresh path waits for a machine. A remote member that is not
+    connected is dialled in the background and reports that it is being reached; the roster
+    is drawn from whatever answered, and the host joins the refresh after its handshake
+    lands. Only this machine's daemon is dialled inline, because it is a unix socket away
+    and the dial is what starts it. The blocking form is kept for the things a person just
+    asked for — a dispatch, an attach, a keystroke on its way to an agent — and one dial
+    serves everyone waiting on it rather than opening a second connection beside the
+    first.</p>
+    <p>The same rule governs the questions the service asks machines about their
+    filesystems: what a catalog entry resolves to, and which worktrees a repository has.
+    Those answers are cached, re-asked behind the refresh that wanted them, and a machine
+    nobody has finished asking is reported as being reached rather than as having nothing.
+    <code>Service.Reaching</code> collects both — connecting daemons and outstanding
+    questions — so the dashboard can name the machine it is waiting on. Drawing &ldquo;no
+    agents&rdquo; over a handshake in progress is the failure this exists to prevent: an
+    empty pane and an unfinished one look identical, and only one of them is a fact.</p>
     <p>Dispatch follows the workspace it resolved: the context already names the machine,
     because resolution happened there. The name is also what qualifies workspace IDs.</p>
     <p>A host is known because something names it, not because it was configured: a
