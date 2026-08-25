@@ -83,15 +83,20 @@
   // brought to the centre; one that is even partly on screen is left
   // where the hand put the camera.
   //
-  // Only the cursor is tracked. The camera is not, or a pan that
-  // carried the tile off the edge would snap it back; and the tile's
-  // box is not, or the hand that dragged the selected tile off screen
-  // and let go would watch the camera chase it there.
+  // Each selection is revealed once, when it has a tile — which may be
+  // a tick after it was made, since a dispatched agent is selected
+  // before its box is minted. The box is tracked for that tick and no
+  // longer: a drag that rewrites the selected tile's box re-runs this,
+  // and revealing it again would have the camera chase the tile the
+  // hand just pushed off screen. The camera is never tracked, or a pan
+  // that carried the tile off the edge would snap it back.
+  let revealed = "";
   $effect(() => {
     const id = fleet.selectedID;
+    const box = layout.tiles[id];
+    if (!box || !clip || revealed === id) return;
+    revealed = id;
     untrack(() => {
-      const box = layout.tiles[id];
-      if (!box || !clip) return;
       if (!showing(view, box, viewport())) centerOn(box);
     });
   });

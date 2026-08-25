@@ -78,14 +78,17 @@
    * whole tile on it would make the one terminal you are using the one
    * you cannot select text in.
    *
-   * A gesture's press is cancelled (preventDefault) so that it moves no
-   * focus. Left alone, a mousedown lands focus on the nearest thing
-   * that takes it — this tile (tabindex) or, on a screen, xterm's own
-   * textarea, which xterm focuses itself — and either one blurs the
-   * terminal that holds the keyboard. That is a walk-out nobody asked
-   * for: dragging tile B while typing into A ended the typing. The
-   * focused tile's screen is the one press left uncancelled, because
-   * xterm needs that mousedown to select text.
+   * Every press is cancelled (preventDefault) so that it moves no
+   * focus, except one. Left alone, a mousedown lands focus on the
+   * nearest thing that takes it — this tile (tabindex) or, on a
+   * screen, xterm's own textarea, which xterm focuses itself — and
+   * either one blurs the terminal that holds the keyboard. That is a
+   * walk-out nobody asked for: dragging tile B while typing into A
+   * ended the typing; and a press on the focused tile's own margin,
+   * the slack around its scaled screen, parked the focus on the tile
+   * host, where the walk survived and the keys reached nothing. The
+   * exception is a press inside xterm on the focused tile, which xterm
+   * needs to select text.
    *
    * Deltas accumulate step by step at whatever the zoom is at that
    * step, rather than dividing one grand total by the current zoom —
@@ -131,8 +134,14 @@
   const onLabel = (target: EventTarget | null) =>
     target instanceof Element && target.closest(".label") !== null;
 
+  const inTerminal = (target: EventTarget | null) =>
+    target instanceof Element && target.closest(".xterm") !== null;
+
   const down = (event: PointerEvent) => {
-    if (focused && !onLabel(event.target)) return;
+    if (focused && !onLabel(event.target)) {
+      if (!inTerminal(event.target)) event.preventDefault();
+      return;
+    }
     begin(event, "move");
   };
 

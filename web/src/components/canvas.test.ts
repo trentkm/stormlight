@@ -578,11 +578,21 @@ describe("gestures", () => {
     expect(onGrip.defaultPrevented).toBe(true);
     a.dispatchEvent(pointer("pointerup", 100, 100));
 
-    // The focused tile's screen is the terminal's: xterm needs that
-    // press to select text, so it is left alone.
-    const onScreen = pointer("pointerdown", 100, 100);
-    a.querySelector<HTMLElement>(".screen")!.dispatchEvent(onScreen);
-    expect(onScreen.defaultPrevented).toBe(false);
+    // Inside xterm on the focused tile: the terminal's own press, for
+    // selecting text, left alone.
+    const xterm = document.createElement("div");
+    xterm.className = "xterm";
+    a.querySelector<HTMLElement>(".frame")!.append(xterm);
+    const onTerminal = pointer("pointerdown", 100, 100);
+    xterm.dispatchEvent(onTerminal);
+    expect(onTerminal.defaultPrevented).toBe(false);
+
+    // The focused tile's margin — the slack around its scaled screen —
+    // is nobody's: a press there parked focus on the tile host, where
+    // the walk survived and the keys reached nothing.
+    const onMargin = pointer("pointerdown", 100, 100);
+    a.querySelector<HTMLElement>(".screen")!.dispatchEvent(onMargin);
+    expect(onMargin.defaultPrevented).toBe(true);
     done();
   });
 
@@ -740,6 +750,23 @@ describe("the cursor and the camera", () => {
     flushSync();
 
     expect(camera()).toBe(before);
+    done();
+  });
+
+  // A dispatched agent is selected before its tile exists; the tile is
+  // minted a tick later, and that is when there is something to show.
+  test("a selection made before its tile is minted is still revealed", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    wheelBy(5000, 5000);
+    const panned = camera();
+
+    fleet.selectedID = "late";
+    flushSync();
+    expect(camera()).toBe(panned);
+    push({ id: "a" }, { id: "late" });
+
+    expect(camera()).not.toBe(panned);
     done();
   });
 
