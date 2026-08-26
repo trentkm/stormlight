@@ -79,6 +79,14 @@ workspace it left, with everything it had already said and done.
   them: this is a requirement rather than something the dashboard can
   detect and work around. The rest of what it draws is ordinary Unicode.
 
+  Which variant you install decides how large those two marks look, and
+  Stormlight has no say in it — a terminal glyph is the size the font drew
+  it. The `Mono` variants squeeze every glyph into a single cell; the plain
+  ones draw the same codepoint at close to twice the size and let it
+  overhang into the next column, which is roomy in the header and crowded
+  beside a workspace name. Either works: the marks are one column wide to
+  everything that measures them, whichever variant is painting.
+
 ## Install
 
 ```bash

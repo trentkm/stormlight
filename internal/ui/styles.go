@@ -79,8 +79,8 @@ func successStyle() lipgloss.Style {
 // indicator for the header, workspace names, and agent titles.
 const stormlightTitle = "Stormlight"
 
-// StormGlyph is Stormlight's mark: Nerd Font U+E364,
-// nf-weather-night_alt_sleet_storm. It opens the wordmark, caps the
+// StormGlyph is Stormlight's mark: Nerd Font U+F067E,
+// nf-md-weather_lightning_rainy. It opens the wordmark, caps the
 // footer, and leads the oath printed on the way out — every place the
 // program signs its own name. A four-pointed star stood here before, and
 // said only "something bright".
@@ -97,8 +97,19 @@ const stormlightTitle = "Stormlight"
 //
 // One cell wide — in lipgloss, and in a real terminal, which is what the
 // header's gap arithmetic assumes when it places the counters at the far
-// edge.
-const StormGlyph = "\ue364"
+// edge. It sits in Plane 15 rather than the Basic Multilingual Plane's
+// private area, which changes nothing about that: both are Private Use,
+// both measure one column.
+//
+// It comes from the Material Design set rather than the Weather Icons set
+// the mark started in, and the reason is size. Patched into a Mono
+// variant, every glyph is squeezed into one cell, and the two sets do not
+// arrive there the same: measured in JetBrains Mono Nerd Font Mono, the
+// weather icon inked 446x462 against a capital M's 456x730, while this one
+// fills 600x544. Same column, half again the ink, which is the only sense
+// in which a terminal glyph can be made bigger — the cell belongs to the
+// font, not to us.
+const StormGlyph = "\U000f067e"
 
 // shimmerRest adds off-screen travel on both ends of each sweep so the glow
 // rests at the base shade between passes instead of wrapping abruptly.

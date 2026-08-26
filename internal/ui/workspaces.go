@@ -479,7 +479,7 @@ func renderSelectedWorkspaceRow(
 }
 
 // remoteGlyph leads the row of a workspace that lives on another machine:
-// Nerd Font U+E310, nf-weather-cloudy_gusts. It says "somewhere else" and
+// Nerd Font U+F059D, nf-md-weather_windy. It says "somewhere else" and
 // nothing more, which is exactly what the first glance asks — the row is
 // read left to right, and where a workspace is outranks how many agents
 // are in it.
@@ -494,7 +494,12 @@ func renderSelectedWorkspaceRow(
 // Ambiguous, so a terminal configured to draw ambiguous glyphs wide will
 // spend two on it and take a column off the name. The same is already
 // true of the arcs and diamonds this dashboard is built from.
-const remoteGlyph = "\ue310"
+//
+// From the Material Design set for the same reason StormGlyph is: the
+// gusts it keeps are drawn to fill the cell, where the Weather Icons
+// cloud this started as inked barely half of what a capital M does. See
+// StormGlyph for the measurements.
+const remoteGlyph = "\U000f059d"
 
 // remoteMark is how a workspace on another machine says which machine:
 // that machine's initial, in the column before the counts.
