@@ -79,6 +79,23 @@ func successStyle() lipgloss.Style {
 // indicator for the header, workspace names, and agent titles.
 const stormlightTitle = "Stormlight"
 
+// wordmarkGlyph opens the wordmark: Nerd Font U+E364,
+// nf-weather-night_alt_sleet_storm. The mark before the name now says the
+// name — a storm, where a four-pointed star said only "something bright".
+//
+// It is a Private Use Area codepoint, which is a harder bargain here than
+// anywhere else in the dashboard: the header is the first thing drawn and
+// the last thing a user would think to blame, so in a terminal without a
+// Nerd Font the identity line opens with an empty box. Nothing can ask a
+// terminal whether it has the glyph, so this is a requirement rather than
+// a degradation, and README says so.
+//
+// The footer keeps its ✦ (see renderFooter). The two marks share the
+// wordmark's sky stop and read as one family, but only this one stands in
+// for the name; the footer's is a cap on a row of hints, and it still
+// draws in every font.
+const wordmarkGlyph = "\ue364"
+
 // shimmerRest adds off-screen travel on both ends of each sweep so the glow
 // rests at the base shade between passes instead of wrapping abruptly.
 const shimmerRest = 14
@@ -150,7 +167,7 @@ func renderWordmark(phase int) string {
 			Light: wordmarkStopsLight[1],
 			Dark:  wordmarkStopsDark[1],
 		}))
-	out.WriteString(glint.Render("✦ "))
+	out.WriteString(glint.Render(wordmarkGlyph + " "))
 	for index, letter := range runes {
 		t := 0.0
 		if len(runes) > 1 {

@@ -2686,3 +2686,30 @@ func runeIndex(runes []rune, want rune) int {
 	}
 	return -1
 }
+
+// TestTheWordmarkOpensWithTheStorm: the header is the dashboard's identity
+// line, and the mark in front of the name is part of the name. It is also
+// the one glyph every run draws whether or not anything is happening, so a
+// change to it is a change every user sees on every launch — worth a test
+// that says which glyph, rather than one that says "some glyph".
+func TestTheWordmarkOpensWithTheStorm(t *testing.T) {
+	// Both ends of the shimmer: at rest, and with the band mid-sweep.
+	for _, phase := range []int{-1, 0, 4, 12} {
+		wordmark := ansi.Strip(renderWordmark(phase))
+		if !strings.HasPrefix(wordmark, wordmarkGlyph+" ") {
+			t.Errorf("phase=%d: wordmark = %q, want it to open with %q",
+				phase, wordmark, wordmarkGlyph)
+		}
+		if !strings.HasSuffix(wordmark, stormlightTitle) {
+			t.Errorf("phase=%d: wordmark = %q, want it to end in the name",
+				phase, wordmark)
+		}
+		// The glyph is one cell, so the header's gap arithmetic — which
+		// measures the wordmark to place the counters — is unchanged by it.
+		if got, want := ansi.StringWidth(wordmark),
+			len(stormlightTitle)+2; got != want {
+			t.Errorf("phase=%d: wordmark is %d columns, want %d: %q",
+				phase, got, want, wordmark)
+		}
+	}
+}
