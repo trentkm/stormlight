@@ -451,21 +451,24 @@ func TestTwoMachinesSameNameStillCollide(t *testing.T) {
 	}
 }
 
-// TestARemoteWorkspaceRowLeadsWithTheCloud: a row is read left to right,
-// and the first thing worth knowing about a workspace on another machine
-// is that it is on another machine. The initial answered that only after
-// the eye had crossed the name to reach the counts, which is the wrong end
-// of the row for the question asked first.
-func TestARemoteWorkspaceRowLeadsWithTheCloud(t *testing.T) {
+// TestARemoteWorkspaceRowIsMarkedBesideItsCounts: a workspace on another
+// machine is marked, and the mark sits with the counts rather than ahead
+// of the name. Ahead of the name it was the only thing on the pane
+// starting in that column, with every name indented behind it.
+//
+// The host's initial used to hold this column. It said more — which
+// machine, not merely another one — and it still says it in the expanded
+// row's subtitle, which is the place a machine is worth naming in full.
+func TestARemoteWorkspaceRowIsMarkedBesideItsCounts(t *testing.T) {
 	groups := buildWorkspaceGroups([]workspace.Context{
 		{ID: "git:/srv/api/.git", Kind: "git", Name: "here", Root: "/srv/api"},
+		// A host whose initial appears nowhere in the row's own text, so
+		// a leftover letter mark has nothing to hide behind.
 		{Host: "devbox", ID: "devbox:git:/opt/api/.git", Kind: "git",
 			Name: "there", Root: "/opt/api"},
 	}, nil)
 	model := Model{}
 
-	// Both paths paint the marks, and they paint them in the same columns:
-	// a row must not shift sideways when the cursor lands on it.
 	for _, focused := range []bool{false, true} {
 		local := ansi.Strip(
 			model.renderWorkspaceRow(groups[0], focused, focused, 30, false))
@@ -473,39 +476,55 @@ func TestARemoteWorkspaceRowLeadsWithTheCloud(t *testing.T) {
 			model.renderWorkspaceRow(groups[1], focused, focused, 30, false))
 
 		if strings.Contains(local, remoteGlyph) {
-			t.Errorf("focused=%v: a workspace on this machine is clouded: %q",
+			t.Errorf("focused=%v: a workspace on this machine is marked: %q",
 				focused, local)
 		}
-		cloud := strings.Index(remote, remoteGlyph)
-		if cloud < 0 {
-			t.Fatalf("focused=%v: no cloud on a remote workspace: %q",
+		glyph := strings.Index(remote, remoteGlyph)
+		if glyph < 0 {
+			t.Fatalf("focused=%v: no mark on a remote workspace: %q",
 				focused, remote)
 		}
-		// Nothing but the row's own furniture stands before it.
-		if lead := strings.TrimLeft(remote[:cloud], " ▌▏"); lead != "" {
-			t.Errorf("focused=%v: %q sits before the cloud: %q",
-				focused, lead, remote)
+		name := strings.Index(remote, "there")
+		if glyph < name {
+			t.Errorf("focused=%v: the mark leads the row: %q", focused, remote)
 		}
-		if name := strings.Index(remote, "there"); cloud > name {
-			t.Errorf("focused=%v: the cloud follows the name: %q",
-				focused, remote)
+		// Nothing but the gap stands between the name and the mark, and
+		// the counts follow it immediately: the mark belongs to that
+		// cluster, not to the name it is separated from.
+		between := remote[name+len("there") : glyph]
+		if strings.TrimLeft(between, " ") != "" {
+			t.Errorf("focused=%v: %q sits between the name and the mark: %q",
+				focused, between, remote)
 		}
-		// And the initial still answers which machine, where it always did.
-		if mark := strings.Index(remote, "D"); mark < 0 || mark < cloud {
-			t.Errorf("focused=%v: the host initial left the counts: %q",
+		if !strings.HasPrefix(remote[glyph:], remoteGlyph+" ·") {
+			t.Errorf("focused=%v: the counts do not follow the mark: %q",
+				focused, remote[glyph:])
+		}
+		// And the letter is gone rather than joined.
+		if strings.Contains(remote, "D") {
+			t.Errorf("focused=%v: the host initial is still marked: %q",
 				focused, remote)
 		}
 	}
+
+	// Dropping the letter is only affordable because the machine is named
+	// in full a line below, so that line is part of this behaviour rather
+	// than a neighbour of it.
+	expanded := model
+	expanded.rowsExpanded = true
+	row := ansi.Strip(expanded.renderWorkspaceRow(groups[1], false, false, 30, false))
+	if !strings.Contains(row, "devbox") {
+		t.Errorf("the expanded row does not name the machine: %q", row)
+	}
 }
 
-// TestARemoteWorkspaceRowSpendsItsMarksOutOfTheChips: the cloud and the
-// initial are four columns, and something has to pay for them. The chips
-// pay — they are fitted after both marks are spent, so a quiet tier drops
-// off the right rather than the name losing half its letters. Fitted
-// before, against the width a local row has, a twenty-two column pane
-// showed "there…" beside two chips where it should show "there-is-a…"
-// beside one.
-func TestARemoteWorkspaceRowSpendsItsMarksOutOfTheChips(t *testing.T) {
+// TestARemoteWorkspaceRowSpendsItsMarkOutOfTheChips: the mark is two
+// columns, and something has to pay for them. The chips pay — they are
+// fitted after the mark is spent, so a quiet tier drops off the right
+// rather than the name losing letters. Fitted before, against the width a
+// local row has, a twenty-two column pane showed "there…" beside two chips
+// where it should show "there-is-a…" beside one.
+func TestARemoteWorkspaceRowSpendsItsMarkOutOfTheChips(t *testing.T) {
 	// A name of one repeated letter so the name's columns can be counted
 	// out of the rendered row.
 	name := strings.Repeat("a", 20)
@@ -541,9 +560,14 @@ func TestARemoteWorkspaceRowSpendsItsMarksOutOfTheChips(t *testing.T) {
 }
 
 // TestARemoteWorkspaceRowStillFitsItsPane: name and gap both bottom out at
-// one column, so a pane narrow enough drives the row past its own width —
-// and a row wider than the pane wraps, which costs the list a line and
-// every row below it its place.
+// one column, so the row's fixed furniture — gutter, mark, the loudest
+// chip — is what decides the narrowest pane it can be drawn in. A row
+// wider than its pane wraps, which costs the list a line and every row
+// below it its place.
+//
+// From eleven: below that the mark and the chip alone are wider than the
+// pane, and the row has overhung by a column or two for as long as
+// anything has marked a remote workspace at all.
 func TestARemoteWorkspaceRowStillFitsItsPane(t *testing.T) {
 	remote := workspace.Context{
 		Host: "devbox", ID: "devbox:git:/opt/api/.git", Kind: "git",
@@ -562,11 +586,6 @@ func TestARemoteWorkspaceRowStillFitsItsPane(t *testing.T) {
 			Activity: agent.ActivityWorking},
 	})
 	model := Model{}
-	// From eleven: below that the mark and the loudest chip alone are wider
-	// than the pane, and the row has overhung by a column or two since long
-	// before there was a cloud on it. What is pinned here is that the cloud
-	// never adds to that — it is given up first, and every width that fit
-	// before still fits.
 	for _, width := range []int{11, 12, 14, 18, 20, 24, 28, 34, 44} {
 		for _, focused := range []bool{false, true} {
 			row := model.renderWorkspaceRow(
@@ -576,22 +595,6 @@ func TestARemoteWorkspaceRowStillFitsItsPane(t *testing.T) {
 					t.Errorf("width=%d focused=%v: row is %d columns: %q",
 						width, focused, got, ansi.Strip(line))
 				}
-			}
-		}
-	}
-	// And below it the cloud is the thing given up, so a pane that already
-	// had nothing to spare is not asked for two columns more.
-	for _, width := range []int{6, 8, 10} {
-		for _, focused := range []bool{false, true} {
-			row := ansi.Strip(model.renderWorkspaceRow(
-				groups[0], focused, focused, width, false))
-			if strings.Contains(row, remoteGlyph) {
-				t.Errorf("width=%d focused=%v: clouded a row with no room "+
-					"for it: %q", width, focused, row)
-			}
-			if !strings.Contains(row, "D") {
-				t.Errorf("width=%d focused=%v: the mark that names the "+
-					"machine went first: %q", width, focused, row)
 			}
 		}
 	}

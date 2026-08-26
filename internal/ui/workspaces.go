@@ -205,18 +205,14 @@ func (m Model) renderWorkspaceRow(
 		lipgloss.Width(displayName),
 		min(10, max(1, contentWidth/2)),
 	)
-	// A workspace on another machine is marked in the columns themselves,
-	// not only in the subtitle: compact rows have no subtitle, and where a
-	// workspace is is the one thing about it not worth guessing at. Two
-	// marks, because there are two questions. The cloud leads the row and
-	// answers the one asked at a glance — this one is somewhere else. The
-	// initial rides with the counts and answers the one asked next —
-	// which machine. Neither rides with the name, so a remote workspace
-	// is not also a truncated one.
-	lead, mark := "", ""
+	// A workspace on another machine is marked in the column itself, not
+	// only in the subtitle: compact rows have no subtitle, and where a
+	// workspace is is the one thing about it not worth guessing at. The
+	// mark rides with the counts rather than the name, so a remote
+	// workspace is not also a truncated one.
+	mark := ""
 	if group.context.Host != "" {
-		lead = remoteGlyph + " "
-		mark = remoteMark(group.context.Host) + " "
+		mark = remoteGlyph + " "
 	}
 	// Nothing marks this column. A selected-but-unfocused workspace is
 	// already named by the row that stays at full strength while its
@@ -224,36 +220,22 @@ func (m Model) renderWorkspaceRow(
 	// saying it a third time is texture, not information. The two columns
 	// remain so quiet rows line up with the focused row's marker.
 	gutter := "  "
-	// Both marks are spent before the chips are fitted. A remote row has
-	// four fewer columns to spend than a local one, and chips fitted
-	// against the local width would take them out of the name — which is
-	// the one part of the row the marks are placed to protect.
+	// The mark is spent before the chips are fitted. A remote row has two
+	// fewer columns to spend than a local one, and chips fitted against
+	// the local width would take them out of the name — which is the one
+	// part of the row the mark is placed away from to protect.
 	chips := fitCountChips(
 		workspaceCountChips(stats, len(group.agents)),
 		max(1, contentWidth-
 			lipgloss.Width(gutter)-
-			lipgloss.Width(lead)-
 			lipgloss.Width(mark)-1),
 		nameNeed,
 	)
-	// The cloud is the first thing a pane too narrow for everything gives
-	// up. The initial says what the cloud says and names the machine
-	// besides, so the row that can afford only one mark keeps the one that
-	// says more — and a row assembled from its floors (one column of name,
-	// one of gap, the loudest chip) is exactly as wide as its pane rather
-	// than two columns past it, which is a wrapped row and a list that
-	// loses its footing below it.
-	floorWidth := lipgloss.Width(gutter) + lipgloss.Width(lead) +
-		lipgloss.Width(mark) + lipgloss.Width(chipsPlain(chips)) + 2
-	if floorWidth > width {
-		lead = ""
-	}
 	suffix := mark + chipsPlain(chips)
 	nameWidth := max(
 		1,
 		contentWidth-
 			lipgloss.Width(gutter)-
-			lipgloss.Width(lead)-
 			lipgloss.Width(suffix)-1,
 	)
 	name := truncate(displayName, nameWidth)
@@ -261,7 +243,6 @@ func (m Model) renderWorkspaceRow(
 		1,
 		contentWidth-
 			lipgloss.Width(gutter)-
-			lipgloss.Width(lead)-
 			lipgloss.Width(name)-
 			lipgloss.Width(suffix),
 	)
@@ -273,7 +254,7 @@ func (m Model) renderWorkspaceRow(
 	tier := attentionTierOf(stats)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
-			" "+lead,
+			" ",
 			name,
 			gap,
 			suffix,
@@ -301,13 +282,10 @@ func (m Model) renderWorkspaceRow(
 		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
 	styledSuffix := chipsStyled(chips)
-	styledLead := ""
 	if mark != "" {
 		styledSuffix = mutedStyle().Render(mark) + styledSuffix
-		styledLead = mutedStyle().Render(lead)
 	}
 	top := gutter +
-		styledLead +
 		renderedName +
 		strings.Repeat(" ", gap) +
 		styledSuffix
@@ -478,17 +456,28 @@ func renderSelectedWorkspaceRow(
 	return lipgloss.JoinVertical(lipgloss.Left, topLine, bottomLine)
 }
 
-// remoteGlyph leads the row of a workspace that lives on another machine:
-// Nerd Font U+F059D, nf-md-weather_windy. It says "somewhere else" and
-// nothing more, which is exactly what the first glance asks — the row is
-// read left to right, and where a workspace is outranks how many agents
-// are in it.
+// remoteGlyph marks a workspace that lives on another machine: Nerd Font
+// U+F059D, nf-md-weather_windy. It rides in the column before the counts,
+// where a letter — the host's initial — used to.
 //
-// It is a Private Use Area codepoint, so it needs a patched font and there
-// is no way to ask a terminal whether it has one. Without a Nerd Font the
-// column is a box. That is the price of the mark, and it is why remoteMark
-// below stays a plain letter: the two marks fail differently, and the one
-// that names the machine should not fail at all.
+// The letter said more: it named which machine, where the glyph can only
+// say "not this one". It went anyway, because the row has to be looked at
+// as well as read. A lone capital sitting between a workspace name and a
+// cluster of status glyphs read as an initial of something, and the eye
+// stopped to work out what. The glyph reads as a mark at a glance and
+// stops nothing. Which machine is a question the expanded row answers in
+// full, in its subtitle, where a name beats an initial anyway.
+//
+// It led the row for a while, in the column before the name. That put it
+// where nothing else on the pane starts and left the names indented
+// behind it — a mark can sit ahead of a row or beside its counts, and
+// beside the counts is where this pane already keeps the things that are
+// true of a workspace rather than part of its name.
+//
+// It is a Private Use Area codepoint, so it needs a patched font and
+// there is no way to ask a terminal whether it has one. Without a Nerd
+// Font the column is a box — which is the whole cost of having dropped
+// the letter, since a box says less than "D" did.
 //
 // One cell wide, here and in the emulator both — PUA is East Asian
 // Ambiguous, so a terminal configured to draw ambiguous glyphs wide will
@@ -500,26 +489,6 @@ func renderSelectedWorkspaceRow(
 // cloud this started as inked barely half of what a capital M does. See
 // StormGlyph for the measurements.
 const remoteGlyph = "\U000f059d"
-
-// remoteMark is how a workspace on another machine says which machine:
-// that machine's initial, in the column before the counts.
-//
-// The cloud above answers "somewhere else" at a glance; a dashboard worth
-// having several machines on is one where "which" is the next question,
-// and an initial answers it in the same two columns. It reads as a mark
-// rather than a word when there is only one host to tell apart.
-//
-// It is a plain letter, not a superscript: the superscript capitals exist
-// for most of the alphabet and not all of it, and a host beginning with Q
-// or Z should not render as a box. Two machines sharing an initial share
-// a mark — the subtitle carries the name in full, which is where an
-// ambiguity is worth resolving rather than in a single column.
-func remoteMark(host string) string {
-	for _, letter := range host {
-		return strings.ToUpper(string(letter))
-	}
-	return ""
-}
 
 // workspaceDetail is the expanded row's subtitle: quiet middot-joined
 // tokens — resolver kind, home-relative root, and the component when it
