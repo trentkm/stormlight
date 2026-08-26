@@ -489,12 +489,12 @@ func (f *Runtime) Attach(ctx context.Context, id string) (session.AttachResult, 
 	return runtime.Attach(ctx, id)
 }
 
-func (f *Runtime) Send(ctx context.Context, id, message string) error {
+func (f *Runtime) Send(ctx context.Context, id, message, from string) error {
 	runtime, err := f.memberFor(ctx, id)
 	if err != nil {
 		return err
 	}
-	return runtime.Send(ctx, id, message)
+	return runtime.Send(ctx, id, message, from)
 }
 
 func (f *Runtime) SendCommand(ctx context.Context, id, command string) error {

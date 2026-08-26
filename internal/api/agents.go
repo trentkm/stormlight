@@ -31,6 +31,11 @@ func call(r *http.Request) (context.Context, context.CancelFunc) {
 type agentView struct {
 	agent.Agent
 	Host string `json:"host,omitempty"`
+	// LastReply is shadowed out of the roster: it is the material a link
+	// carries, read server-side at fire time, and pushing every agent's
+	// last message with every roster would be most of the bytes on the
+	// socket for nothing a client shows.
+	LastReply string `json:"last_reply,omitempty"`
 }
 
 func viewOf(agents []agent.Agent) []agentView {

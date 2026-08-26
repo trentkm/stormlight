@@ -494,6 +494,36 @@ nothing to reopen — re-dispatching its original task would be a materially
 different act performed under the same name. The dashboard's history
 browser (`H`) serves the same records long after their agents are deleted.
 
+## Links
+
+A link is an arrow from one agent to another that sends: when the
+source's turn ends, the target receives the link's label and the source's
+last reply, so a labelled chain — implement → review → address the
+review — runs itself. `internal/link` holds the rules (no self-links, no
+cycles, a hop limit) and the state, `links.json` beside the workspace
+catalog, read and written under a file lock because every writer is a
+separate process; the application service does delivery.
+
+Links fire from the provider hook. `stormlight event`, the subprocess a
+turn end already runs, applies the turn's update — which now records the
+full last reply on the agent — and then calls the service's `TurnEnded`,
+which fires every automatic link leaving the agent and delivers any hop
+that was waiting for it to go idle. Nothing long-lived is involved: the
+pipeline runs whether a dashboard, the TUI, or nothing at all is open,
+and a hook never fails over a link (a failing hook can stall the provider
+that ran it). Delivery is the same typed-and-submitted input `stormlight
+send` uses, attributed to the source's session id in the daemon's audit
+trail. A target mid-turn is not written into; the hop is parked on the
+link and delivered by the target's own turn end, one per link, newest
+replacing older.
+
+Two guards bound a pipeline. Cycle refusal at creation catches the static
+loops. The hop limit catches the ones that route through a person: each
+delivery records, on the target, which hop of a chain its new turn is; a
+turn's own links fire only below the limit; and a turn a human started
+counts from zero. The HTTP API exposes links for the canvas to draw, and
+one verb beyond drawing — fire now — for a hand to start a chain.
+
 ## Workspace boundary
 
 Workspace discovery is intentionally outside provider adapters. Provisioning

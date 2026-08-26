@@ -47,7 +47,7 @@ func (f *fakeRuntime) ListAgents(context.Context) ([]agent.Agent, error) {
 	return append([]agent.Agent(nil), f.agents...), nil
 }
 
-func (f *fakeRuntime) Send(_ context.Context, id, message string) error {
+func (f *fakeRuntime) Send(_ context.Context, id, message, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, id+": "+message)

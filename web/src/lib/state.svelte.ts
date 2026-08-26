@@ -1,5 +1,5 @@
 import { api, roster } from "./api";
-import type { Agent, Provider, Workspace } from "./types";
+import type { Agent, Link, Provider, Workspace } from "./types";
 
 /**
  * The roster, live. One event socket serves the whole page — the server
@@ -12,6 +12,8 @@ import type { Agent, Provider, Workspace } from "./types";
 export const fleet = $state({
   agents: [] as Agent[],
   workspaces: [] as Workspace[],
+  /** The pipeline: every link, pushed with the roster. */
+  links: [] as Link[],
   providers: [] as Provider[],
   selectedID: "",
   workspaceID: "",
@@ -35,8 +37,9 @@ const catalogInterval = 5000;
 export function start(): () => void {
   void refreshCatalog();
   const catalog = setInterval(() => void refreshCatalog(), catalogInterval);
-  const stopRoster = roster((agents) => {
+  const stopRoster = roster((agents, links) => {
     fleet.agents = agents;
+    fleet.links = links;
     // A selection that outlived its agent — deleted here or elsewhere —
     // is not a selection.
     if (fleet.selectedID && !agents.some((a) => a.id === fleet.selectedID)) {
