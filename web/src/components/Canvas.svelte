@@ -293,6 +293,10 @@
     // tile's gesture; it captures its pointer, so it never surfaces
     // here with the backdrop as target.
     if (event.target !== event.currentTarget && event.target !== stage) return;
+    // Cancelled so the drag selects no text: a marquee across the
+    // corner controls otherwise highlights their labels, and the
+    // backdrop has nothing else a press could mean.
+    event.preventDefault();
     clip?.setPointerCapture?.(event.pointerId);
     if (event.shiftKey || ui.tool === "frame") {
       const at = pointOf(event);
