@@ -71,6 +71,11 @@ workspace it left, with everything it had already said and done.
 
 - `yazi` for the directory picker (installed automatically by the Homebrew
   cask). Optional: `nvim` for task editing.
+- A [Nerd Font](https://www.nerdfonts.com) if you keep workspaces on other
+  machines. Their rows lead with a cloud, which is a Private Use Area
+  codepoint and renders as an empty box in a font that does not carry one.
+  Nothing else the dashboard draws needs it; the rest is ordinary Unicode,
+  and a workspace on this machine looks the same either way.
 
 ## Install
 

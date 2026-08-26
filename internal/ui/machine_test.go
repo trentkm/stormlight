@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -447,5 +448,151 @@ func TestTwoMachinesSameNameStillCollide(t *testing.T) {
 	}
 	if groups[0].label != "srv/api" || groups[1].label != "opt/api" {
 		t.Fatalf("labels = %q, %q", groups[0].label, groups[1].label)
+	}
+}
+
+// TestARemoteWorkspaceRowLeadsWithTheCloud: a row is read left to right,
+// and the first thing worth knowing about a workspace on another machine
+// is that it is on another machine. The initial answered that only after
+// the eye had crossed the name to reach the counts, which is the wrong end
+// of the row for the question asked first.
+func TestARemoteWorkspaceRowLeadsWithTheCloud(t *testing.T) {
+	groups := buildWorkspaceGroups([]workspace.Context{
+		{ID: "git:/srv/api/.git", Kind: "git", Name: "here", Root: "/srv/api"},
+		{Host: "devbox", ID: "devbox:git:/opt/api/.git", Kind: "git",
+			Name: "there", Root: "/opt/api"},
+	}, nil)
+	model := Model{}
+
+	// Both paths paint the marks, and they paint them in the same columns:
+	// a row must not shift sideways when the cursor lands on it.
+	for _, focused := range []bool{false, true} {
+		local := ansi.Strip(
+			model.renderWorkspaceRow(groups[0], focused, focused, 30, false))
+		remote := ansi.Strip(
+			model.renderWorkspaceRow(groups[1], focused, focused, 30, false))
+
+		if strings.Contains(local, remoteGlyph) {
+			t.Errorf("focused=%v: a workspace on this machine is clouded: %q",
+				focused, local)
+		}
+		cloud := strings.Index(remote, remoteGlyph)
+		if cloud < 0 {
+			t.Fatalf("focused=%v: no cloud on a remote workspace: %q",
+				focused, remote)
+		}
+		// Nothing but the row's own furniture stands before it.
+		if lead := strings.TrimLeft(remote[:cloud], " ▌▏"); lead != "" {
+			t.Errorf("focused=%v: %q sits before the cloud: %q",
+				focused, lead, remote)
+		}
+		if name := strings.Index(remote, "there"); cloud > name {
+			t.Errorf("focused=%v: the cloud follows the name: %q",
+				focused, remote)
+		}
+		// And the initial still answers which machine, where it always did.
+		if mark := strings.Index(remote, "D"); mark < 0 || mark < cloud {
+			t.Errorf("focused=%v: the host initial left the counts: %q",
+				focused, remote)
+		}
+	}
+}
+
+// TestARemoteWorkspaceRowSpendsItsMarksOutOfTheChips: the cloud and the
+// initial are four columns, and something has to pay for them. The chips
+// pay — they are fitted after both marks are spent, so a quiet tier drops
+// off the right rather than the name losing half its letters. Fitted
+// before, against the width a local row has, a twenty-two column pane
+// showed "there…" beside two chips where it should show "there-is-a…"
+// beside one.
+func TestARemoteWorkspaceRowSpendsItsMarksOutOfTheChips(t *testing.T) {
+	// A name of one repeated letter so the name's columns can be counted
+	// out of the rendered row.
+	name := strings.Repeat("a", 20)
+	remote := workspace.Context{
+		Host: "devbox", ID: "devbox:git:/opt/api/.git", Kind: "git",
+		Name: name, Root: "/opt/api", ExecutionRoot: "/opt/api",
+	}
+	// Three tiers of population, so the chips ask for everything they can.
+	groups := buildWorkspaceGroups([]workspace.Context{remote}, []agent.Agent{
+		{ID: "a", Host: "devbox", Workspace: remote, ProcessLive: true,
+			Attention: agent.AttentionApproval},
+		{ID: "b", Host: "devbox", Workspace: remote, ProcessLive: true,
+			Attention: agent.AttentionWaiting},
+		{ID: "c", Host: "devbox", Workspace: remote, ProcessLive: true,
+			Activity: agent.ActivityWorking},
+	})
+	model := Model{}
+	for _, width := range []int{22, 24, 26, 28, 34} {
+		line := strings.Split(ansi.Strip(
+			model.renderWorkspaceRow(groups[0], false, false, width, false)), "\n")[0]
+		// What the row promised the name: the same floor fitCountChips
+		// fits the chips around.
+		contentWidth := max(1, width-1)
+		nameNeed := min(10, max(1, contentWidth/2))
+		// The ellipsis is one of the name's own columns, not a column
+		// taken from it.
+		got := strings.Count(line, "a") + strings.Count(line, "…")
+		if got < nameNeed {
+			t.Errorf("width=%d: the name kept %d columns, wanted %d: %q",
+				width, got, nameNeed, line)
+		}
+	}
+}
+
+// TestARemoteWorkspaceRowStillFitsItsPane: name and gap both bottom out at
+// one column, so a pane narrow enough drives the row past its own width —
+// and a row wider than the pane wraps, which costs the list a line and
+// every row below it its place.
+func TestARemoteWorkspaceRowStillFitsItsPane(t *testing.T) {
+	remote := workspace.Context{
+		Host: "devbox", ID: "devbox:git:/opt/api/.git", Kind: "git",
+		// Long enough that the name is what the row's remaining columns
+		// are spent on: a short name never reaches the width it was
+		// given, so it never proves the width was computed right.
+		Name: strings.Repeat("a", 40), Root: "/opt/api",
+		ExecutionRoot: "/opt/api",
+	}
+	groups := buildWorkspaceGroups([]workspace.Context{remote}, []agent.Agent{
+		{ID: "a", Host: "devbox", Workspace: remote, ProcessLive: true,
+			Attention: agent.AttentionApproval},
+		{ID: "b", Host: "devbox", Workspace: remote, ProcessLive: true,
+			Attention: agent.AttentionWaiting},
+		{ID: "c", Host: "devbox", Workspace: remote, ProcessLive: true,
+			Activity: agent.ActivityWorking},
+	})
+	model := Model{}
+	// From eleven: below that the mark and the loudest chip alone are wider
+	// than the pane, and the row has overhung by a column or two since long
+	// before there was a cloud on it. What is pinned here is that the cloud
+	// never adds to that — it is given up first, and every width that fit
+	// before still fits.
+	for _, width := range []int{11, 12, 14, 18, 20, 24, 28, 34, 44} {
+		for _, focused := range []bool{false, true} {
+			row := model.renderWorkspaceRow(
+				groups[0], focused, focused, width, false)
+			for _, line := range strings.Split(row, "\n") {
+				if got := ansi.StringWidth(line); got > width {
+					t.Errorf("width=%d focused=%v: row is %d columns: %q",
+						width, focused, got, ansi.Strip(line))
+				}
+			}
+		}
+	}
+	// And below it the cloud is the thing given up, so a pane that already
+	// had nothing to spare is not asked for two columns more.
+	for _, width := range []int{6, 8, 10} {
+		for _, focused := range []bool{false, true} {
+			row := ansi.Strip(model.renderWorkspaceRow(
+				groups[0], focused, focused, width, false))
+			if strings.Contains(row, remoteGlyph) {
+				t.Errorf("width=%d focused=%v: clouded a row with no room "+
+					"for it: %q", width, focused, row)
+			}
+			if !strings.Contains(row, "D") {
+				t.Errorf("width=%d focused=%v: the mark that names the "+
+					"machine went first: %q", width, focused, row)
+			}
+		}
 	}
 }
