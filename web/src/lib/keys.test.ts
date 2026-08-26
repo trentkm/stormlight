@@ -271,6 +271,7 @@ describe("the table as documentation", () => {
         return press(keys.slice(4), { alt: true });
       }
       if (keys === "Enter") return press("Enter");
+      if (keys === "Esc") return press("Escape");
       if (keys.length === 1) return press(keys);
       throw new Error(
         `this test does not know how to press "${keys}" — teach it, ` +

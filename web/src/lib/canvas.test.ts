@@ -14,7 +14,10 @@ import {
   zoomAt,
   type Box,
   centeredOn,
+  intersects,
   showing,
+  spanning,
+  union,
 } from "./canvas";
 
 describe("zooming", () => {
@@ -272,5 +275,43 @@ describe("showing", () => {
     // Zoom counts: at z = 0.5 the box ends at 200px, short of an
     // origin 200px past the edge.
     expect(showing({ x: -200, y: 0, z: 0.5 }, box, viewport)).toBe(false);
+  });
+});
+
+describe("intersects", () => {
+  const a = { x: 0, y: 0, w: 100, h: 100 };
+  test("overlap counts, touching does not", () => {
+    expect(intersects(a, { x: 50, y: 50, w: 100, h: 100 })).toBe(true);
+    expect(intersects(a, { x: 100, y: 0, w: 100, h: 100 })).toBe(false);
+    expect(intersects(a, { x: 0, y: 100, w: 100, h: 100 })).toBe(false);
+    expect(intersects(a, { x: 200, y: 200, w: 10, h: 10 })).toBe(false);
+  });
+  test("is symmetric and contains itself", () => {
+    const b = { x: 90, y: -10, w: 30, h: 30 };
+    expect(intersects(a, b)).toBe(intersects(b, a));
+    expect(intersects(a, a)).toBe(true);
+  });
+});
+
+describe("union", () => {
+  test("holds every box, tightly", () => {
+    expect(
+      union([
+        { x: 10, y: 20, w: 30, h: 40 },
+        { x: -5, y: 50, w: 10, h: 10 },
+      ]),
+    ).toEqual({ x: -5, y: 20, w: 45, h: 40 });
+  });
+  test("of nothing is nothing", () => {
+    expect(union([])).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+  });
+});
+
+describe("spanning", () => {
+  test("is the same box whichever way the hand went", () => {
+    const down = spanning({ x: 10, y: 10 }, { x: 60, y: 40 });
+    const up = spanning({ x: 60, y: 40 }, { x: 10, y: 10 });
+    expect(down).toEqual({ x: 10, y: 10, w: 50, h: 30 });
+    expect(up).toEqual(down);
   });
 });

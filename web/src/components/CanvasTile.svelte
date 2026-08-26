@@ -9,10 +9,15 @@
     box,
     zoom,
     clip,
+    cursor = false,
     selected = false,
+    lifted = false,
     focused = false,
     oncommit,
+    ondrift,
+    onland,
     onenter,
+    ontoggle,
     onopen,
   }: {
     agent: Agent;
@@ -22,12 +27,24 @@
     /** The canvas viewport, root for the visibility observer. */
     clip: HTMLElement | undefined;
     /** The roster's cursor is on this agent. */
+    cursor?: boolean;
+    /** In the canvas's selection. */
     selected?: boolean;
+    /** Carried by a drag in flight — this tile's or a selection's. */
+    lifted?: boolean;
     /** Walked in: this tile holds the keyboard. */
     focused?: boolean;
+    /** A resize, committed. */
     oncommit: (box: Box) => void;
+    /** A move, one step of it in stage units. The canvas decides who
+     *  travels: this tile, or the selection it belongs to. */
+    ondrift: (dx: number, dy: number) => void;
+    /** The move ended: landed where shown, or dropped if cancelled. */
+    onland: (commit: boolean) => void;
     /** A click: someone wants to type here. */
     onenter: () => void;
+    /** A shift-click: in or out of the selection. */
+    ontoggle: () => void;
     /** The label's open button: someone wants the roster's full pane. */
     onopen: () => void;
   } = $props();
@@ -43,10 +60,12 @@
   // terminal rather than showing nothing.
   let visible = $state(true);
 
-  // While a gesture is live the tile follows the hand; between gestures
+  // While a resize is live the tile follows the hand; between gestures
   // it sits where the layout says. Holding the in-flight box apart from
   // the committed one means a gesture never fights the store, and
-  // letting go of it (null) is what hands control back.
+  // letting go of it (null) is what hands control back. A move is not
+  // held here: it may carry other tiles, so the canvas holds it and
+  // hands every carried tile its shown box.
   let inFlight = $state<Box | null>(null);
   const shown = $derived(inFlight ?? box);
 
@@ -173,19 +192,24 @@
     // the tile tracks the cursor exactly.
     const dx = px / zoom;
     const dy = py / zoom;
-    inFlight =
-      gesture.kind === "move"
-        ? { ...shown, x: shown.x + dx, y: shown.y + dy }
-        : resized(shown, shown.w + dx, shown.h + dy);
+    if (gesture.kind === "move") ondrift(dx, dy);
+    else inFlight = resized(shown, shown.w + dx, shown.h + dy);
   };
 
   const up = (event: PointerEvent) => {
     if (!gesture || event.pointerId !== gesture.pointer) return;
-    const { kind, travel } = gesture;
+    const { kind, travel, engaged } = gesture;
     gesture = null;
     if (travel <= 4) {
       inFlight = null;
-      if (kind === "move") onenter();
+      if (kind === "move") {
+        if (event.shiftKey) ontoggle();
+        else onenter();
+      }
+      return;
+    }
+    if (kind === "move") {
+      if (engaged) onland(true);
       return;
     }
     if (inFlight) oncommit(inFlight);
@@ -197,8 +221,10 @@
     // *secondary* touch when they claim it for a native gesture, and
     // that must not cost the first hand its drag.
     if (!gesture || event.pointerId !== gesture.pointer) return;
+    const { kind, engaged } = gesture;
     gesture = null;
     inFlight = null;
+    if (kind === "move" && engaged) onland(false);
   };
 
   const key = (event: KeyboardEvent) => {
@@ -226,7 +252,8 @@
   class="tile"
   class:urgent={isUrgent(agent)}
   class:done={!agent.process_live}
-  class:lifted={inFlight !== null}
+  class:lifted={lifted || inFlight !== null}
+  class:cursor
   class:selected
   class:focused
   role="button"
@@ -293,8 +320,13 @@
   .tile:hover {
     border-color: var(--accent);
   }
-  .tile.selected {
+  .tile.cursor {
     border-color: var(--accent);
+  }
+  /* In the selection: a ring outside the border, so a selected tile
+     and the cursor's tile read as two different facts on one tile. */
+  .tile.selected {
+    box-shadow: 0 0 0 2px var(--accent);
   }
   .tile.lifted {
     cursor: grabbing;
@@ -317,6 +349,18 @@
   }
   .tile.focused .label {
     cursor: grab;
+  }
+  /* The ring stacks with the other shadows rather than losing to
+     whichever rule came last. */
+  .tile.selected.urgent {
+    box-shadow:
+      0 0 14px var(--attention-glow),
+      0 0 0 2px var(--accent);
+  }
+  .tile.selected.focused {
+    box-shadow:
+      inset 0 0 0 1px var(--aim),
+      0 0 0 2px var(--accent);
   }
   .tile.done {
     opacity: 0.72;

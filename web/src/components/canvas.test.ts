@@ -164,6 +164,7 @@ function pointer(
   x: number,
   y: number,
   pointerId = 1,
+  shift = false,
 ): MouseEvent {
   const event = new MouseEvent(type, {
     bubbles: true,
@@ -171,6 +172,7 @@ function pointer(
     clientX: x,
     clientY: y,
     button: 0,
+    shiftKey: shift,
   });
   Object.defineProperty(event, "pointerId", { value: pointerId });
   return event;
@@ -204,7 +206,21 @@ beforeEach(() => {
   fleet.workspaceID = "";
   ui.view = "canvas";
   ui.walkedIn = false;
+  ui.selection.clear();
 });
+
+const selection = () => [...ui.selection].sort();
+const click = (tile: HTMLElement, shift = false) => {
+  tile.dispatchEvent(pointer("pointerdown", 100, 100, 1, shift));
+  tile.dispatchEvent(pointer("pointerup", 100, 100, 1, shift));
+  flushSync();
+};
+const drag = (tile: HTMLElement, dx: number, dy: number) => {
+  tile.dispatchEvent(pointer("pointerdown", 100, 100));
+  tile.dispatchEvent(pointer("pointermove", 100 + dx, 100 + dy));
+  tile.dispatchEvent(pointer("pointerup", 100 + dx, 100 + dy));
+  flushSync();
+};
 
 describe("the canvas against the roster", () => {
   test("tiles place themselves without overlapping", () => {
@@ -935,5 +951,144 @@ describe("the cursor and the camera", () => {
     done();
 
     expect(lifecycle.sort()).toEqual(["close:a", "close:b"]);
+  });
+});
+
+/**
+ * The selection: a set beside the cursor. A plain click sets both to
+ * one tile; shift-click grows or shrinks the set; a drag carries the
+ * set when it starts on a member, and one tile when it does not.
+ */
+describe("the selection", () => {
+  test("a click selects the one tile, and shift-click toggles others", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" }, { id: "c" });
+
+    click(tileFor("a"));
+    expect(selection()).toEqual(["a"]);
+    expect(ui.walkedIn).toBe(true);
+
+    click(tileFor("b"), true);
+    expect(selection()).toEqual(["a", "b"]);
+    // The cursor moved with it, and the walk ended: arranging is not
+    // typing.
+    expect(fleet.selectedID).toBe("b");
+    expect(ui.walkedIn).toBe(false);
+    expect(tileFor("b").classList.contains("selected")).toBe(true);
+    expect(tileFor("b").classList.contains("cursor")).toBe(true);
+    expect(tileFor("a").classList.contains("cursor")).toBe(false);
+
+    click(tileFor("a"), true);
+    expect(selection()).toEqual(["b"]);
+
+    click(tileFor("c"));
+    expect(selection()).toEqual(["c"]);
+    done();
+  });
+
+  test("dragging a selected tile carries the whole selection", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" }, { id: "c" });
+    click(tileFor("a"));
+    click(tileFor("b"), true);
+    const before = { a: boxOf(tileFor("a")), b: boxOf(tileFor("b")), c: boxOf(tileFor("c")) };
+
+    drag(tileFor("b"), 60, 40);
+
+    expect(boxOf(tileFor("a")).x).toBeCloseTo(before.a.x + 60);
+    expect(boxOf(tileFor("a")).y).toBeCloseTo(before.a.y + 40);
+    expect(boxOf(tileFor("b")).x).toBeCloseTo(before.b.x + 60);
+    expect(boxOf(tileFor("c"))).toEqual(before.c);
+    // Every carried tile is lifted while the hand holds it.
+    done();
+  });
+
+  test("dragging an unselected tile moves it alone and leaves the selection", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" }, { id: "c" });
+    click(tileFor("a"));
+    click(tileFor("b"), true);
+    const before = { a: boxOf(tileFor("a")), c: boxOf(tileFor("c")) };
+
+    drag(tileFor("c"), 60, 40);
+
+    expect(boxOf(tileFor("c")).x).toBeCloseTo(before.c.x + 60);
+    expect(boxOf(tileFor("a"))).toEqual(before.a);
+    expect(selection()).toEqual(["a", "b"]);
+    // Dragging is not selecting, and never moves the cursor — which is
+    // where the keyboard is.
+    expect(fleet.selectedID).toBe("b");
+    done();
+  });
+
+  test("a carried drag that is cancelled lands nowhere", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    click(tileFor("a"));
+    click(tileFor("b"), true);
+    const before = boxOf(tileFor("a"));
+
+    const b = tileFor("b");
+    b.dispatchEvent(pointer("pointerdown", 100, 100));
+    b.dispatchEvent(pointer("pointermove", 200, 200));
+    b.dispatchEvent(pointer("pointercancel", 200, 200));
+    flushSync();
+
+    expect(boxOf(tileFor("a"))).toEqual(before);
+    done();
+  });
+
+  // The home view puts the stage at (40, 40) and jsdom lays the canvas
+  // out at (0, 0), so a client point maps to stage minus 40. The first
+  // tile spans stage (0, 0)–(440, 300); the second starts at x = 464.
+  test("a shift-drag on the backdrop selects what it touches", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" }, { id: "c" });
+    const canvas = document.querySelector<HTMLElement>(".canvas")!;
+
+    canvas.dispatchEvent(pointer("pointerdown", 50, 50, 1, true));
+    canvas.dispatchEvent(pointer("pointermove", 480, 120, 1, true));
+    flushSync();
+    const band = document.querySelector<HTMLElement>(".marquee")!;
+    expect(band).not.toBeNull();
+    expect(parseFloat(band.style.left)).toBeCloseTo(10);
+    expect(parseFloat(band.style.width)).toBeCloseTo(430);
+    canvas.dispatchEvent(pointer("pointerup", 480, 120, 1, true));
+    flushSync();
+
+    // Stage 10..440 touches a (0..440) but not b (464..).
+    expect(selection()).toEqual(["a"]);
+    expect(document.querySelector(".marquee")).toBeNull();
+
+    canvas.dispatchEvent(pointer("pointerdown", 50, 50, 1, true));
+    canvas.dispatchEvent(pointer("pointermove", 600, 120, 1, true));
+    canvas.dispatchEvent(pointer("pointerup", 600, 120, 1, true));
+    flushSync();
+    expect(selection()).toEqual(["a", "b"]);
+
+    // Over nothing: the selection is dropped, not kept.
+    canvas.dispatchEvent(pointer("pointerdown", 50, 500, 1, true));
+    canvas.dispatchEvent(pointer("pointermove", 100, 600, 1, true));
+    canvas.dispatchEvent(pointer("pointerup", 100, 600, 1, true));
+    flushSync();
+    expect(selection()).toEqual([]);
+    done();
+  });
+
+  test("a plain backdrop drag still pans", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const canvas = document.querySelector<HTMLElement>(".canvas")!;
+    const stage = document.querySelector<HTMLElement>(".stage")!;
+    const before = stage.style.transform;
+
+    canvas.dispatchEvent(pointer("pointerdown", 50, 50));
+    canvas.dispatchEvent(pointer("pointermove", 150, 80));
+    canvas.dispatchEvent(pointer("pointerup", 150, 80));
+    flushSync();
+
+    expect(stage.style.transform).not.toBe(before);
+    expect(document.querySelector(".marquee")).toBeNull();
+    done();
   });
 });

@@ -1,14 +1,17 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { run, ui } from "../lib/commands.svelte";
+  import { run, select, ui } from "../lib/commands.svelte";
   import { agentsIn, fleet } from "../lib/state.svelte";
   import { canvasLayout } from "../lib/layout.svelte";
   import {
     centeredOn,
     fitView,
     homeView,
+    intersects,
     panBy,
     showing,
+    spanning,
+    stagePoint,
     zoomAt,
     type Box,
     type View,
@@ -30,6 +33,48 @@
 
   let clip = $state<HTMLDivElement>();
   let view = $state<View>(homeView);
+
+  /**
+   * A drag in flight, as the offset it has travelled and the tile that
+   * is doing the travelling. Held here rather than in the tile because
+   * a drag can carry more than one tile: dragging a selected tile
+   * carries the whole selection, and every carried tile shows the same
+   * offset until the hand lets go. A tile outside the selection drags
+   * alone and leaves the selection as it was — dragging is not
+   * selecting, and a drag must never move the cursor, which is where
+   * the keyboard is.
+   */
+  let drift = $state<{ id: string; dx: number; dy: number } | null>(null);
+
+  const carried = (id: string): boolean =>
+    drift !== null &&
+    (id === drift.id ||
+      (ui.selection.has(drift.id) && ui.selection.has(id)));
+
+  /** Where a tile is drawn: its box, plus the drift if it is carried. */
+  const shownBox = (id: string): Box => {
+    const box = layout.tiles[id];
+    if (!drift || !carried(id)) return box;
+    return { ...box, x: box.x + drift.dx, y: box.y + drift.dy };
+  };
+
+  const drifted = (id: string, dx: number, dy: number) => {
+    drift = drift?.id === id
+      ? { id, dx: drift.dx + dx, dy: drift.dy + dy }
+      : { id, dx, dy };
+  };
+
+  /** The hand let go: every carried tile lands where it is shown, or
+   *  nowhere if the gesture was cancelled. */
+  const landed = (commit: boolean) => {
+    if (!drift) return;
+    if (commit) {
+      for (const agent of agents) {
+        if (carried(agent.id)) layout.put(agent.id, shownBox(agent.id));
+      }
+    }
+    drift = null;
+  };
 
   // Placement is minted here, in an effect, never from the template:
   // boxFor writes state for an agent it has not seen, and Svelte
@@ -121,9 +166,27 @@
     view = panBy(view, -event.deltaX, -event.deltaY);
   };
 
-  /** Dragging empty canvas pans; tiles stop propagation of their own
-   *  gestures by handling them first (their pointerdown captures). */
+  /**
+   * Dragging empty canvas pans; with Shift held it draws a marquee, and
+   * letting go selects every tile the marquee touches. Tiles stop
+   * propagation of their own gestures by handling them first (their
+   * pointerdown captures).
+   */
   let panning: { pointer: number; x: number; y: number } | null = null;
+  let marquee = $state<{
+    pointer: number;
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+  } | null>(null);
+  const band = $derived(marquee ? spanning(marquee.from, marquee.to) : null);
+
+  const pointOf = (event: PointerEvent) => {
+    const bounds = clip!.getBoundingClientRect();
+    return stagePoint(view, {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    });
+  };
 
   const down = (event: PointerEvent) => {
     if (event.button !== 0) return;
@@ -131,16 +194,42 @@
     // tile's gesture; it captures its pointer, so it never surfaces
     // here with the backdrop as target.
     if (event.target !== event.currentTarget && event.target !== stage) return;
-    panning = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
     clip?.setPointerCapture?.(event.pointerId);
+    if (event.shiftKey) {
+      const at = pointOf(event);
+      marquee = { pointer: event.pointerId, from: at, to: at };
+      return;
+    }
+    panning = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
   };
   const moved = (event: PointerEvent) => {
+    if (marquee?.pointer === event.pointerId) {
+      marquee = { ...marquee, to: pointOf(event) };
+      return;
+    }
     if (!panning || event.pointerId !== panning.pointer) return;
     view = panBy(view, event.clientX - panning.x, event.clientY - panning.y);
     panning = { ...panning, x: event.clientX, y: event.clientY };
   };
   const up = (event: PointerEvent) => {
     if (panning?.pointer === event.pointerId) panning = null;
+    if (marquee?.pointer === event.pointerId && band) {
+      // Whatever the band touches, and nothing if it touched nothing:
+      // a shift-drag over empty canvas is how a selection is dropped.
+      select(
+        agents
+          .filter((agent) => {
+            const box = layout.tiles[agent.id];
+            return box !== undefined && intersects(band, box);
+          })
+          .map((agent) => agent.id),
+      );
+      marquee = null;
+    }
+  };
+  const cancelled = (event: PointerEvent) => {
+    if (panning?.pointer === event.pointerId) panning = null;
+    if (marquee?.pointer === event.pointerId) marquee = null;
   };
 
   let stage = $state<HTMLDivElement>();
@@ -179,6 +268,18 @@
     run("walk-in");
   };
 
+  /** A shift-click: the tile joins or leaves the selection, and the
+   *  cursor moves to it. Building a selection is arranging, not typing,
+   *  so the walk ends — otherwise the keyboard would follow the cursor
+   *  onto each tile shift-clicked, and the tile it lands on would drag
+   *  by its label alone. */
+  const toggle = (id: string) => {
+    if (ui.selection.has(id)) ui.selection.delete(id);
+    else ui.selection.add(id);
+    fleet.selectedID = id;
+    ui.walkedIn = false;
+  };
+
   /** The label's ↗: the roster's full pane, to look at. Letting go of
    *  the keyboard is said here rather than left to focus, because
    *  whether a button takes focus on click is the browser's opinion —
@@ -203,7 +304,7 @@
   onpointerdown={down}
   onpointermove={moved}
   onpointerup={up}
-  onpointercancel={up}
+  onpointercancel={cancelled}
 >
   <div
     class="stage"
@@ -214,17 +315,31 @@
       {#if layout.tiles[agent.id]}
         <CanvasTile
           {agent}
-          box={layout.tiles[agent.id]}
+          box={shownBox(agent.id)}
           zoom={view.z}
           {clip}
-          selected={fleet.selectedID === agent.id}
+          cursor={fleet.selectedID === agent.id}
+          selected={ui.selection.has(agent.id)}
+          lifted={carried(agent.id)}
           focused={focused === agent.id}
           oncommit={(box) => layout.put(agent.id, box)}
+          ondrift={(dx, dy) => drifted(agent.id, dx, dy)}
+          onland={landed}
           onenter={() => enter(agent.id)}
+          ontoggle={() => toggle(agent.id)}
           onopen={() => open(agent.id)}
         />
       {/if}
     {/each}
+    {#if band}
+      <div
+        class="marquee"
+        style:left="{band.x}px"
+        style:top="{band.y}px"
+        style:width="{band.w}px"
+        style:height="{band.h}px"
+      ></div>
+    {/if}
   </div>
   {#if agents.length === 0}
     <p class="empty">No agents to arrange.</p>
@@ -266,6 +381,14 @@
     width: 0;
     height: 0;
     transform-origin: top left;
+  }
+  .marquee {
+    position: absolute;
+    /* Drawn in stage units like a tile, so it pans and zooms with the
+       tiles it is choosing among. */
+    border: 1px dashed var(--accent);
+    background: var(--selected-bg);
+    pointer-events: none;
   }
   .empty {
     position: absolute;

@@ -81,6 +81,12 @@ export const bindings: Binding[] = [
   { id: "first", keys: "gg", what: "first item, or the top", group: "Navigate" },
   { id: "last", keys: "G", what: "last item, or the bottom", group: "Navigate" },
   {
+    id: "select-none",
+    keys: "Esc",
+    what: "clear the canvas's selection (shift-click and shift-drag make one)",
+    group: "Navigate",
+  },
+  {
     id: "walk-in",
     keys: "Enter",
     what: "walk into the agent's terminal",
@@ -475,6 +481,8 @@ export function match(
       return { id: "", pending: "g" };
     case "G":
       return { id: "last" };
+    case "Escape":
+      return { id: "select-none" };
     case "Enter":
       return { id: "walk-in" };
     case "n":

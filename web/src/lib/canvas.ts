@@ -161,12 +161,40 @@ export function showing(
   );
 }
 
+/** Whether two boxes share any area. Touching edges do not count. */
+export function intersects(a: Box, b: Box): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/** The smallest box holding every box given; the empty union is empty. */
+export function union(boxes: Box[]): Box {
+  if (boxes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+  const left = Math.min(...boxes.map((b) => b.x));
+  const top = Math.min(...boxes.map((b) => b.y));
+  const right = Math.max(...boxes.map((b) => b.x + b.w));
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h));
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+/** The box a rubber band between two stage points describes, whichever
+ *  way the hand went. */
+export function spanning(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): Box {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    w: Math.abs(a.x - b.x),
+    h: Math.abs(a.y - b.y),
+  };
+}
+
+/** Placement's overlap: intersection with the gap kept around a tile. */
 function overlaps(a: Box, b: Box): boolean {
-  return (
-    a.x < b.x + b.w + placeGap &&
-    b.x < a.x + a.w + placeGap &&
-    a.y < b.y + b.h + placeGap &&
-    b.y < a.y + a.h + placeGap
+  return intersects(
+    { x: a.x - placeGap, y: a.y - placeGap, w: a.w + placeGap * 2, h: a.h + placeGap * 2 },
+    b,
   );
 }
 
