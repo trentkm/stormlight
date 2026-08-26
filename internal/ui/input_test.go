@@ -2743,3 +2743,34 @@ func TestTheFooterIsCappedByTheStorm(t *testing.T) {
 		t.Errorf("the mark stayed on the left as well: %q", row)
 	}
 }
+
+// TestTheFrameStandsOffTheWall: the mark opens the header and caps the
+// footer, and both stand one column in. The header's sat flush against the
+// terminal's left edge — the only ink on screen touching it, with the
+// whole dashboard indented behind it, so the mark read as clipped rather
+// than placed.
+func TestTheFrameStandsOffTheWall(t *testing.T) {
+	model := flowModelFixture(t, &flowBackend{})
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+
+	marked := []int{}
+	for index, line := range lines {
+		if strings.Contains(line, StormGlyph) {
+			marked = append(marked, index)
+		}
+	}
+	if len(marked) != 2 {
+		t.Fatalf("the frame carries %d marks, want the header's and the "+
+			"footer's", len(marked))
+	}
+	for _, index := range marked {
+		line := lines[index]
+		// Columns, not bytes: the mark is multi-byte and what is being
+		// asked is where it lands on screen.
+		column := ansi.StringWidth(line[:strings.Index(line, StormGlyph)])
+		if column != 1 {
+			t.Errorf("line %d puts the mark in column %d, want 1: %q",
+				index, column, line[:min(24, len(line))])
+		}
+	}
+}

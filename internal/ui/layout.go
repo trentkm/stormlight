@@ -20,7 +20,13 @@ func (m Model) renderHeader() string {
 	stats := agent.Count(m.agents)
 	// No chrome: the wordmark's own gradient is the identity, floating on
 	// the terminal background with the counters at the far edge.
-	left := renderWordmark(m.shimmerPhaseOrRest())
+	//
+	// It stands one column off the left wall, which is where the footer's
+	// own mark stands and where the panes between them begin. Flush against
+	// the edge the mark read as clipped rather than placed — the only ink
+	// on screen touching the terminal's border, with the whole dashboard
+	// indented behind it.
+	left := " " + renderWordmark(m.shimmerPhaseOrRest())
 	// The counters speak the rows' own language: same glyphs, same colors as
 	// statusVisual paints down the agent list, so the header doubles as the
 	// legend for everything below it.
