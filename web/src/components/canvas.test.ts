@@ -65,6 +65,33 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
+/** The server, as the calls made to it. Links are the server's: the
+ *  canvas asks, and what it shows is what the push says. */
+const apiCalls: string[] = [];
+vi.mock("../lib/api", () => ({
+  api: {
+    addLink: async (request: { from: string; to: string; label: string; auto: boolean }) => {
+      apiCalls.push(`add:${request.from}->${request.to}`);
+      return { id: "link-new", ...request };
+    },
+    updateLink: async (id: string, patch: { label?: string; auto?: boolean }) => {
+      apiCalls.push(`update:${id}:${JSON.stringify(patch)}`);
+      return { id };
+    },
+    removeLink: async (id: string) => {
+      apiCalls.push(`remove:${id}`);
+    },
+    fireLink: async (id: string) => {
+      apiCalls.push(`fire:${id}`);
+      return { id };
+    },
+  },
+  claimToken: () => true,
+  roster: () => () => {},
+  socketURL: () => "",
+  tokened: () => "",
+}));
+
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
     fit() {}
@@ -208,6 +235,8 @@ beforeEach(() => {
   ui.walkedIn = false;
   ui.selection.clear();
   ui.tool = "select";
+  fleet.links = [];
+  apiCalls.length = 0;
 });
 
 const selection = () => [...ui.selection].sort();
@@ -1475,5 +1504,182 @@ describe("drawing", () => {
     // The hand stays in hand.
     expect(ui.tool).toBe("hand");
     done();
+  });
+});
+
+/**
+ * The pipeline on the canvas: arrows for the server's links, drawn by
+ * dragging out of a port or with the arrow tool, chosen for their
+ * label, auto, fire and delete.
+ */
+describe("links", () => {
+  const link = (extra: Partial<import("../lib/types").Link> = {}) => ({
+    id: "link-1",
+    from: "a",
+    to: "b",
+    label: "review this",
+    auto: true,
+    ...extra,
+  });
+  const arrows = () => [...document.querySelectorAll<SVGGElement>(".links .link")];
+  const pill = () => document.querySelector<HTMLElement>(".pill");
+  const settle = async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+  };
+
+  test("an arrow is drawn for a link whose ends are both here", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    fleet.links = [link(), link({ id: "link-away", to: "elsewhere" })];
+    flushSync();
+    expect(arrows()).toHaveLength(1);
+    expect(arrows()[0].querySelector("text")!.textContent!.trim()).toBe("review this");
+    expect(arrows()[0].classList.contains("auto")).toBe(true);
+    done();
+  });
+
+  test("dragging out of a port onto another tile asks for a link", async () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const port = tileFor("a").querySelector<HTMLButtonElement>(".port")!;
+    const b = boxOf(tileFor("b"));
+    // Stage → client is +40 under the home view.
+    port.dispatchEvent(pointer("pointerdown", 100, 100));
+    const canvas = document.querySelector<HTMLElement>(".canvas")!;
+    canvas.dispatchEvent(pointer("pointermove", b.x + 60, b.y + 60));
+    flushSync();
+    expect(document.querySelector(".links .draft")).not.toBeNull();
+    canvas.dispatchEvent(pointer("pointerup", b.x + 60, b.y + 60));
+    await settle();
+
+    expect(apiCalls).toEqual(["add:a->b"]);
+    expect(document.querySelector(".links .draft")).toBeNull();
+    // The port's press is its own: the tile did not drag, the walk did
+    // not begin.
+    expect(ui.walkedIn).toBe(false);
+    done();
+  });
+
+  test("dropping on nothing, or on the same tile, asks for nothing", async () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const port = tileFor("a").querySelector<HTMLButtonElement>(".port")!;
+    const canvas = document.querySelector<HTMLElement>(".canvas")!;
+    port.dispatchEvent(pointer("pointerdown", 100, 100));
+    canvas.dispatchEvent(pointer("pointerup", 3000, 3000));
+    port.dispatchEvent(pointer("pointerdown", 100, 100));
+    canvas.dispatchEvent(pointer("pointerup", 100, 100));
+    await settle();
+    expect(apiCalls).toEqual([]);
+    done();
+  });
+
+  test("the arrow tool links from a tile, and draws off one", async () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const b = boxOf(tileFor("b"));
+    run("tool-arrow");
+    flushSync();
+    const overlay = document.querySelector<HTMLElement>(".overlay")!;
+    overlay.dispatchEvent(pointer("pointerdown", 100, 100));
+    overlay.dispatchEvent(pointer("pointermove", b.x + 60, b.y + 60));
+    overlay.dispatchEvent(pointer("pointerup", b.x + 60, b.y + 60));
+    await settle();
+    expect(apiCalls).toEqual(["add:a->b"]);
+    expect(ui.tool).toBe("select");
+
+    run("tool-arrow");
+    flushSync();
+    const again = document.querySelector<HTMLElement>(".overlay")!;
+    again.dispatchEvent(pointer("pointerdown", 2000, 2000));
+    again.dispatchEvent(pointer("pointermove", 2200, 2100));
+    again.dispatchEvent(pointer("pointerup", 2200, 2100));
+    await settle();
+    expect(apiCalls).toHaveLength(1);
+    expect(document.querySelectorAll(".drawings .shape.arrow")).toHaveLength(1);
+    done();
+  });
+
+  test("a chosen link offers its label, auto, fire and delete", async () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    fleet.links = [link()];
+    flushSync();
+    arrows()[0].dispatchEvent(pointer("pointerdown", 100, 100));
+    flushSync();
+    expect(arrows()[0].classList.contains("chosen")).toBe(true);
+    const controls = pill()!;
+    expect(controls).not.toBeNull();
+    const field = controls.querySelector<HTMLInputElement>("input")!;
+    expect(field.value).toBe("review this");
+
+    field.value = "review harder";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await settle();
+    expect(apiCalls).toEqual(['update:link-1:{"label":"review harder"}']);
+
+    controls.querySelector<HTMLButtonElement>('[aria-label="Auto: on"]')!.click();
+    controls.querySelector<HTMLButtonElement>('[aria-label="Fire the link now"]')!.click();
+    await settle();
+    expect(apiCalls.slice(1)).toEqual(['update:link-1:{"auto":false}', "fire:link-1"]);
+
+    controls.querySelector<HTMLButtonElement>('[aria-label="Delete the link"]')!.click();
+    await settle();
+    expect(apiCalls.at(-1)).toBe("remove:link-1");
+    expect(pill()).toBeNull();
+    done();
+  });
+
+  test("Delete on the canvas removes the chosen link", async () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    fleet.links = [link()];
+    flushSync();
+    arrows()[0].dispatchEvent(pointer("pointerdown", 100, 100));
+    flushSync();
+    const canvas = document.querySelector<HTMLElement>(".canvas")!;
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    await settle();
+    expect(apiCalls).toEqual(["remove:link-1"]);
+    done();
+  });
+
+  test("a parked hop shows on the arrow and on the target", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    fleet.links = [link({ pending: { message: "m", hop: 0, at: "2026-08-25T00:00:00Z" } })];
+    flushSync();
+    expect(arrows()[0].classList.contains("pending")).toBe(true);
+    expect(tileFor("b").querySelector(".inbound")!.textContent).toContain("a waiting");
+    done();
+  });
+
+  test("a link that just fired pulses, and its target says who it heard from", () => {
+    vi.useFakeTimers();
+    try {
+      const done = mountCanvas();
+      push({ id: "a" }, { id: "b" });
+      fleet.links = [link()];
+      flushSync();
+      expect(arrows()[0].classList.contains("fired")).toBe(false);
+
+      fleet.links = [link({ last_fired: "2026-08-25T00:00:01Z" })];
+      flushSync();
+      expect(arrows()[0].classList.contains("fired")).toBe(true);
+      expect(tileFor("b").querySelector(".inbound")!.textContent).toBe("← from a");
+
+      // The same stamp again is not a second fire.
+      fleet.links = [link({ last_fired: "2026-08-25T00:00:01Z" })];
+      flushSync();
+      vi.advanceTimersByTime(4100);
+      flushSync();
+      expect(arrows()[0].classList.contains("fired")).toBe(false);
+      expect(tileFor("b").querySelector(".inbound")).toBeNull();
+      done();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

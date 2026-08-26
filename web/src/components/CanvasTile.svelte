@@ -14,7 +14,9 @@
     lifted = false,
     locked = false,
     focused = false,
+    inbound = "",
     oncommit,
+    onlink,
     ondrift,
     onland,
     onenter,
@@ -37,8 +39,13 @@
     locked?: boolean;
     /** Walked in: this tile holds the keyboard. */
     focused?: boolean;
+    /** What the pipeline last did to this agent, for the label: a hop
+     *  that just arrived ("from reviewer"), or one waiting for it. */
+    inbound?: string;
     /** A resize, committed. */
     oncommit: (box: Box) => void;
+    /** A press on the port: someone is dragging an arrow out of here. */
+    onlink: (event: PointerEvent) => void;
     /** A move, one step of it in stage units. The canvas decides who
      *  travels: this tile, or the selection it belongs to. */
     ondrift: (dx: number, dy: number) => void;
@@ -302,9 +309,26 @@
          and nothing on screen says so. -->
     {#if focused}
       <span class="typing">typing · ctrl-space leaves</span>
+    {:else if inbound}
+      <span class="inbound">{inbound}</span>
     {:else}
       <span class="where">{agent.workspace?.name ?? ""}</span>
     {/if}
+    <!-- The port: drag an arrow out of here onto another tile and the
+         two are linked — when this agent's turn ends, that one hears
+         about it. Its press is its own, never the tile's drag. -->
+    <button
+      class="port"
+      title="Drag to another agent to link them"
+      aria-label="Link {agent.name || agent.task || agent.id} to another agent"
+      onpointerdown={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        onlink(event);
+      }}
+    >
+      ●
+    </button>
     <button
       class="open"
       title="Open in the roster"
@@ -428,6 +452,27 @@
   }
   .tile.urgent .where {
     color: var(--attention-ink-dim);
+  }
+  .inbound {
+    color: var(--working);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .port {
+    flex: 0 0 auto;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1;
+    cursor: crosshair;
+    opacity: 0.35;
+  }
+  .tile:hover .port,
+  .port:hover {
+    opacity: 1;
+    color: var(--accent);
   }
   .open {
     flex: 0 0 auto;

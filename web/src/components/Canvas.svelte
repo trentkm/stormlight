@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
+  import { api } from "../lib/api";
   import { run, select, ui } from "../lib/commands.svelte";
-  import { agentsIn, fleet } from "../lib/state.svelte";
+  import { act, agentsIn, fleet } from "../lib/state.svelte";
   import { canvasLayout } from "../lib/layout.svelte";
   import {
+    arrowBetween,
+    boxAt,
     centeredOn,
     fitView,
     frameAround,
@@ -24,6 +27,7 @@
     type View,
   } from "../lib/canvas";
   import CanvasDrawings from "./CanvasDrawings.svelte";
+  import CanvasLinks from "./CanvasLinks.svelte";
   import CanvasFrame from "./CanvasFrame.svelte";
   import CanvasTile from "./CanvasTile.svelte";
   import CanvasTools from "./CanvasTools.svelte";
@@ -208,10 +212,21 @@
       return;
     }
     if (ui.tool === "select") return;
+    // The arrow tool, on a tile, draws a link: the arrow that means
+    // something. Off a tile it draws an arrow.
+    if (ui.tool === "arrow") {
+      const from = boxAt(tileBoxes(), at);
+      if (from) {
+        linking = { pointer: event.pointerId, from, to: at };
+        (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+        return;
+      }
+    }
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     sketch = { pointer: event.pointerId, kind: ui.tool, points: [[at.x, at.y]] };
   };
   const toolMove = (event: PointerEvent) => {
+    if (linkMoved(event)) return;
     if (panning?.pointer === event.pointerId) {
       view = panBy(view, event.clientX - panning.x, event.clientY - panning.y);
       panning = { ...panning, x: event.clientX, y: event.clientY };
@@ -222,6 +237,10 @@
     sketch = { ...sketch, points: [...sketch.points, [at.x, at.y]] };
   };
   const toolUp = (event: PointerEvent) => {
+    if (linkLanded(event, true)) {
+      ui.tool = "select";
+      return;
+    }
     if (panning?.pointer === event.pointerId) {
       panning = null;
       return;
@@ -249,8 +268,157 @@
     layout.addShape(shape);
   };
   const toolCancel = (event: PointerEvent) => {
+    if (linkLanded(event, false)) return;
     if (panning?.pointer === event.pointerId) panning = null;
     if (sketch?.pointer === event.pointerId) sketch = null;
+  };
+
+  /**
+   * The pipeline on the canvas. A link is drawn by dragging an arrow out
+   * of a tile's port — or, under the arrow tool, out of anywhere on a
+   * tile — and dropping it on another tile. The server owns the link
+   * from then on: it fires from the provider hook, and what this canvas
+   * shows is what the roster push says. Drawing it is a request.
+   */
+  let linking = $state<{ pointer: number; from: string; to: { x: number; y: number } } | null>(null);
+  let chosenLink = $state<string | null>(null);
+  let editingLabel = $state("");
+  let labelField = $state<HTMLInputElement>();
+
+  const tileBoxes = () =>
+    agents
+      .filter((a) => layout.tiles[a.id] !== undefined)
+      .map((a) => ({ id: a.id, box: shownBox(a.id) }));
+
+  const startLink = (from: string, event: PointerEvent) => {
+    if (event.button !== 0) return;
+    chosen = null;
+    chosenLink = null;
+    linking = { pointer: event.pointerId, from, to: pointOf(event) };
+    clip?.setPointerCapture?.(event.pointerId);
+  };
+  const linkMoved = (event: PointerEvent): boolean => {
+    if (!linking || linking.pointer !== event.pointerId) return false;
+    linking = { ...linking, to: pointOf(event) };
+    return true;
+  };
+  const linkLanded = (event: PointerEvent, commit: boolean): boolean => {
+    if (!linking || linking.pointer !== event.pointerId) return false;
+    const { from, to } = linking;
+    linking = null;
+    if (!commit) return true;
+    const target = boxAt(tileBoxes(), to);
+    if (!target || target === from) return true;
+    void act(async () => {
+      const added = await api.addLink({ from, to: target, label: "", auto: true });
+      // The push will carry it; choosing it now opens its label for
+      // typing, which is what a freshly drawn arrow is waiting for.
+      chosenLink = added.id;
+      editingLabel = "";
+    });
+    return true;
+  };
+
+  const linkByID = (id: string | null) =>
+    id ? fleet.links.find((link) => link.id === id) : undefined;
+  const chosenOne = $derived(linkByID(chosenLink));
+  // A chosen link that the push no longer carries — deleted elsewhere,
+  // or its agent gone — is not chosen.
+  $effect(() => {
+    if (chosenLink && !fleet.links.some((link) => link.id === chosenLink)) {
+      chosenLink = null;
+    }
+  });
+  // The label takes the keyboard when a link is chosen — once, on the
+  // choosing. Not on every push: the chosen link's object is replaced
+  // with each roster, and an effect keyed on it would pull the focus
+  // back into the field every second, out of whatever was typing.
+  $effect(() => {
+    const id = chosenLink;
+    if (!id) return;
+    void tick().then(() => labelField?.focus());
+  });
+
+  const pickLink = (id: string, event: PointerEvent) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    chosen = null;
+    chosenLink = id;
+    editingLabel = linkByID(id)?.label ?? "";
+    clip?.focus();
+  };
+  const saveLabel = () => {
+    const link = chosenOne;
+    if (!link) return;
+    const label = editingLabel.trim();
+    if (label === link.label) return;
+    void act(() => api.updateLink(link.id, { label }));
+  };
+  // Enter and Escape both leave the field, and leaving is what saves —
+  // one path, so a label is never sent twice for one keystroke.
+  const labelKey = (event: KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      labelField?.blur();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      editingLabel = chosenOne?.label ?? "";
+      labelField?.blur();
+    }
+  };
+  const toggleAuto = () => {
+    const link = chosenOne;
+    if (link) void act(() => api.updateLink(link.id, { auto: !link.auto }));
+  };
+  const fire = () => {
+    const link = chosenOne;
+    if (link) void act(() => api.fireLink(link.id));
+  };
+  const removeLink = () => {
+    const link = chosenOne;
+    if (!link) return;
+    chosenLink = null;
+    void act(() => api.removeLink(link.id));
+  };
+
+  /**
+   * What just happened, for the eye. A link whose last_fired moved
+   * since the last push fired: its arrow pulses for a moment and the
+   * target's label says who it heard from. A hop parked on a link
+   * shows on the target too, as waiting. Kept as ids and timestamps
+   * rather than derived from the push, since a pulse has to outlive
+   * the tick that started it.
+   */
+  let fired = $state(new Set<string>());
+  let seen = new Map<string, string>();
+  let arrivals = $state<Record<string, string>>({});
+  $effect(() => {
+    const links = fleet.links;
+    const names = new Map(fleet.agents.map((a) => [a.id, a.name || a.task || a.id.slice(0, 8)]));
+    untrack(() => {
+      for (const link of links) {
+        const stamp = link.last_fired ?? "";
+        const before = seen.get(link.id);
+        seen.set(link.id, stamp);
+        if (before === undefined || before === stamp || !stamp) continue;
+        fired = new Set([...fired, link.id]);
+        arrivals = { ...arrivals, [link.to]: `← from ${names.get(link.from) ?? link.from.slice(0, 8)}` };
+        window.setTimeout(() => {
+          fired = new Set([...fired].filter((id) => id !== link.id));
+          const { [link.to]: _, ...rest } = arrivals;
+          void _;
+          arrivals = rest;
+        }, 4000);
+      }
+    });
+  });
+  const inboundOf = (agentID: string): string => {
+    if (arrivals[agentID]) return arrivals[agentID];
+    const waiting = fleet.links.find((link) => link.to === agentID && link.pending);
+    if (!waiting) return "";
+    const from = fleet.agents.find((a) => a.id === waiting.from);
+    return `⏳ ${from?.name || from?.task || waiting.from.slice(0, 8)} waiting`;
   };
 
   /**
@@ -293,11 +461,15 @@
     return true;
   };
   const canvasKey = (event: KeyboardEvent) => {
-    if (event.target !== clip || !chosen) return;
-    if (event.key === "Delete" || event.key === "Backspace") {
+    if (event.target !== clip) return;
+    if (event.key !== "Delete" && event.key !== "Backspace") return;
+    if (chosen) {
       event.preventDefault();
       layout.dropShape(chosen);
       chosen = null;
+    } else if (chosenLink) {
+      event.preventDefault();
+      removeLink();
     }
   };
   // Picking up a tool lets go of the chosen drawing; Escape, which
@@ -467,6 +639,7 @@
     // backdrop has nothing else a press could mean.
     event.preventDefault();
     chosen = null;
+    chosenLink = null;
     clip?.setPointerCapture?.(event.pointerId);
     if (event.shiftKey) {
       const at = pointOf(event);
@@ -476,6 +649,7 @@
     panning = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
   };
   const moved = (event: PointerEvent) => {
+    if (linkMoved(event)) return;
     if (shapeMoved(event)) return;
     if (marquee?.pointer === event.pointerId) {
       marquee = { ...marquee, to: pointOf(event) };
@@ -486,6 +660,7 @@
     panning = { ...panning, x: event.clientX, y: event.clientY };
   };
   const up = (event: PointerEvent) => {
+    if (linkLanded(event, true)) return;
     if (shapeLanded(event, true)) return;
     if (panning?.pointer === event.pointerId) panning = null;
     if (marquee?.pointer === event.pointerId && band) {
@@ -503,6 +678,7 @@
     }
   };
   const cancelled = (event: PointerEvent) => {
+    if (linkLanded(event, false)) return;
     if (shapeLanded(event, false)) return;
     if (panning?.pointer === event.pointerId) panning = null;
     if (marquee?.pointer === event.pointerId) marquee = null;
@@ -617,7 +793,9 @@
           lifted={carried(agent.id)}
           locked={lockedTile(agent.id)}
           focused={focused === agent.id}
+          inbound={inboundOf(agent.id)}
           oncommit={(box) => layout.put(agent.id, box)}
+          onlink={(event) => startLink(agent.id, event)}
           ondrift={(dx, dy) => drifted("tile", agent.id, dx, dy)}
           onland={landed}
           onenter={() => enter(agent.id)}
@@ -637,6 +815,58 @@
       interactive={ui.tool === "select"}
       onpick={pick}
     />
+    <!-- The pipeline, over the tiles: an arrow across a terminal is
+         meant to be seen across it. -->
+    <CanvasLinks
+      links={fleet.links}
+      boxOf={(id) => (layout.tiles[id] && agents.some((a) => a.id === id) ? shownBox(id) : undefined)}
+      draft={linking}
+      chosen={chosenLink}
+      {fired}
+      zoom={view.z}
+      interactive={ui.tool === "select"}
+      onpick={pickLink}
+    />
+    {#if chosenOne}
+      {@const from = layout.tiles[chosenOne.from]}
+      {@const to = layout.tiles[chosenOne.to]}
+      {#if from && to}
+        {@const at = arrowBetween(shownBox(chosenOne.from), shownBox(chosenOne.to)).mid}
+        <!-- The chosen link's controls: the label is the prompt, so it
+             is the first thing; auto, fire and delete beside it. Drawn
+             in stage units at the arrow's middle and counter-scaled,
+             so it reads the same at any zoom. -->
+        <div
+          class="pill"
+          role="group"
+          aria-label="Link"
+          style:left="{at.x}px"
+          style:top="{at.y}px"
+          style:transform="translate(-50%, {14 / view.z}px) scale({1 / view.z})"
+          onpointerdown={(event) => event.stopPropagation()}
+        >
+          <input
+            bind:this={labelField}
+            bind:value={editingLabel}
+            placeholder="what the next agent should do with this"
+            aria-label="Link label"
+            spellcheck="false"
+            onkeydown={labelKey}
+            onblur={saveLabel}
+          />
+          <button
+            class:on={chosenOne.auto}
+            title={chosenOne.auto ? "Fires when the source's turn ends" : "Fired by hand only"}
+            aria-label={chosenOne.auto ? "Auto: on" : "Auto: off"}
+            onclick={toggleAuto}
+          >
+            ⟳
+          </button>
+          <button title="Fire now" aria-label="Fire the link now" onclick={fire}>▶</button>
+          <button class="danger" title="Delete the link" aria-label="Delete the link" onclick={removeLink}>✕</button>
+        </div>
+      {/if}
+    {/if}
     {#if band}
       <div
         class="marquee"
@@ -731,6 +961,51 @@
   }
   .overlay.text {
     cursor: text;
+  }
+  .pill {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--bg-raised);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px var(--shadow-lift);
+    transform-origin: top center;
+    white-space: nowrap;
+  }
+  .pill input {
+    width: 32ch;
+    padding: 2px 6px;
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-bright);
+    font: 12px "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .pill input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .pill button {
+    padding: 2px 7px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .pill button:hover {
+    color: var(--accent);
+  }
+  .pill button.on {
+    background: var(--band);
+    color: var(--band-ink);
+  }
+  .pill button.danger:hover {
+    color: var(--failed);
   }
   .composer {
     position: absolute;

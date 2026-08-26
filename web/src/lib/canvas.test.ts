@@ -13,8 +13,10 @@ import {
   tileSize,
   zoomAt,
   type Box,
+  arrowBetween,
   boundedFrame,
   boundedShape,
+  boxAt,
   centeredOn,
   frameAround,
   frameMin,
@@ -428,5 +430,39 @@ describe("boundedShape", () => {
     expect(shape.points).toHaveLength(4000);
     expect(shape.points![0]).toEqual([0, 10_000]);
     expect(shape.text).toHaveLength(500);
+  });
+});
+
+describe("arrowBetween", () => {
+  const a = { x: 0, y: 0, w: 100, h: 50 };
+  test("side by side, it leaves the facing sides at their middles", () => {
+    const b = { x: 300, y: 0, w: 100, h: 50 };
+    const arrow = arrowBetween(a, b);
+    expect(arrow.from).toEqual({ x: 100, y: 25 });
+    expect(arrow.to).toEqual({ x: 300, y: 25 });
+    expect(arrow.mid).toEqual({ x: 200, y: 25 });
+    // And back the other way, from the other sides.
+    const back = arrowBetween(b, a);
+    expect(back.from).toEqual({ x: 300, y: 25 });
+    expect(back.to).toEqual({ x: 100, y: 25 });
+  });
+  test("stacked, it leaves the top and bottom", () => {
+    const b = { x: 0, y: 400, w: 100, h: 50 };
+    const arrow = arrowBetween(a, b);
+    expect(arrow.from).toEqual({ x: 50, y: 50 });
+    expect(arrow.to).toEqual({ x: 50, y: 400 });
+    expect(arrow.path.startsWith("M 50 50 C")).toBe(true);
+  });
+});
+
+describe("boxAt", () => {
+  const boxes = [
+    { id: "a", box: { x: 0, y: 0, w: 100, h: 100 } },
+    { id: "b", box: { x: 50, y: 50, w: 100, h: 100 } },
+  ];
+  test("finds the box under a point, the topmost where they overlap", () => {
+    expect(boxAt(boxes, { x: 10, y: 10 })).toBe("a");
+    expect(boxAt(boxes, { x: 75, y: 75 })).toBe("b");
+    expect(boxAt(boxes, { x: 500, y: 500 })).toBeUndefined();
   });
 });

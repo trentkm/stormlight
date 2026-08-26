@@ -132,9 +132,12 @@
     top: 0;
     left: 0;
     /* A point, like the stage: shapes place themselves in stage units
-       and the SVG shows whatever is drawn outside its zero-size box. */
-    width: 0;
-    height: 0;
+       and the SVG shows whatever is drawn outside its box. One pixel,
+       not zero — Chrome paints nothing inside an SVG with no area,
+       overflow: visible or not, and eight shapes sat in the DOM at the
+       right coordinates while the canvas showed none of them. */
+    width: 1px;
+    height: 1px;
     overflow: visible;
     pointer-events: none;
   }

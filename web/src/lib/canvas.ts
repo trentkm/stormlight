@@ -368,6 +368,78 @@ export function boundedShape(shape: Shape): Shape {
   return bounded;
 }
 
+/**
+ * An arrow between two boxes: it leaves the source from the middle of
+ * the side facing the target and arrives at the middle of the side
+ * facing back, as a cubic curve whose handles pull straight out of
+ * each side. Sides are chosen by which axis the two are further apart
+ * on, so side-by-side tiles connect left-to-right and stacked ones
+ * top-to-bottom. `mid` is where a label sits.
+ */
+export interface Arrow {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  path: string;
+  mid: { x: number; y: number };
+}
+
+export function arrowBetween(a: Box, b: Box): Arrow {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const dx = bc.x - ac.x;
+  const dy = bc.y - ac.y;
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  const from = horizontal
+    ? { x: dx >= 0 ? a.x + a.w : a.x, y: ac.y }
+    : { x: ac.x, y: dy >= 0 ? a.y + a.h : a.y };
+  const to = horizontal
+    ? { x: dx >= 0 ? b.x : b.x + b.w, y: bc.y }
+    : { x: bc.x, y: dy >= 0 ? b.y : b.y + b.h };
+  // Handles a third of the way across, along the leaving axis.
+  const reach = Math.max(40, (horizontal ? Math.abs(to.x - from.x) : Math.abs(to.y - from.y)) / 3);
+  const c1 = horizontal
+    ? { x: from.x + Math.sign(dx || 1) * reach, y: from.y }
+    : { x: from.x, y: from.y + Math.sign(dy || 1) * reach };
+  const c2 = horizontal
+    ? { x: to.x - Math.sign(dx || 1) * reach, y: to.y }
+    : { x: to.x, y: to.y - Math.sign(dy || 1) * reach };
+  return {
+    from,
+    to,
+    path: `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`,
+    // The curve's midpoint, by the bezier at t = 0.5.
+    mid: {
+      x: (from.x + 3 * c1.x + 3 * c2.x + to.x) / 8,
+      y: (from.y + 3 * c1.y + 3 * c2.y + to.y) / 8,
+    },
+  };
+}
+
+/** An arrow from a box to a point the hand is still dragging. */
+export function arrowToward(a: Box, point: { x: number; y: number }): Arrow {
+  return arrowBetween(a, { x: point.x, y: point.y, w: 0, h: 0 });
+}
+
+/** The box, of these, under a stage point — the last drawn wins, the
+ *  way the topmost tile takes a click. */
+export function boxAt(
+  boxes: Array<{ id: string; box: Box }>,
+  point: { x: number; y: number },
+): string | undefined {
+  let found: string | undefined;
+  for (const { id, box } of boxes) {
+    if (
+      point.x >= box.x &&
+      point.x <= box.x + box.w &&
+      point.y >= box.y &&
+      point.y <= box.y + box.h
+    ) {
+      found = id;
+    }
+  }
+  return found;
+}
+
 /** A frame clamped the way a box is, with its name and lock believed
  *  only in the shapes load() accepts. */
 export function boundedFrame(frame: Frame): Frame {
