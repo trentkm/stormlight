@@ -13,7 +13,11 @@ import {
   tileSize,
   zoomAt,
   type Box,
+  boundedFrame,
   centeredOn,
+  frameAround,
+  frameMin,
+  frameOf,
   intersects,
   showing,
   spanning,
@@ -313,5 +317,51 @@ describe("spanning", () => {
     const up = spanning({ x: 60, y: 40 }, { x: 10, y: 10 });
     expect(down).toEqual({ x: 10, y: 10, w: 50, h: 30 });
     expect(up).toEqual(down);
+  });
+});
+
+describe("frameOf", () => {
+  const outer = { x: 0, y: 0, w: 1000, h: 1000, name: "outer", locked: false };
+  const inner = { x: 100, y: 100, w: 300, h: 300, name: "inner", locked: false };
+  const frames = { outer, inner };
+
+  test("a tile belongs to the frame holding its centre", () => {
+    expect(frameOf(frames, { x: 600, y: 600, w: 100, h: 100 })).toBe("outer");
+    expect(frameOf(frames, { x: 2000, y: 0, w: 100, h: 100 })).toBeUndefined();
+  });
+
+  test("the centre decides, not the edges", () => {
+    // Mostly outside, centre inside.
+    expect(frameOf(frames, { x: -190, y: 500, w: 400, h: 100 })).toBe("outer");
+    // Mostly inside, centre outside.
+    expect(frameOf(frames, { x: 900, y: 500, w: 400, h: 100 })).toBeUndefined();
+  });
+
+  test("of overlapping frames, the innermost wins", () => {
+    expect(frameOf(frames, { x: 150, y: 150, w: 100, h: 100 })).toBe("inner");
+  });
+});
+
+describe("frameAround", () => {
+  test("holds the boxes with room to breathe", () => {
+    const box = frameAround([{ x: 100, y: 100, w: 200, h: 100 }], 24);
+    expect(box).toEqual({ x: 76, y: 76, w: 248, h: 148 });
+  });
+});
+
+describe("boundedFrame", () => {
+  test("clamps the box, caps the name, and believes only a real lock", () => {
+    const frame = boundedFrame({
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      name: "x".repeat(500),
+      locked: "yes" as unknown as boolean,
+    });
+    expect(frame.w).toBe(frameMin.w);
+    expect(frame.h).toBe(frameMin.h);
+    expect(frame.name).toHaveLength(80);
+    expect(frame.locked).toBe(false);
   });
 });

@@ -51,6 +51,8 @@ export const ui = $state({
    * cursor leave the set alone, so a batch survives a look elsewhere.
    */
   selection: new SvelteSet<string>(),
+  /** The canvas tool in hand: "" is the hand itself. Escape drops it. */
+  tool: "" as "" | "frame",
 });
 
 /** The selection becomes exactly these. */
@@ -487,7 +489,9 @@ export function run(id: string, argument?: string): void {
       }
       return;
     case "select-none":
+      // Escape drops whatever is in hand: the selection, and the tool.
       ui.selection.clear();
+      ui.tool = "";
       return;
     case "select-workspace":
       if (argument !== undefined) {

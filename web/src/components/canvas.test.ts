@@ -207,6 +207,7 @@ beforeEach(() => {
   ui.view = "canvas";
   ui.walkedIn = false;
   ui.selection.clear();
+  ui.tool = "";
 });
 
 const selection = () => [...ui.selection].sort();
@@ -1089,6 +1090,215 @@ describe("the selection", () => {
 
     expect(stage.style.transform).not.toBe(before);
     expect(document.querySelector(".marquee")).toBeNull();
+    done();
+  });
+});
+
+/**
+ * Frames: a box behind the tiles whose centres it holds. Drawn with
+ * the tool or around a selection; its title carries its tiles; a lock
+ * holds everything still.
+ */
+describe("frames", () => {
+  const canvas = () => document.querySelector<HTMLElement>(".canvas")!;
+  const frames = () => [...document.querySelectorAll<HTMLElement>(".stage > .frame")];
+  const titleOf = (frame: HTMLElement) => frame.querySelector<HTMLElement>(".title")!;
+  const nameOf = (frame: HTMLElement) => frame.querySelector(".name")!.textContent;
+  const button = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".controls button")].find(
+      (b) => b.textContent?.trim() === label,
+    );
+  const backdropDrag = (x0: number, y0: number, x1: number, y1: number) => {
+    canvas().dispatchEvent(pointer("pointerdown", x0, y0));
+    canvas().dispatchEvent(pointer("pointermove", x1, y1));
+    canvas().dispatchEvent(pointer("pointerup", x1, y1));
+    flushSync();
+  };
+  /** A frame drawn around the first tile (stage 0..440 × 0..300) with
+   *  room to spare; the home view puts stage 0 at client 40. */
+  const drawAroundA = () => {
+    button("frame")!.click();
+    flushSync();
+    backdropDrag(20, 20, 520, 380);
+    return frames()[0];
+  };
+
+  test("the tool draws a frame, then puts itself down", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    button("frame")!.click();
+    flushSync();
+    expect(ui.tool).toBe("frame");
+    expect(canvas().classList.contains("framing")).toBe(true);
+
+    backdropDrag(20, 20, 520, 380);
+
+    expect(frames()).toHaveLength(1);
+    expect(nameOf(frames()[0])).toBe("frame 1");
+    const drawn = boxOf(frames()[0]);
+    expect(drawn).toEqual({ x: -20, y: -20, w: 500, h: 360 });
+    expect(ui.tool).toBe("");
+    done();
+  });
+
+  test("a twitch draws nothing and still puts the tool down", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    button("frame")!.click();
+    flushSync();
+    backdropDrag(50, 50, 60, 60);
+    expect(frames()).toHaveLength(0);
+    expect(ui.tool).toBe("");
+    done();
+  });
+
+  test("with a selection in hand, the button frames it on the spot", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" }, { id: "c" });
+    click(tileFor("a"));
+    click(tileFor("b"), true);
+    const a = boxOf(tileFor("a"));
+    const b = boxOf(tileFor("b"));
+
+    button("frame")!.click();
+    flushSync();
+
+    expect(ui.tool).toBe("");
+    expect(frames()).toHaveLength(1);
+    const drawn = boxOf(frames()[0]);
+    expect(drawn.x).toBe(a.x - 24);
+    expect(drawn.x + drawn.w).toBe(b.x + b.w + 24);
+    expect(drawn.y).toBe(a.y - 24);
+    done();
+  });
+
+  test("dragging a frame's title carries the tiles it holds", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const frame = drawAroundA();
+    const before = { a: boxOf(tileFor("a")), b: boxOf(tileFor("b")), f: boxOf(frame) };
+
+    const title = titleOf(frame);
+    title.dispatchEvent(pointer("pointerdown", 100, 100));
+    title.dispatchEvent(pointer("pointermove", 160, 140));
+    flushSync();
+    // In flight, the frame and its tile move together.
+    expect(boxOf(tileFor("a")).x).toBeCloseTo(before.a.x + 60);
+    expect(boxOf(frames()[0]).x).toBeCloseTo(before.f.x + 60);
+    title.dispatchEvent(pointer("pointerup", 160, 140));
+    flushSync();
+
+    expect(boxOf(tileFor("a"))).toEqual({ ...before.a, x: before.a.x + 60, y: before.a.y + 40 });
+    expect(boxOf(frames()[0])).toEqual({ ...before.f, x: before.f.x + 60, y: before.f.y + 40 });
+    expect(boxOf(tileFor("b"))).toEqual(before.b);
+    done();
+  });
+
+  test("a locked frame holds its tiles and itself still", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const frame = drawAroundA();
+    frame.querySelector<HTMLButtonElement>(".lock")!.click();
+    flushSync();
+    expect(tileFor("a").classList.contains("locked")).toBe(true);
+    expect(tileFor("b").classList.contains("locked")).toBe(false);
+    const before = { a: boxOf(tileFor("a")), f: boxOf(frames()[0]) };
+
+    drag(tileFor("a"), 60, 40);
+    expect(boxOf(tileFor("a"))).toEqual(before.a);
+
+    const title = titleOf(frames()[0]);
+    title.dispatchEvent(pointer("pointerdown", 100, 100));
+    title.dispatchEvent(pointer("pointermove", 160, 140));
+    title.dispatchEvent(pointer("pointerup", 160, 140));
+    flushSync();
+    expect(boxOf(frames()[0])).toEqual(before.f);
+
+    // Looking is not moving: a click on a held tile still walks in.
+    click(tileFor("a"));
+    expect(ui.walkedIn).toBe(true);
+    expect(fleet.selectedID).toBe("a");
+    // And the delete affordance is gone until it is unlocked.
+    expect(frames()[0].querySelector(".delete")).toBeNull();
+    done();
+  });
+
+  test("a selection drag leaves a locked member behind", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    const frame = drawAroundA();
+    frame.querySelector<HTMLButtonElement>(".lock")!.click();
+    flushSync();
+    click(tileFor("b"));
+    click(tileFor("a"), true);
+    const before = { a: boxOf(tileFor("a")), b: boxOf(tileFor("b")) };
+
+    drag(tileFor("b"), 60, 40);
+
+    expect(boxOf(tileFor("b")).x).toBeCloseTo(before.b.x + 60);
+    expect(boxOf(tileFor("a"))).toEqual(before.a);
+    done();
+  });
+
+  test("deleting a frame keeps its tiles where they are", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const frame = drawAroundA();
+    const before = boxOf(tileFor("a"));
+    frame.querySelector<HTMLButtonElement>(".delete")!.click();
+    flushSync();
+    expect(frames()).toHaveLength(0);
+    expect(boxOf(tileFor("a"))).toEqual(before);
+    done();
+  });
+
+  test("a double-click on the title renames in place", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const frame = drawAroundA();
+    titleOf(frame).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    flushSync();
+    const field = frame.querySelector<HTMLInputElement>("input.name")!;
+    expect(field).not.toBeNull();
+    field.value = "migration";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    flushSync();
+    expect(nameOf(frames()[0])).toBe("migration");
+
+    // The name survives a reload.
+    done();
+    const again = mountCanvas();
+    push({ id: "a" });
+    expect(nameOf(frames()[0])).toBe("migration");
+    again();
+  });
+
+  test("frame by workspace draws one frame per workspace, named for it", () => {
+    const done = mountCanvas();
+    const other = { id: "other", kind: "git", name: "other", root: "/o", execution_root: "/o" };
+    push({ id: "a" }, { id: "b" }, { id: "c", workspace: other });
+
+    button("frame by workspace")!.click();
+    flushSync();
+
+    const drawn = frames().map((f) => ({ name: nameOf(f), box: boxOf(f) }));
+    expect(drawn.map((d) => d.name).sort()).toEqual(["other", "ws"]);
+    const ws = drawn.find((d) => d.name === "ws")!.box;
+    const a = boxOf(tileFor("a"));
+    const b = boxOf(tileFor("b"));
+    expect(ws.x).toBe(a.x - 24);
+    expect(ws.x + ws.w).toBe(b.x + b.w + 24);
+    done();
+  });
+
+  test("frame by workspace is offered only where there is more than one", () => {
+    const done = mountCanvas();
+    push({ id: "a" }, { id: "b" });
+    expect(button("frame by workspace")).toBeUndefined();
+    fleet.workspaceID = "ws";
+    flushSync();
+    expect(button("frame by workspace")).toBeUndefined();
     done();
   });
 });

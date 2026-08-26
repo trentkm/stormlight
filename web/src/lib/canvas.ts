@@ -22,7 +22,24 @@ export interface Box {
   h: number;
 }
 
+/**
+ * A frame: a box on the stage that groups the tiles inside it. It stores
+ * no members — a tile is in a frame when its centre is, which is what
+ * makes dragging a tile into or out of one just dropping it there.
+ */
+export interface Frame extends Box {
+  name: string;
+  locked: boolean;
+}
+
 export const homeView: View = { x: 40, y: 40, z: 1 };
+
+/** The room a frame keeps around what it was drawn to hold, and the
+ *  height of its title bar, which sits above its box. */
+export const framePadding = 24;
+export const frameTitle = 26;
+export const frameMin = { w: 120, h: 80 };
+export const frameNameLimit = 80;
 
 /** Zoom bounds: far enough out to survey a large fleet, close enough in
  *  to read one terminal — beyond either, the view is just lost. */
@@ -190,6 +207,39 @@ export function spanning(
   };
 }
 
+/** The frame a box belongs to: the innermost one — by area — whose
+ *  box holds the tile's centre, or undefined outside every frame. */
+export function frameOf(
+  frames: Record<string, Frame>,
+  box: Box,
+): string | undefined {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  let found: string | undefined;
+  let smallest = Infinity;
+  for (const [id, frame] of Object.entries(frames)) {
+    const inside =
+      cx >= frame.x && cx <= frame.x + frame.w && cy >= frame.y && cy <= frame.y + frame.h;
+    const area = frame.w * frame.h;
+    if (inside && area < smallest) {
+      found = id;
+      smallest = area;
+    }
+  }
+  return found;
+}
+
+/** The frame that would hold these boxes, with room to breathe. */
+export function frameAround(boxes: Box[], padding = framePadding): Box {
+  const whole = union(boxes);
+  return {
+    x: whole.x - padding,
+    y: whole.y - padding,
+    w: whole.w + padding * 2,
+    h: whole.h + padding * 2,
+  };
+}
+
 /** Placement's overlap: intersection with the gap kept around a tile. */
 function overlaps(a: Box, b: Box): boolean {
   return intersects(
@@ -234,6 +284,18 @@ export function resized(box: Box, w: number, h: number): Box {
     ...box,
     w: clamp(w, tileMin.w, extentLimit),
     h: clamp(h, tileMin.h, extentLimit),
+  };
+}
+
+/** A frame clamped the way a box is, with its name and lock believed
+ *  only in the shapes load() accepts. */
+export function boundedFrame(frame: Frame): Frame {
+  return {
+    ...bounded(frame),
+    w: clamp(frame.w, frameMin.w, extentLimit),
+    h: clamp(frame.h, frameMin.h, extentLimit),
+    name: frame.name.slice(0, frameNameLimit),
+    locked: frame.locked === true,
   };
 }
 

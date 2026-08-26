@@ -603,10 +603,12 @@ describe("the selection", () => {
     expect([...ui.selection]).toEqual(["a"]);
   });
 
-  test("Escape clears it", () => {
+  test("Escape clears it, and puts the tool down", () => {
     ui.selection.add("a").add("b");
+    ui.tool = "frame";
     run("select-none");
     expect(ui.selection.size).toBe(0);
+    expect(ui.tool).toBe("");
   });
 
   test("the keys that move the cursor leave it alone", () => {

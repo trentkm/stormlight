@@ -6,6 +6,10 @@
   import {
     centeredOn,
     fitView,
+    frameAround,
+    frameMin,
+    frameOf,
+    frameTitle,
     homeView,
     intersects,
     panBy,
@@ -16,6 +20,7 @@
     type Box,
     type View,
   } from "../lib/canvas";
+  import CanvasFrame from "./CanvasFrame.svelte";
   import CanvasTile from "./CanvasTile.svelte";
   import { isUrgent } from "../lib/types";
 
@@ -35,21 +40,44 @@
   let view = $state<View>(homeView);
 
   /**
-   * A drag in flight, as the offset it has travelled and the tile that
-   * is doing the travelling. Held here rather than in the tile because
-   * a drag can carry more than one tile: dragging a selected tile
-   * carries the whole selection, and every carried tile shows the same
-   * offset until the hand lets go. A tile outside the selection drags
-   * alone and leaves the selection as it was — dragging is not
-   * selecting, and a drag must never move the cursor, which is where
-   * the keyboard is.
+   * A drag in flight: the offset it has travelled, what is doing the
+   * travelling, and every tile it carries. Held here rather than in the
+   * tile because a drag can carry more than one tile: dragging a
+   * selected tile carries the whole selection, and dragging a frame
+   * carries whatever it holds. Every carried tile shows the same offset
+   * until the hand lets go. A tile outside the selection drags alone
+   * and leaves the selection as it was — dragging is not selecting,
+   * and a drag must never move the cursor, which is where the keyboard
+   * is.
+   *
+   * Who is carried is decided once, when the drag begins, from the
+   * committed boxes: a frame's members are the tiles whose centres it
+   * held then, and a tile inside a locked frame is never carried.
    */
-  let drift = $state<{ id: string; dx: number; dy: number } | null>(null);
+  let drift = $state<{
+    kind: "tile" | "frame";
+    id: string;
+    members: Set<string>;
+    dx: number;
+    dy: number;
+  } | null>(null);
 
-  const carried = (id: string): boolean =>
-    drift !== null &&
-    (id === drift.id ||
-      (ui.selection.has(drift.id) && ui.selection.has(id)));
+  const carried = (id: string): boolean => drift?.members.has(id) ?? false;
+
+  const membersOf = (kind: "tile" | "frame", id: string): Set<string> => {
+    const free = (agentID: string) => !lockedTile(agentID);
+    if (kind === "frame") {
+      return new Set(
+        agents
+          .filter((a) => frameOfTile(a.id) === id && free(a.id))
+          .map((a) => a.id),
+      );
+    }
+    if (ui.selection.has(id)) {
+      return new Set([...ui.selection].filter(free));
+    }
+    return new Set(free(id) ? [id] : []);
+  };
 
   /** Where a tile is drawn: its box, plus the drift if it is carried. */
   const shownBox = (id: string): Box => {
@@ -58,13 +86,21 @@
     return { ...box, x: box.x + drift.dx, y: box.y + drift.dy };
   };
 
-  const drifted = (id: string, dx: number, dy: number) => {
-    drift = drift?.id === id
-      ? { id, dx: drift.dx + dx, dy: drift.dy + dy }
-      : { id, dx, dy };
+  /** Where a frame is drawn: its box, plus its own drift. */
+  const shownFrame = (id: string): Box => {
+    const frame = layout.frames[id];
+    if (!drift || drift.kind !== "frame" || drift.id !== id) return frame;
+    return { ...frame, x: frame.x + drift.dx, y: frame.y + drift.dy };
   };
 
-  /** The hand let go: every carried tile lands where it is shown, or
+  const drifted = (kind: "tile" | "frame", id: string, dx: number, dy: number) => {
+    drift =
+      drift && drift.kind === kind && drift.id === id
+        ? { ...drift, dx: drift.dx + dx, dy: drift.dy + dy }
+        : { kind, id, members: membersOf(kind, id), dx, dy };
+  };
+
+  /** The hand let go: everything carried lands where it is shown, or
    *  nowhere if the gesture was cancelled. */
   const landed = (commit: boolean) => {
     if (!drift) return;
@@ -72,9 +108,53 @@
       for (const agent of agents) {
         if (carried(agent.id)) layout.put(agent.id, shownBox(agent.id));
       }
+      if (drift.kind === "frame") {
+        layout.putFrame(drift.id, {
+          ...layout.frames[drift.id],
+          ...shownFrame(drift.id),
+        });
+      }
     }
     drift = null;
   };
+
+  /**
+   * The frame tool. With a selection in hand, the button frames it on
+   * the spot; with none, it arms the tool and the next backdrop drag
+   * draws the frame. Escape (select-none) disarms.
+   */
+  const frameButton = () => {
+    if (ui.selection.size > 0) {
+      const held = [...ui.selection]
+        .map((id) => layout.tiles[id])
+        .filter((box): box is Box => box !== undefined);
+      if (held.length > 0) {
+        layout.addFrame(frameAround(held));
+        return;
+      }
+    }
+    ui.tool = ui.tool === "frame" ? "" : "frame";
+  };
+
+  /** One frame per workspace around its tiles: the wall's grouping,
+   *  made spatial, on the canvas that shows everyone. */
+  const byWorkspace = () => {
+    const groups = new Map<string, { name: string; boxes: Box[] }>();
+    for (const agent of agents) {
+      const box = layout.tiles[agent.id];
+      const workspace = agent.workspace;
+      if (!box || !workspace) continue;
+      const group = groups.get(workspace.id) ?? { name: workspace.name, boxes: [] };
+      group.boxes.push(box);
+      groups.set(workspace.id, group);
+    }
+    for (const group of groups.values()) {
+      layout.addFrame(frameAround(group.boxes), group.name);
+    }
+  };
+  const workspacesShown = $derived(
+    new Set(agents.map((a) => a.workspace?.id).filter(Boolean)).size,
+  );
 
   // Placement is minted here, in an effect, never from the template:
   // boxFor writes state for an agent it has not seen, and Svelte
@@ -90,12 +170,29 @@
       .map((a) => layout.tiles[a.id])
       .filter((box): box is Box => box !== undefined);
 
+  /** Frames as boxes, title bars included, for fitting. */
+  const frameBoxes = (): Box[] =>
+    Object.values(layout.frames).map((f) => ({
+      x: f.x,
+      y: f.y - frameTitle,
+      w: f.w,
+      h: f.h + frameTitle,
+    }));
+
+  /** The frame a tile sits in, and whether that frame holds it still. */
+  const frameOfTile = (id: string) =>
+    layout.tiles[id] ? frameOf(layout.frames, layout.tiles[id]) : undefined;
+  const lockedTile = (id: string): boolean => {
+    const frameID = frameOfTile(id);
+    return frameID !== undefined && layout.frames[frameID].locked;
+  };
+
   const fit = () => {
     // A viewport with no extent — hidden tab, mid-layout mount — has
     // nothing to fit into, and fitting anyway slams the zoom to its
     // floor.
     if (!clip || clip.clientWidth === 0 || clip.clientHeight === 0) return;
-    view = fitView(boxes(), {
+    view = fitView([...boxes(), ...frameBoxes()], {
       w: clip.clientWidth,
       h: clip.clientHeight,
     });
@@ -168,13 +265,15 @@
 
   /**
    * Dragging empty canvas pans; with Shift held it draws a marquee, and
-   * letting go selects every tile the marquee touches. Tiles stop
+   * letting go selects every tile the marquee touches. With the frame
+   * tool armed the same drag draws a frame instead. Tiles stop
    * propagation of their own gestures by handling them first (their
    * pointerdown captures).
    */
   let panning: { pointer: number; x: number; y: number } | null = null;
   let marquee = $state<{
     pointer: number;
+    purpose: "select" | "frame";
     from: { x: number; y: number };
     to: { x: number; y: number };
   } | null>(null);
@@ -195,9 +294,14 @@
     // here with the backdrop as target.
     if (event.target !== event.currentTarget && event.target !== stage) return;
     clip?.setPointerCapture?.(event.pointerId);
-    if (event.shiftKey) {
+    if (event.shiftKey || ui.tool === "frame") {
       const at = pointOf(event);
-      marquee = { pointer: event.pointerId, from: at, to: at };
+      marquee = {
+        pointer: event.pointerId,
+        purpose: ui.tool === "frame" ? "frame" : "select",
+        from: at,
+        to: at,
+      };
       return;
     }
     panning = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
@@ -214,16 +318,23 @@
   const up = (event: PointerEvent) => {
     if (panning?.pointer === event.pointerId) panning = null;
     if (marquee?.pointer === event.pointerId && band) {
-      // Whatever the band touches, and nothing if it touched nothing:
-      // a shift-drag over empty canvas is how a selection is dropped.
-      select(
-        agents
-          .filter((agent) => {
-            const box = layout.tiles[agent.id];
-            return box !== undefined && intersects(band, box);
-          })
-          .map((agent) => agent.id),
-      );
+      if (marquee.purpose === "frame") {
+        // A frame worth drawing has room in it; a twitch does not, and
+        // is the tool being put down.
+        if (band.w >= frameMin.w && band.h >= frameMin.h) layout.addFrame(band);
+        ui.tool = "";
+      } else {
+        // Whatever the band touches, and nothing if it touched nothing:
+        // a shift-drag over empty canvas is how a selection is dropped.
+        select(
+          agents
+            .filter((agent) => {
+              const box = layout.tiles[agent.id];
+              return box !== undefined && intersects(band, box);
+            })
+            .map((agent) => agent.id),
+        );
+      }
       marquee = null;
     }
   };
@@ -297,6 +408,7 @@
      and it tells assistive tech the tiles inside carry the semantics. -->
 <div
   class="canvas"
+  class:framing={ui.tool === "frame"}
   role="application"
   aria-label="Agent canvas"
   bind:this={clip}
@@ -311,6 +423,21 @@
     bind:this={stage}
     style:transform="translate({view.x}px, {view.y}px) scale({view.z})"
   >
+    <!-- Frames first, so tiles paint over them without a z-index. -->
+    {#each Object.keys(layout.frames) as id (id)}
+      <CanvasFrame
+        frame={layout.frames[id]}
+        box={shownFrame(id)}
+        zoom={view.z}
+        lifted={drift?.kind === "frame" && drift.id === id}
+        oncommit={(box) => layout.putFrame(id, { ...layout.frames[id], ...box })}
+        ondrift={(dx, dy) => drifted("frame", id, dx, dy)}
+        onland={landed}
+        onrename={(name) => layout.putFrame(id, { ...layout.frames[id], name })}
+        onlock={(locked) => layout.putFrame(id, { ...layout.frames[id], locked })}
+        ondelete={() => layout.dropFrame(id)}
+      />
+    {/each}
     {#each agents as agent (agent.id)}
       {#if layout.tiles[agent.id]}
         <CanvasTile
@@ -321,9 +448,10 @@
           cursor={fleet.selectedID === agent.id}
           selected={ui.selection.has(agent.id)}
           lifted={carried(agent.id)}
+          locked={lockedTile(agent.id)}
           focused={focused === agent.id}
           oncommit={(box) => layout.put(agent.id, box)}
-          ondrift={(dx, dy) => drifted(agent.id, dx, dy)}
+          ondrift={(dx, dy) => drifted("tile", agent.id, dx, dy)}
           onland={landed}
           onenter={() => enter(agent.id)}
           ontoggle={() => toggle(agent.id)}
@@ -334,6 +462,7 @@
     {#if band}
       <div
         class="marquee"
+        class:drawing={marquee?.purpose === "frame"}
         style:left="{band.x}px"
         style:top="{band.y}px"
         style:width="{band.w}px"
@@ -350,6 +479,20 @@
         ! {urgent.length} need{urgent.length === 1 ? "s" : ""} input
       </button>
     {/if}
+    {#if fleet.workspaceID === "" && workspacesShown > 1}
+      <button onclick={byWorkspace} title="Draw one frame around each workspace's tiles">
+        frame by workspace
+      </button>
+    {/if}
+    <button
+      class:on={ui.tool === "frame"}
+      onclick={frameButton}
+      title={ui.selection.size > 0
+        ? "Frame the selected tiles"
+        : "Draw a frame: drag on the canvas"}
+    >
+      frame
+    </button>
     <button onclick={fit} title="Fit every tile in view">fit</button>
     <span class="zoom">{zoomLabel}</span>
   </div>
@@ -372,6 +515,10 @@
   .canvas:active {
     cursor: grabbing;
   }
+  .canvas.framing,
+  .canvas.framing:active {
+    cursor: crosshair;
+  }
   .stage {
     position: absolute;
     top: 0;
@@ -389,6 +536,11 @@
     border: 1px dashed var(--accent);
     background: var(--selected-bg);
     pointer-events: none;
+  }
+  .marquee.drawing {
+    border-color: var(--muted);
+    border-radius: 8px;
+    background: transparent;
   }
   .empty {
     position: absolute;
@@ -422,6 +574,11 @@
   }
   .controls button:hover {
     color: var(--accent);
+  }
+  .controls button.on {
+    background: var(--band);
+    color: var(--band-ink);
+    border-radius: 4px;
   }
   .controls button.urgent {
     color: var(--waiting);

@@ -12,6 +12,7 @@
     cursor = false,
     selected = false,
     lifted = false,
+    locked = false,
     focused = false,
     oncommit,
     ondrift,
@@ -32,6 +33,8 @@
     selected?: boolean;
     /** Carried by a drag in flight — this tile's or a selection's. */
     lifted?: boolean;
+    /** Inside a locked frame: it stays where it is. */
+    locked?: boolean;
     /** Walked in: this tile holds the keyboard. */
     focused?: boolean;
     /** A resize, committed. */
@@ -129,6 +132,14 @@
 
   const begin = (event: PointerEvent, kind: "move" | "resize") => {
     if (event.button !== 0) return;
+    // A locked frame holds its tiles still. The press is still
+    // cancelled — it must not move focus either — and a click still
+    // lands, since looking is not moving.
+    if (locked) {
+      event.preventDefault();
+      if (kind === "move") pressed = { pointer: event.pointerId };
+      return;
+    }
     // One gesture at a time. A second pointer landing mid-drag — a
     // palm, a stray finger — must not hijack the tile: its down is
     // ignored, and its later up fails the pointerId check below, so
@@ -149,6 +160,10 @@
     // Guarded: jsdom mounts this component without implementing it.
     host.setPointerCapture?.(event.pointerId);
   };
+
+  /** A press on a locked tile, remembered so its release can still be
+   *  a click. */
+  let pressed: { pointer: number } | null = null;
 
   const onLabel = (target: EventTarget | null) =>
     target instanceof Element && target.closest(".label") !== null;
@@ -197,6 +212,12 @@
   };
 
   const up = (event: PointerEvent) => {
+    if (pressed?.pointer === event.pointerId) {
+      pressed = null;
+      if (event.shiftKey) ontoggle();
+      else onenter();
+      return;
+    }
     if (!gesture || event.pointerId !== gesture.pointer) return;
     const { kind, travel, engaged } = gesture;
     gesture = null;
@@ -253,6 +274,7 @@
   class:urgent={isUrgent(agent)}
   class:done={!agent.process_live}
   class:lifted={lifted || inFlight !== null}
+  class:locked
   class:cursor
   class:selected
   class:focused
@@ -349,6 +371,13 @@
   }
   .tile.focused .label {
     cursor: grab;
+  }
+  .tile.locked,
+  .tile.locked .label {
+    cursor: default;
+  }
+  .tile.locked .grip {
+    display: none;
   }
   /* The ring stacks with the other shadows rather than losing to
      whichever rule came last. */
