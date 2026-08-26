@@ -10,6 +10,7 @@ import (
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/remote"
+	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -409,5 +410,24 @@ func TestTheReportedVersionIsPulledOutOfTheSentence(t *testing.T) {
 		if got := reportedVersion(reported); got != want {
 			t.Fatalf("reportedVersion(%q) = %q, want %q", reported, got, want)
 		}
+	}
+}
+
+// TestTheFarewellCarriesTheSameMark: the oath is the last thing the
+// program prints, and it prints from main rather than from the dashboard —
+// which is exactly how a mark gets spelled twice and drifts apart. It
+// takes the glyph from the package that draws the other two.
+func TestTheFarewellCarriesTheSameMark(t *testing.T) {
+	line := farewellLine()
+	if !strings.Contains(line, ui.StormGlyph) {
+		t.Errorf("the farewell dropped Stormlight's mark: %q", line)
+	}
+	if !strings.Contains(line, "Journey before destination.") {
+		t.Errorf("the farewell dropped the oath: %q", line)
+	}
+	// The mark leads, as it does in the header.
+	if strings.Index(line, ui.StormGlyph) >
+		strings.Index(line, "Journey") {
+		t.Errorf("the mark follows the words: %q", line)
 	}
 }

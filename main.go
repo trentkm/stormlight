@@ -578,8 +578,19 @@ func printFarewell(out io.Writer) {
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return
 	}
-	fmt.Fprintln(file,
-		"\x1b[38;2;125;207;255m✦\x1b[0m \x1b[2mJourney before destination.\x1b[0m")
+	fmt.Fprintln(file, farewellLine())
+}
+
+// farewellLine is the oath as it is printed: Stormlight's own mark, then
+// the words dimmed behind it.
+//
+// The colour is spelled in raw ANSI rather than resolved through the
+// theme — it is the wordmark's sky stop, #7DCFFF, written out. This line
+// is printed after the dashboard has handed the terminal back, which is
+// no place to be starting up a palette for one glyph.
+func farewellLine() string {
+	return "\x1b[38;2;125;207;255m" + ui.StormGlyph +
+		"\x1b[0m \x1b[2mJourney before destination.\x1b[0m"
 }
 
 func newLogsCommand(logFile *string) *cobra.Command {

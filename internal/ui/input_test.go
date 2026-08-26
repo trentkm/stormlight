@@ -2696,9 +2696,9 @@ func TestTheWordmarkOpensWithTheStorm(t *testing.T) {
 	// Both ends of the shimmer: at rest, and with the band mid-sweep.
 	for _, phase := range []int{-1, 0, 4, 12} {
 		wordmark := ansi.Strip(renderWordmark(phase))
-		if !strings.HasPrefix(wordmark, wordmarkGlyph+" ") {
+		if !strings.HasPrefix(wordmark, StormGlyph+" ") {
 			t.Errorf("phase=%d: wordmark = %q, want it to open with %q",
-				phase, wordmark, wordmarkGlyph)
+				phase, wordmark, StormGlyph)
 		}
 		if !strings.HasSuffix(wordmark, stormlightTitle) {
 			t.Errorf("phase=%d: wordmark = %q, want it to end in the name",
@@ -2711,5 +2711,35 @@ func TestTheWordmarkOpensWithTheStorm(t *testing.T) {
 			t.Errorf("phase=%d: wordmark is %d columns, want %d: %q",
 				phase, got, want, wordmark)
 		}
+	}
+}
+
+// TestTheFooterIsCappedByTheStorm: the header opens with the mark and the
+// footer closes with it, in the same sky stop — the frame signs both ends
+// or neither. The cap also swaps sides with the seam, so both layouts are
+// worth pinning: a mark that only survives one of them is a mark that
+// disappears when someone walks into a terminal.
+func TestTheFooterIsCappedByTheStorm(t *testing.T) {
+	model := NewModel(stubBackend{})
+	model.width = 100
+
+	left := ansi.Strip(model.renderFooter())
+	row := lastLine(left)
+	if !strings.HasPrefix(row, " "+StormGlyph+" ") {
+		t.Errorf("the hint row does not lead with the mark: %q", row)
+	}
+
+	// Walked in: the hints lead and the mark caps the far end instead.
+	model.ptyEnabled = true
+	model.activePane = paneInteraction
+	if !model.terminalFocused() {
+		t.Fatal("the terminal did not take focus; the mirrored footer is untested")
+	}
+	row = lastLine(ansi.Strip(model.renderFooter()))
+	if !strings.HasSuffix(strings.TrimRight(row, " "), StormGlyph) {
+		t.Errorf("the mirrored row does not end with the mark: %q", row)
+	}
+	if strings.HasPrefix(row, " "+StormGlyph) {
+		t.Errorf("the mark stayed on the left as well: %q", row)
 	}
 }

@@ -45,13 +45,13 @@ func (m Model) renderFooter() string {
 			Light: wordmarkStopsLight[1],
 			Dark:  wordmarkStopsDark[1],
 		}))
-	row := " " + glintStyle.Render("✦ ") + content
+	row := " " + glintStyle.Render(StormGlyph+" ") + content
 	if rightAligned {
 		// A true mirror of the left layout: the hints lead and the glint
 		// caps the row at the outermost position, one column in.
 		if pad := inner - lipgloss.Width(content); pad > 0 {
 			row = strings.Repeat(" ", pad) + content +
-				glintStyle.Render(" ✦") + " "
+				glintStyle.Render(" "+StormGlyph) + " "
 		}
 	}
 	return lipgloss.NewStyle().Width(width).MaxHeight(2).Render(

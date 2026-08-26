@@ -71,12 +71,13 @@ workspace it left, with everything it had already said and done.
 
 - `yazi` for the directory picker (installed automatically by the Homebrew
   cask). Optional: `nvim` for task editing.
-- A [Nerd Font](https://www.nerdfonts.com). The wordmark opens with a
-  storm, and a workspace on another machine leads its row with a cloud.
-  Both are Private Use Area codepoints, so a font without them draws empty
-  boxes — and nothing can ask a terminal whether it has them, which is why
-  this is a requirement rather than something the dashboard can detect and
-  work around. The rest of what it draws is ordinary Unicode.
+- A [Nerd Font](https://www.nerdfonts.com). Stormlight signs itself with a
+  storm — opening the wordmark, capping the hint row, and leading the line
+  it prints on the way out — and a workspace on another machine leads its
+  row with a cloud. Both are Private Use Area codepoints, so a font without
+  them draws empty boxes, and nothing can ask a terminal whether it has
+  them: this is a requirement rather than something the dashboard can
+  detect and work around. The rest of what it draws is ordinary Unicode.
 
 ## Install
 

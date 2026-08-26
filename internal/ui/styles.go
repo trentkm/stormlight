@@ -79,22 +79,26 @@ func successStyle() lipgloss.Style {
 // indicator for the header, workspace names, and agent titles.
 const stormlightTitle = "Stormlight"
 
-// wordmarkGlyph opens the wordmark: Nerd Font U+E364,
-// nf-weather-night_alt_sleet_storm. The mark before the name now says the
-// name — a storm, where a four-pointed star said only "something bright".
+// StormGlyph is Stormlight's mark: Nerd Font U+E364,
+// nf-weather-night_alt_sleet_storm. It opens the wordmark, caps the
+// footer, and leads the oath printed on the way out — every place the
+// program signs its own name. A four-pointed star stood here before, and
+// said only "something bright".
 //
-// It is a Private Use Area codepoint, which is a harder bargain here than
-// anywhere else in the dashboard: the header is the first thing drawn and
-// the last thing a user would think to blame, so in a terminal without a
+// Exported for that last one: the farewell is printed by main after the
+// dashboard is gone, and one mark spelled in two places is one that drifts.
+//
+// It is a Private Use Area codepoint, which is a harder bargain than the
+// rest of the dashboard drives. The header is the first thing painted and
+// the last thing anyone would think to blame, so in a terminal without a
 // Nerd Font the identity line opens with an empty box. Nothing can ask a
 // terminal whether it has the glyph, so this is a requirement rather than
-// a degradation, and README says so.
+// something to detect and work around, and README says so.
 //
-// The footer keeps its ✦ (see renderFooter). The two marks share the
-// wordmark's sky stop and read as one family, but only this one stands in
-// for the name; the footer's is a cap on a row of hints, and it still
-// draws in every font.
-const wordmarkGlyph = "\ue364"
+// One cell wide — in lipgloss, and in a real terminal, which is what the
+// header's gap arithmetic assumes when it places the counters at the far
+// edge.
+const StormGlyph = "\ue364"
 
 // shimmerRest adds off-screen travel on both ends of each sweep so the glow
 // rests at the base shade between passes instead of wrapping abruptly.
@@ -167,7 +171,7 @@ func renderWordmark(phase int) string {
 			Light: wordmarkStopsLight[1],
 			Dark:  wordmarkStopsDark[1],
 		}))
-	out.WriteString(glint.Render(wordmarkGlyph + " "))
+	out.WriteString(glint.Render(StormGlyph + " "))
 	for index, letter := range runes {
 		t := 0.0
 		if len(runes) > 1 {
