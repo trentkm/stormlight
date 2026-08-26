@@ -1,3 +1,4 @@
+import { SvelteSet } from "svelte/reactivity";
 import { api } from "./api";
 import { act, agentsIn, fleet, selected, workspaceList } from "./state.svelte";
 import { isUrgent, type Agent } from "./types";
@@ -40,7 +41,36 @@ export const ui = $state({
   composing: false,
   /** A two-key sequence in progress: "g" or "ctrl-x". */
   pending: "",
+  /**
+   * The canvas's selection: a set of agents, beside the cursor.
+   *
+   * The cursor is one agent — the roster, the pane, and the keyboard
+   * all key on it — and the set is what a batch gesture acts on: a
+   * marquee, a shift-click, a drag that carries everyone. A plain
+   * click on a tile sets both to that agent; the keys that move the
+   * cursor leave the set alone, so a batch survives a look elsewhere.
+   */
+  selection: new SvelteSet<string>(),
+  /** The canvas's tool in hand. Escape returns to select. */
+  tool: "select" as Tool,
 });
+
+export type Tool =
+  | "select"
+  | "hand"
+  | "rect"
+  | "ellipse"
+  | "line"
+  | "arrow"
+  | "pencil"
+  | "text"
+  | "frame";
+
+/** The selection becomes exactly these. */
+export function select(ids: Iterable<string>): void {
+  ui.selection.clear();
+  for (const id of ids) ui.selection.add(id);
+}
 
 /**
  * Keeps the walked-in claim honest against where focus actually is.
@@ -463,10 +493,34 @@ export function run(id: string, argument?: string): void {
     case "select-agent":
       if (argument) {
         fleet.selectedID = argument;
+        select([argument]);
         followSelection();
         if (!typesHere()) ui.view = "roster";
         ui.column = "agents";
       }
+      return;
+    case "select-none":
+      // Escape drops whatever is in hand: the selection, and the tool.
+      ui.selection.clear();
+      ui.tool = "select";
+      return;
+
+    // The canvas's tools. Choosing one is meaningful only on the
+    // canvas, and the letters reach here only from it; the palette
+    // brings the canvas along so the choice is visible.
+    case "tool-select":
+    case "tool-hand":
+    case "tool-rect":
+    case "tool-ellipse":
+    case "tool-line":
+    case "tool-arrow":
+    case "tool-pencil":
+    case "tool-text":
+    case "tool-frame":
+      ui.tool = id.slice("tool-".length) as Tool;
+      ui.view = "canvas";
+      ui.walkedIn = false;
+      ui.zoomed = false;
       return;
     case "select-workspace":
       if (argument !== undefined) {

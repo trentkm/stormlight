@@ -9,10 +9,18 @@
     box,
     zoom,
     clip,
+    cursor = false,
     selected = false,
+    lifted = false,
+    locked = false,
     focused = false,
+    inbound = "",
     oncommit,
+    onlink,
+    ondrift,
+    onland,
     onenter,
+    ontoggle,
     onopen,
   }: {
     agent: Agent;
@@ -22,12 +30,31 @@
     /** The canvas viewport, root for the visibility observer. */
     clip: HTMLElement | undefined;
     /** The roster's cursor is on this agent. */
+    cursor?: boolean;
+    /** In the canvas's selection. */
     selected?: boolean;
+    /** Carried by a drag in flight — this tile's or a selection's. */
+    lifted?: boolean;
+    /** Inside a locked frame: it stays where it is. */
+    locked?: boolean;
     /** Walked in: this tile holds the keyboard. */
     focused?: boolean;
+    /** What the pipeline last did to this agent, for the label: a hop
+     *  that just arrived ("from reviewer"), or one waiting for it. */
+    inbound?: string;
+    /** A resize, committed. */
     oncommit: (box: Box) => void;
+    /** A press on the port: someone is dragging an arrow out of here. */
+    onlink: (event: PointerEvent) => void;
+    /** A move, one step of it in stage units. The canvas decides who
+     *  travels: this tile, or the selection it belongs to. */
+    ondrift: (dx: number, dy: number) => void;
+    /** The move ended: landed where shown, or dropped if cancelled. */
+    onland: (commit: boolean) => void;
     /** A click: someone wants to type here. */
     onenter: () => void;
+    /** A shift-click: in or out of the selection. */
+    ontoggle: () => void;
     /** The label's open button: someone wants the roster's full pane. */
     onopen: () => void;
   } = $props();
@@ -43,10 +70,12 @@
   // terminal rather than showing nothing.
   let visible = $state(true);
 
-  // While a gesture is live the tile follows the hand; between gestures
+  // While a resize is live the tile follows the hand; between gestures
   // it sits where the layout says. Holding the in-flight box apart from
   // the committed one means a gesture never fights the store, and
-  // letting go of it (null) is what hands control back.
+  // letting go of it (null) is what hands control back. A move is not
+  // held here: it may carry other tiles, so the canvas holds it and
+  // hands every carried tile its shown box.
   let inFlight = $state<Box | null>(null);
   const shown = $derived(inFlight ?? box);
 
@@ -110,6 +139,14 @@
 
   const begin = (event: PointerEvent, kind: "move" | "resize") => {
     if (event.button !== 0) return;
+    // A locked frame holds its tiles still. The press is still
+    // cancelled — it must not move focus either — and a click still
+    // lands, since looking is not moving.
+    if (locked) {
+      event.preventDefault();
+      if (kind === "move") pressed = { pointer: event.pointerId };
+      return;
+    }
     // One gesture at a time. A second pointer landing mid-drag — a
     // palm, a stray finger — must not hijack the tile: its down is
     // ignored, and its later up fails the pointerId check below, so
@@ -130,6 +167,10 @@
     // Guarded: jsdom mounts this component without implementing it.
     host.setPointerCapture?.(event.pointerId);
   };
+
+  /** A press on a locked tile, remembered so its release can still be
+   *  a click. */
+  let pressed: { pointer: number } | null = null;
 
   const onLabel = (target: EventTarget | null) =>
     target instanceof Element && target.closest(".label") !== null;
@@ -173,19 +214,30 @@
     // the tile tracks the cursor exactly.
     const dx = px / zoom;
     const dy = py / zoom;
-    inFlight =
-      gesture.kind === "move"
-        ? { ...shown, x: shown.x + dx, y: shown.y + dy }
-        : resized(shown, shown.w + dx, shown.h + dy);
+    if (gesture.kind === "move") ondrift(dx, dy);
+    else inFlight = resized(shown, shown.w + dx, shown.h + dy);
   };
 
   const up = (event: PointerEvent) => {
+    if (pressed?.pointer === event.pointerId) {
+      pressed = null;
+      if (event.shiftKey) ontoggle();
+      else onenter();
+      return;
+    }
     if (!gesture || event.pointerId !== gesture.pointer) return;
-    const { kind, travel } = gesture;
+    const { kind, travel, engaged } = gesture;
     gesture = null;
     if (travel <= 4) {
       inFlight = null;
-      if (kind === "move") onenter();
+      if (kind === "move") {
+        if (event.shiftKey) ontoggle();
+        else onenter();
+      }
+      return;
+    }
+    if (kind === "move") {
+      if (engaged) onland(true);
       return;
     }
     if (inFlight) oncommit(inFlight);
@@ -197,8 +249,10 @@
     // *secondary* touch when they claim it for a native gesture, and
     // that must not cost the first hand its drag.
     if (!gesture || event.pointerId !== gesture.pointer) return;
+    const { kind, engaged } = gesture;
     gesture = null;
     inFlight = null;
+    if (kind === "move" && engaged) onland(false);
   };
 
   const key = (event: KeyboardEvent) => {
@@ -226,7 +280,9 @@
   class="tile"
   class:urgent={isUrgent(agent)}
   class:done={!agent.process_live}
-  class:lifted={inFlight !== null}
+  class:lifted={lifted || inFlight !== null}
+  class:locked
+  class:cursor
   class:selected
   class:focused
   role="button"
@@ -253,9 +309,26 @@
          and nothing on screen says so. -->
     {#if focused}
       <span class="typing">typing · ctrl-space leaves</span>
+    {:else if inbound}
+      <span class="inbound">{inbound}</span>
     {:else}
       <span class="where">{agent.workspace?.name ?? ""}</span>
     {/if}
+    <!-- The port: drag an arrow out of here onto another tile and the
+         two are linked — when this agent's turn ends, that one hears
+         about it. Its press is its own, never the tile's drag. -->
+    <button
+      class="port"
+      title="Drag to another agent to link them"
+      aria-label="Link {agent.name || agent.task || agent.id} to another agent"
+      onpointerdown={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        onlink(event);
+      }}
+    >
+      ●
+    </button>
     <button
       class="open"
       title="Open in the roster"
@@ -293,8 +366,13 @@
   .tile:hover {
     border-color: var(--accent);
   }
-  .tile.selected {
+  .tile.cursor {
     border-color: var(--accent);
+  }
+  /* In the selection: a ring outside the border, so a selected tile
+     and the cursor's tile read as two different facts on one tile. */
+  .tile.selected {
+    box-shadow: 0 0 0 2px var(--accent);
   }
   .tile.lifted {
     cursor: grabbing;
@@ -317,6 +395,25 @@
   }
   .tile.focused .label {
     cursor: grab;
+  }
+  .tile.locked,
+  .tile.locked .label {
+    cursor: default;
+  }
+  .tile.locked .grip {
+    display: none;
+  }
+  /* The ring stacks with the other shadows rather than losing to
+     whichever rule came last. */
+  .tile.selected.urgent {
+    box-shadow:
+      0 0 14px var(--attention-glow),
+      0 0 0 2px var(--accent);
+  }
+  .tile.selected.focused {
+    box-shadow:
+      inset 0 0 0 1px var(--aim),
+      0 0 0 2px var(--accent);
   }
   .tile.done {
     opacity: 0.72;
@@ -355,6 +452,27 @@
   }
   .tile.urgent .where {
     color: var(--attention-ink-dim);
+  }
+  .inbound {
+    color: var(--working);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .port {
+    flex: 0 0 auto;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1;
+    cursor: crosshair;
+    opacity: 0.35;
+  }
+  .tile:hover .port,
+  .port:hover {
+    opacity: 1;
+    color: var(--accent);
   }
   .open {
     flex: 0 0 auto;

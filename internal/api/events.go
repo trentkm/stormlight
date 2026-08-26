@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/trentkm/stormlight/internal/link"
 	"net/http"
 	"sync"
 	"time"
@@ -78,7 +79,18 @@ func (h *hub) poll(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		payload, err := json.Marshal(rosterEvent{Type: "agents", Agents: viewOf(agents)})
+		// Links ride with the roster: one message, one slot, and a link
+		// that fired from a hook is a change to show as much as an agent
+		// going idle is.
+		links, err := h.service.Links(listCtx)
+		if err != nil {
+			links = nil
+		}
+		payload, err := json.Marshal(rosterEvent{
+			Type:   "agents",
+			Agents: viewOf(agents),
+			Links:  orEmpty(links),
+		})
 		if err != nil {
 			continue
 		}
@@ -93,6 +105,7 @@ func (h *hub) poll(ctx context.Context) {
 type rosterEvent struct {
 	Type   string      `json:"type"`
 	Agents []agentView `json:"agents"`
+	Links  []link.Link `json:"links"`
 }
 
 func (h *hub) hasClients() bool {
@@ -192,5 +205,14 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+// poke asks for a roster now: a link just changed by hand, and the
+// client that changed it should see it without waiting for the tick.
+func (h *hub) poke() {
+	select {
+	case h.wake <- struct{}{}:
+	default:
 	}
 }

@@ -31,7 +31,7 @@ export interface Binding {
   /** What it does, phrased as the TUI's help phrases it. */
   what: string;
   /** Which group it belongs to in `?` and the palette. */
-  group: "Navigate" | "Act" | "View" | "Panes";
+  group: "Navigate" | "Act" | "View" | "Panes" | "Canvas";
   /**
    * Whether the binding still fires while walked into a terminal.
    * Only chords a hosted full-screen TUI does not bind can be: the
@@ -80,6 +80,12 @@ export const bindings: Binding[] = [
   },
   { id: "first", keys: "gg", what: "first item, or the top", group: "Navigate" },
   { id: "last", keys: "G", what: "last item, or the bottom", group: "Navigate" },
+  {
+    id: "select-none",
+    keys: "Esc",
+    what: "clear the canvas's selection (shift-click and shift-drag make one)",
+    group: "Navigate",
+  },
   {
     id: "walk-in",
     keys: "Enter",
@@ -256,7 +262,34 @@ export const bindings: Binding[] = [
     palette: undefined,
   },
   { id: "help", keys: "?", what: "this list", group: "View" },
+
+  // Canvas: the drawing tools, by the letters Excalidraw taught
+  // everyone. These take their letters only while the canvas is
+  // showing — `t` is the terminal tab everywhere else — and the tool
+  // in hand shows in the canvas's toolbar.
+  { id: "tool-select", keys: "v", what: "select: click, drag, marquee", group: "Canvas" },
+  { id: "tool-hand", keys: "h", what: "hand: pan only", group: "Canvas" },
+  { id: "tool-rect", keys: "r", what: "draw a rectangle", group: "Canvas" },
+  { id: "tool-ellipse", keys: "o", what: "draw an ellipse", group: "Canvas" },
+  { id: "tool-line", keys: "l", what: "draw a line", group: "Canvas" },
+  { id: "tool-arrow", keys: "a", what: "draw an arrow", group: "Canvas" },
+  { id: "tool-pencil", keys: "p", what: "draw freehand", group: "Canvas" },
+  { id: "tool-text", keys: "t", what: "place text", group: "Canvas" },
+  { id: "tool-frame", keys: "f", what: "draw a frame that groups and locks", group: "Canvas" },
 ];
+
+/** The canvas's tools, by key. */
+export const tools: Record<string, string> = {
+  v: "tool-select",
+  h: "tool-hand",
+  r: "tool-rect",
+  o: "tool-ellipse",
+  l: "tool-line",
+  a: "tool-arrow",
+  p: "tool-pencil",
+  t: "tool-text",
+  f: "tool-frame",
+};
 
 /**
  * TUI keys with no browser equivalent, named rather than dropped.
@@ -379,6 +412,7 @@ export function match(
   event: KeyboardEvent,
   focus: Focus,
   pending: string,
+  view: "roster" | "wall" | "canvas" = "roster",
 ): { id: string; pending?: string } | undefined {
   // The palette answers first and from anywhere — including a text
   // field, since needing to leave the box you are typing in to reach
@@ -462,6 +496,11 @@ export function match(
   }
   if (event.ctrlKey && event.key === "x") return { id: "", pending: "ctrl-x" };
 
+  // The canvas's tool letters come before the page's: on the canvas,
+  // h and l would step columns nobody can see, and t is the tool you
+  // reach for far more often than the terminal tab.
+  if (view === "canvas" && event.key in tools) return { id: tools[event.key] };
+
   switch (event.key) {
     case "h":
       return { id: "pane-left" };
@@ -475,6 +514,8 @@ export function match(
       return { id: "", pending: "g" };
     case "G":
       return { id: "last" };
+    case "Escape":
+      return { id: "select-none" };
     case "Enter":
       return { id: "walk-in" };
     case "n":

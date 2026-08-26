@@ -596,6 +596,39 @@ describe("agent actions", () => {
   });
 });
 
+describe("the selection", () => {
+  test("the palette's agent becomes the whole selection", () => {
+    ui.selection.add("b").add("c");
+    run("select-agent", "a");
+    expect([...ui.selection]).toEqual(["a"]);
+  });
+
+  test("Escape clears it, and puts the tool down", () => {
+    ui.selection.add("a").add("b");
+    ui.tool = "frame";
+    run("select-none");
+    expect(ui.selection.size).toBe(0);
+    expect(ui.tool).toBe("select");
+  });
+
+  test("a tool is picked up on the canvas, from anywhere", () => {
+    ui.view = "roster";
+    run("walk-in");
+    run("tool-pencil");
+    expect(ui.tool).toBe("pencil");
+    expect(ui.view).toBe("canvas");
+    expect(ui.walkedIn).toBe(false);
+    run("tool-select");
+    expect(ui.tool).toBe("select");
+  });
+
+  test("the keys that move the cursor leave it alone", () => {
+    ui.selection.add("a").add("b");
+    run("agents-next");
+    expect([...ui.selection]).toEqual(["a", "b"]);
+  });
+});
+
 describe("the palette's destinations", () => {
   test("jumping to an agent selects it, and leaves only the wall", () => {
     ui.view = "wall";
@@ -943,7 +976,7 @@ describe("every binding actually does something", () => {
   /** A snapshot of everything a command could move. */
   function world() {
     return JSON.stringify({
-      ui: { ...ui },
+      ui: { ...ui, selection: [...ui.selection] },
       selected: fleet.selectedID,
       workspace: fleet.workspaceID,
       calls: [...calls],
@@ -966,6 +999,8 @@ describe("every binding actually does something", () => {
     ];
     fleet.selectedID = where === "cold" ? "a" : "c";
     fleet.workspaceID = "";
+    ui.selection.clear();
+    if (where === "hot") ui.selection.add("a").add("b");
     Object.assign(ui, {
       view: where === "cold" ? "roster" : "canvas",
       pane: where === "cold" ? "terminal" : "diff",

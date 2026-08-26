@@ -16,7 +16,7 @@
     modal?.showModal();
   });
 
-  const groups = ["Navigate", "Act", "Panes", "View"] as const;
+  const groups = ["Navigate", "Act", "Panes", "View", "Canvas"] as const;
 
   const key = (event: KeyboardEvent) => {
     // "Any key closes", the way the TUI's help modal does — but a

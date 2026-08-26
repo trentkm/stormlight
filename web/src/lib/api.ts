@@ -1,5 +1,6 @@
 import type {
   Agent,
+  Link,
   Mark,
   Provider,
   TranscriptEntry,
@@ -140,6 +141,14 @@ export const api = {
     call<void>("PATCH", `/api/agents/${id}`, { name }),
   remove: (id: string) => call<void>("DELETE", `/api/agents/${id}`),
 
+  links: () => call<Link[]>("GET", "/api/links"),
+  addLink: (request: { from: string; to: string; label: string; auto: boolean }) =>
+    call<Link>("POST", "/api/links", request),
+  updateLink: (id: string, patch: { label?: string; auto?: boolean }) =>
+    call<Link>("PATCH", `/api/links/${id}`, patch),
+  removeLink: (id: string) => call<void>("DELETE", `/api/links/${id}`),
+  fireLink: (id: string) => call<Link>("POST", `/api/links/${id}/fire`),
+
   addWorkspace: (path: string, host = "") =>
     call<Workspace>("POST", "/api/workspaces", { path, host }),
   removeWorkspace: (workspace: Workspace) =>
@@ -162,7 +171,7 @@ const rosterRetryCeiling = 10_000;
  * it thinks, and a refusal is reported rather than retried.
  */
 export function roster(
-  onRoster: (agents: Agent[]) => void,
+  onRoster: (agents: Agent[], links: Link[]) => void,
   onLost: (reason: string) => void = () => {},
 ): () => void {
   let socket: WebSocket | null = null;
@@ -180,7 +189,7 @@ export function roster(
     live.onmessage = (event) => {
       const payload = JSON.parse(event.data);
       if (payload.type === "agents") {
-        onRoster(payload.agents ?? []);
+        onRoster(payload.agents ?? [], payload.links ?? []);
       }
     };
     live.onclose = async () => {

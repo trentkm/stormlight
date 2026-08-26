@@ -12,6 +12,10 @@ import (
 
 type Provider string
 
+// LastReplyLimit bounds what is kept of a reply, in runes: a whole
+// message is what the next agent needs, a pasted file inside one is not.
+const LastReplyLimit = 12000
+
 const (
 	ProviderClaude Provider = "claude"
 	ProviderCodex  Provider = "codex"
@@ -190,8 +194,12 @@ type Agent struct {
 	SessionName string `json:"session_name,omitempty"`
 	// TranscriptPath is the provider's own transcript file for this
 	// conversation (Claude Code session JSONL), reported by its hooks.
-	TranscriptPath string            `json:"transcript_path,omitempty"`
-	Workspace      workspace.Context `json:"workspace"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
+	// LastReply is the agent's last full assistant message, recorded at
+	// each turn end. It is what a link carries to the next agent: the
+	// summary above is a glance, this is the material.
+	LastReply string            `json:"last_reply,omitempty"`
+	Workspace workspace.Context `json:"workspace"`
 }
 
 // EffectiveMark is the mark the dashboard honors. A dead pane has an exit

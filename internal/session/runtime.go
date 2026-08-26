@@ -15,7 +15,10 @@ type Runtime interface {
 	Dispatch(context.Context, DispatchRequest) (agent.Agent, error)
 	Capture(context.Context, string, int) (string, error)
 	Attach(context.Context, string) (AttachResult, error)
-	Send(context.Context, string, string) error
+	// Send types a message into an agent and submits it. from names the
+	// sender for the daemon's audit trail — the session id of the agent
+	// a link fired from — and is empty for a human.
+	Send(ctx context.Context, id, message, from string) error
 	Interrupt(context.Context, string) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
@@ -148,6 +151,9 @@ type Update struct {
 	// TranscriptPath records the provider's own transcript file when a
 	// hook reports it; empty means "leave as is".
 	TranscriptPath string
+	// LastReply records the full assistant message a turn ended with;
+	// empty means "leave as is".
+	LastReply string
 	// TurnEnded marks an update produced by the provider's end-of-turn
 	// event; it may downgrade urgent attention, because a finished turn
 	// proves any pending prompt was resolved.

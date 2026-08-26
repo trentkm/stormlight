@@ -107,6 +107,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/workspaces", s.removeWorkspace)
 	s.mux.HandleFunc("PATCH /api/workspaces", s.renameWorkspace)
 
+	s.mux.HandleFunc("GET /api/links", s.listLinks)
+	s.mux.HandleFunc("POST /api/links", s.addLink)
+	s.mux.HandleFunc("PATCH /api/links/{id}", s.updateLink)
+	s.mux.HandleFunc("DELETE /api/links/{id}", s.removeLink)
+	s.mux.HandleFunc("POST /api/links/{id}/fire", s.fireLink)
+
 	s.mux.HandleFunc("GET /api/providers", s.listProviders)
 	s.mux.HandleFunc("GET /api/history", s.listHistory)
 	s.mux.HandleFunc("POST /api/history/{id}/resume", s.resumeHistory)

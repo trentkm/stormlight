@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,6 +25,7 @@ import (
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/fleet"
 	"github.com/trentkm/stormlight/internal/history"
+	"github.com/trentkm/stormlight/internal/link"
 	"github.com/trentkm/stormlight/internal/picker"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/remote"
@@ -114,6 +117,7 @@ func newRootCommand() *cobra.Command {
 		newListCommand(cfg),
 		newAttachCommand(cfg),
 		newSendCommand(cfg),
+		newLinkCommand(cfg),
 		newRenameCommand(cfg),
 		newStopCommand(cfg),
 		newDeleteCommand(cfg),
@@ -1406,6 +1410,104 @@ func newSendCommand(cfg config.Config) *cobra.Command {
 	}
 }
 
+// newLinkCommand is the pipeline from a shell: the arrows the canvas
+// draws, listed, drawn, erased and fired by hand.
+func newLinkCommand(cfg config.Config) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "link",
+		Short: "Connect agents: when one finishes, the next hears about it",
+		Long: `A link from one agent to another sends the second agent the link's
+label and whatever the first agent last said, each time the first agent's
+turn ends. Chain them and the pipeline runs itself; a chain stops after
+` + strconv.Itoa(link.HopLimit) + ` hops without a human so it cannot run all night.`,
+	}
+	command.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List links",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := newService(cfg)
+			if err != nil {
+				return err
+			}
+			links, err := service.Links(cmd.Context())
+			if err != nil {
+				return err
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintln(writer, "ID\tFROM\tTO\tAUTO\tLAST FIRED\tLABEL")
+			for _, item := range links {
+				fired := "never"
+				if !item.LastFired.IsZero() {
+					fired = item.LastFired.Format("15:04:05")
+				}
+				if item.Pending != nil {
+					fired += " (pending)"
+				}
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\t%s\n",
+					short(item.ID), short(item.From), short(item.To), item.Auto, fired, item.Label)
+			}
+			return writer.Flush()
+		},
+	})
+	var auto bool
+	add := &cobra.Command{
+		Use:   "add <from> <to> [label...]",
+		Short: "Draw a link from one agent to another",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := newService(cfg)
+			if err != nil {
+				return err
+			}
+			added, err := service.AddLink(
+				cmd.Context(), args[0], args[1], strings.Join(args[2:], " "), auto,
+			)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), added.ID)
+			return nil
+		},
+	}
+	add.Flags().BoolVar(&auto, "auto", true, "fire when the source's turn ends")
+	command.AddCommand(add)
+	command.AddCommand(&cobra.Command{
+		Use:   "rm <id>",
+		Short: "Erase a link",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := newService(cfg)
+			if err != nil {
+				return err
+			}
+			return service.RemoveLink(cmd.Context(), args[0])
+		},
+	})
+	command.AddCommand(&cobra.Command{
+		Use:   "fire <id>",
+		Short: "Send a link's hop now",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := newService(cfg)
+			if err != nil {
+				return err
+			}
+			_, err = service.FireLink(cmd.Context(), args[0])
+			return err
+		},
+	})
+	return command
+}
+
+// short is an id as a person types it.
+func short(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
 func newStopCommand(cfg config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <id>",
@@ -1571,6 +1673,7 @@ func newProviderEventCommand(cfg config.Config) *cobra.Command {
 				Activity:       event.Activity,
 				Attention:      event.Attention,
 				Summary:        event.Summary,
+				LastReply:      event.Message,
 				SessionID:      event.SessionID,
 				TranscriptPath: event.TranscriptPath,
 				TurnEnded:      event.TurnEnded,
@@ -1588,6 +1691,18 @@ func newProviderEventCommand(cfg config.Config) *cobra.Command {
 					"agent", id,
 					"error", err,
 				)
+			}
+			// A turn ending is the pipeline's tick: every link leaving
+			// this agent fires here, in the hook, whether or not a
+			// dashboard is open. Never a failure of the hook — a hook
+			// that returns non-zero can stall the provider that ran it.
+			if event.TurnEnded {
+				if err := service.TurnEnded(ctx, id); err != nil {
+					diagnostic.Logger().Warn("fire links",
+						"agent", id,
+						"error", err,
+					)
+				}
 			}
 			return nil
 		},

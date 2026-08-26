@@ -34,6 +34,13 @@ func applyUpdate(managedAgent agent.Agent, update session.Update) agent.Agent {
 	if update.TranscriptPath != "" {
 		managedAgent.TranscriptPath = update.TranscriptPath
 	}
+	if update.LastReply != "" {
+		reply := update.LastReply
+		if runes := []rune(reply); len(runes) > agent.LastReplyLimit {
+			reply = string(runes[:agent.LastReplyLimit])
+		}
+		managedAgent.LastReply = reply
+	}
 
 	previousAttention := managedAgent.Attention
 	switch {

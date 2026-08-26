@@ -13,8 +13,20 @@ import {
   tileSize,
   zoomAt,
   type Box,
+  arrowBetween,
+  boundedFrame,
+  boundedShape,
+  boxAt,
   centeredOn,
+  frameAround,
+  frameMin,
+  frameOf,
+  intersects,
   showing,
+  simplified,
+  spanning,
+  strokeOf,
+  union,
 } from "./canvas";
 
 describe("zooming", () => {
@@ -272,5 +284,185 @@ describe("showing", () => {
     // Zoom counts: at z = 0.5 the box ends at 200px, short of an
     // origin 200px past the edge.
     expect(showing({ x: -200, y: 0, z: 0.5 }, box, viewport)).toBe(false);
+  });
+});
+
+describe("intersects", () => {
+  const a = { x: 0, y: 0, w: 100, h: 100 };
+  test("overlap counts, touching does not", () => {
+    expect(intersects(a, { x: 50, y: 50, w: 100, h: 100 })).toBe(true);
+    expect(intersects(a, { x: 100, y: 0, w: 100, h: 100 })).toBe(false);
+    expect(intersects(a, { x: 0, y: 100, w: 100, h: 100 })).toBe(false);
+    expect(intersects(a, { x: 200, y: 200, w: 10, h: 10 })).toBe(false);
+  });
+  test("is symmetric and contains itself", () => {
+    const b = { x: 90, y: -10, w: 30, h: 30 };
+    expect(intersects(a, b)).toBe(intersects(b, a));
+    expect(intersects(a, a)).toBe(true);
+  });
+});
+
+describe("union", () => {
+  test("holds every box, tightly", () => {
+    expect(
+      union([
+        { x: 10, y: 20, w: 30, h: 40 },
+        { x: -5, y: 50, w: 10, h: 10 },
+      ]),
+    ).toEqual({ x: -5, y: 20, w: 45, h: 40 });
+  });
+  test("of nothing is nothing", () => {
+    expect(union([])).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+  });
+});
+
+describe("spanning", () => {
+  test("is the same box whichever way the hand went", () => {
+    const down = spanning({ x: 10, y: 10 }, { x: 60, y: 40 });
+    const up = spanning({ x: 60, y: 40 }, { x: 10, y: 10 });
+    expect(down).toEqual({ x: 10, y: 10, w: 50, h: 30 });
+    expect(up).toEqual(down);
+  });
+});
+
+describe("frameOf", () => {
+  const outer = { x: 0, y: 0, w: 1000, h: 1000, name: "outer", locked: false };
+  const inner = { x: 100, y: 100, w: 300, h: 300, name: "inner", locked: false };
+  const frames = { outer, inner };
+
+  test("a tile belongs to the frame holding its centre", () => {
+    expect(frameOf(frames, { x: 600, y: 600, w: 100, h: 100 })).toBe("outer");
+    expect(frameOf(frames, { x: 2000, y: 0, w: 100, h: 100 })).toBeUndefined();
+  });
+
+  test("the centre decides, not the edges", () => {
+    // Mostly outside, centre inside.
+    expect(frameOf(frames, { x: -190, y: 500, w: 400, h: 100 })).toBe("outer");
+    // Mostly inside, centre outside.
+    expect(frameOf(frames, { x: 900, y: 500, w: 400, h: 100 })).toBeUndefined();
+  });
+
+  test("of overlapping frames, the innermost wins", () => {
+    expect(frameOf(frames, { x: 150, y: 150, w: 100, h: 100 })).toBe("inner");
+  });
+});
+
+describe("frameAround", () => {
+  test("holds the boxes with room to breathe", () => {
+    const box = frameAround([{ x: 100, y: 100, w: 200, h: 100 }], 24);
+    expect(box).toEqual({ x: 76, y: 76, w: 248, h: 148 });
+  });
+});
+
+describe("boundedFrame", () => {
+  test("clamps the box, caps the name, and believes only a real lock", () => {
+    const frame = boundedFrame({
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      name: "x".repeat(500),
+      locked: "yes" as unknown as boolean,
+    });
+    expect(frame.w).toBe(frameMin.w);
+    expect(frame.h).toBe(frameMin.h);
+    expect(frame.name).toHaveLength(80);
+    expect(frame.locked).toBe(false);
+  });
+});
+
+describe("simplified", () => {
+  test("drops the jitter and keeps the ends", () => {
+    const stroke: Array<[number, number]> = [
+      [0, 0],
+      [0.5, 0.2],
+      [1, 0.1],
+      [10, 0],
+      [10.4, 0.3],
+      [20, 0],
+    ];
+    expect(simplified(stroke, 1.5)).toEqual([
+      [0, 0],
+      [10, 0],
+      [20, 0],
+    ]);
+  });
+  test("leaves a dot or a dash alone", () => {
+    expect(simplified([[1, 1]])).toEqual([[1, 1]]);
+    expect(simplified([[1, 1], [1.1, 1]])).toEqual([[1, 1], [1.1, 1]]);
+  });
+});
+
+describe("strokeOf", () => {
+  test("puts the origin at the top-left and the points relative to it", () => {
+    const shape = strokeOf("line", [
+      [100, 50],
+      [40, 90],
+    ]);
+    expect(shape).toEqual({
+      kind: "line",
+      x: 40,
+      y: 50,
+      w: 60,
+      h: 40,
+      points: [
+        [60, 0],
+        [0, 40],
+      ],
+    });
+  });
+});
+
+describe("boundedShape", () => {
+  test("clamps the box, caps the stroke, and trims the text", () => {
+    const shape = boundedShape({
+      kind: "pencil",
+      x: 5e6,
+      y: 0,
+      w: -10,
+      h: 1e6,
+      points: Array.from({ length: 5000 }, (_, i) => [i, 1e6] as [number, number]),
+      text: "x".repeat(1000),
+    });
+    expect(shape.x).toBe(1_000_000);
+    expect(shape.w).toBe(0);
+    expect(shape.h).toBe(10_000);
+    expect(shape.points).toHaveLength(4000);
+    expect(shape.points![0]).toEqual([0, 10_000]);
+    expect(shape.text).toHaveLength(500);
+  });
+});
+
+describe("arrowBetween", () => {
+  const a = { x: 0, y: 0, w: 100, h: 50 };
+  test("side by side, it leaves the facing sides at their middles", () => {
+    const b = { x: 300, y: 0, w: 100, h: 50 };
+    const arrow = arrowBetween(a, b);
+    expect(arrow.from).toEqual({ x: 100, y: 25 });
+    expect(arrow.to).toEqual({ x: 300, y: 25 });
+    expect(arrow.mid).toEqual({ x: 200, y: 25 });
+    // And back the other way, from the other sides.
+    const back = arrowBetween(b, a);
+    expect(back.from).toEqual({ x: 300, y: 25 });
+    expect(back.to).toEqual({ x: 100, y: 25 });
+  });
+  test("stacked, it leaves the top and bottom", () => {
+    const b = { x: 0, y: 400, w: 100, h: 50 };
+    const arrow = arrowBetween(a, b);
+    expect(arrow.from).toEqual({ x: 50, y: 50 });
+    expect(arrow.to).toEqual({ x: 50, y: 400 });
+    expect(arrow.path.startsWith("M 50 50 C")).toBe(true);
+  });
+});
+
+describe("boxAt", () => {
+  const boxes = [
+    { id: "a", box: { x: 0, y: 0, w: 100, h: 100 } },
+    { id: "b", box: { x: 50, y: 50, w: 100, h: 100 } },
+  ];
+  test("finds the box under a point, the topmost where they overlap", () => {
+    expect(boxAt(boxes, { x: 10, y: 10 })).toBe("a");
+    expect(boxAt(boxes, { x: 75, y: 75 })).toBe("b");
+    expect(boxAt(boxes, { x: 500, y: 500 })).toBeUndefined();
   });
 });

@@ -356,7 +356,7 @@ sleep 60`},
 	waitForScreen(t, runtime, dispatched.ID, "ready")
 
 	// Input goes back the other way, over the control plane.
-	if err := runtime.Send(context.Background(), dispatched.ID, "over the bridge"); err != nil {
+	if err := runtime.Send(context.Background(), dispatched.ID, "over the bridge", ""); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	waitForScreen(t, runtime, dispatched.ID, "heard:over the bridge")
