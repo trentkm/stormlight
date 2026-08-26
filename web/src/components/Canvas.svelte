@@ -315,6 +315,7 @@
       // typing, which is what a freshly drawn arrow is waiting for.
       chosenLink = added.id;
       editingLabel = "";
+      sentLabel = null;
     });
     return true;
   };
@@ -346,20 +347,24 @@
     chosen = null;
     chosenLink = id;
     editingLabel = linkByID(id)?.label ?? "";
+    sentLabel = null;
     clip?.focus();
   };
+  // What was last sent for the chosen link, so Enter and the blur it
+  // causes — or a blur alone — send a label once, never twice.
+  let sentLabel: string | null = null;
   const saveLabel = () => {
     const link = chosenOne;
     if (!link) return;
     const label = editingLabel.trim();
-    if (label === link.label) return;
+    if (label === link.label || label === sentLabel) return;
+    sentLabel = label;
     void act(() => api.updateLink(link.id, { label }));
   };
-  // Enter and Escape both leave the field, and leaving is what saves —
-  // one path, so a label is never sent twice for one keystroke.
   const labelKey = (event: KeyboardEvent) => {
     if (event.key === "Enter") {
       event.preventDefault();
+      saveLabel();
       labelField?.blur();
     } else if (event.key === "Escape") {
       event.preventDefault();

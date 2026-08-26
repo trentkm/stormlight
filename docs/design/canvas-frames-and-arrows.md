@@ -1,5 +1,11 @@
 # The canvas grows up: frames and arrows
 
+> **Status.** Built, in one branch: multi-select, frames, an
+> Excalidraw-style toolbar with drawing tools, and links — phase 4
+> first, as the engine, with the arrow UI on top of it. Phase 3's
+> browser-fired tier was skipped: with the hook-fired engine there was
+> nothing for it to prove. `fire now` survives as the hand's verb.
+
 How to build the two things that turn the canvas from an arrangement of
 terminals into a surface that *means* something: frames that group and
 lock tiles, and arrows between tiles that send. Issues
