@@ -14,6 +14,7 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/history"
+	"github.com/trentkm/stormlight/internal/link"
 	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/session"
@@ -45,6 +46,9 @@ type Service struct {
 	// providers ever reported, kept so a conversation can be reopened long
 	// after its window is gone.
 	sessions *history.Log
+	// links is the pipeline: arrows between agents that send. See
+	// links.go.
+	links *link.Store
 	// and one-shot commands want.
 
 	// resolved caches catalog-path resolution (one git spawn per path per
@@ -135,6 +139,7 @@ func NewServiceWithCatalog(
 		workspaces: workspaces,
 		catalog:    catalog,
 		sessions:   sessions,
+		links:      link.NewStore(),
 	}
 }
 
@@ -721,7 +726,7 @@ func (s *Service) Send(ctx context.Context, id, message string) error {
 	if strings.TrimSpace(message) == "" {
 		return fmt.Errorf("message cannot be empty")
 	}
-	return s.runtime.Send(ctx, id, message)
+	return s.runtime.Send(ctx, id, message, "")
 }
 
 func (s *Service) Interrupt(ctx context.Context, id string) error {
@@ -744,7 +749,17 @@ func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	return s.runtime.Delete(ctx, id)
+	// Resolved before the delete, since a prefix is only resolvable while
+	// the agent exists; links are forgotten after, so a delete that fails
+	// leaves them.
+	managed, found := s.find(ctx, id)
+	if err := s.runtime.Delete(ctx, id); err != nil {
+		return err
+	}
+	if found == nil {
+		s.forgetLinks(managed.ID)
+	}
+	return nil
 }
 
 func (s *Service) Update(ctx context.Context, id string, update session.Update) error {

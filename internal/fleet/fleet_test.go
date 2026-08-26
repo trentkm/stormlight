@@ -49,7 +49,7 @@ func (s *stub) Dispatch(
 	return agent.Agent{ID: "new", Workspace: request.Workspace}, nil
 }
 
-func (s *stub) Send(_ context.Context, id, message string) error {
+func (s *stub) Send(_ context.Context, id, message, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sent = append(s.sent, id+":"+message)
@@ -229,7 +229,7 @@ func TestOneDialServesEveryoneWaitingOnIt(t *testing.T) {
 		t.Fatalf("ListAgents: %v", err)
 	}
 	sent := make(chan error, 1)
-	go func() { sent <- f.Send(context.Background(), "bbb", "hello") }()
+	go func() { sent <- f.Send(context.Background(), "bbb", "hello", "") }()
 	// The send is now waiting on the dial the refresh started.
 	close(release)
 	if err := <-sent; err != nil {
@@ -263,7 +263,7 @@ func TestOperationsFollowTheAgentToItsHost(t *testing.T) {
 	devbox := &stub{agents: []agent.Agent{{ID: "bbb"}}}
 	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
-	if err := f.Send(context.Background(), "bbb", "hello"); err != nil {
+	if err := f.Send(context.Background(), "bbb", "hello", ""); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(devbox.sent) != 1 || len(local.sent) != 0 {
@@ -297,7 +297,7 @@ func TestAnAgentNobodyHasListedIsStillFound(t *testing.T) {
 	f := New(nil, reachable("", local), reachable("devbox", devbox))
 
 	// No ListAgents has been called, so ownership is unknown.
-	if err := f.Send(context.Background(), "bbb", "hello"); err != nil {
+	if err := f.Send(context.Background(), "bbb", "hello", ""); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(devbox.sent) != 1 {
@@ -318,7 +318,7 @@ func TestAPrefixNamesAnAgentAcrossHosts(t *testing.T) {
 		t.Fatalf("ListAgents: %v", err)
 	}
 
-	if err := f.Send(context.Background(), "bbb2", "hello"); err != nil {
+	if err := f.Send(context.Background(), "bbb2", "hello", ""); err != nil {
 		t.Fatalf("Send by prefix: %v", err)
 	}
 	if len(devbox.sent) != 1 {
@@ -438,7 +438,7 @@ func TestAFleetOfOneIsJustTheRuntime(t *testing.T) {
 	local := &stub{}
 	f := New(nil, reachable("", local))
 
-	if err := f.Send(context.Background(), "aaa", "hello"); err != nil {
+	if err := f.Send(context.Background(), "aaa", "hello", ""); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if local.lists != 0 {

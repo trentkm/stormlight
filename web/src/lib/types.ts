@@ -27,6 +27,23 @@ export interface Workspace {
   component_root?: string;
 }
 
+/**
+ * A link: an arrow from one agent to another that sends. When the
+ * source's turn ends (auto) or when fired by hand, the target receives
+ * the label and the source's last reply. The server owns links — they
+ * fire from the provider hook whether or not this page is open — and
+ * pushes them with every roster.
+ */
+export interface Link {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  auto: boolean;
+  last_fired?: string;
+  pending?: { message: string; hop: number; at: string };
+}
+
 export interface Agent {
   id: string;
   provider: string;

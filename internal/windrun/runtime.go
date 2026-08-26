@@ -449,8 +449,8 @@ func (r *Runtime) Attach(ctx context.Context, id string) (session.AttachResult, 
 	return session.AttachResult{Command: command}, nil
 }
 
-func (r *Runtime) Send(ctx context.Context, id, message string) error {
-	if err := r.sendInput(id, message); err != nil {
+func (r *Runtime) Send(ctx context.Context, id, message, from string) error {
+	if err := r.sendInput(id, message, from); err != nil {
 		return err
 	}
 	return r.Update(ctx, id, session.Update{Activity: agent.ActivityWorking})
@@ -464,10 +464,13 @@ func (r *Runtime) SendCommand(_ context.Context, id, command string) error {
 	if !strings.HasPrefix(command, "/") || strings.Contains(command, "\n") {
 		return fmt.Errorf("provider command must be a single-line slash command")
 	}
-	return r.sendInput(id, command)
+	return r.sendInput(id, command, "")
 }
 
-func (r *Runtime) sendInput(id, message string) error {
+// sendInput types a message and submits it. from is the daemon's audit
+// attribution — windrunner records who wrote into a session — and it is
+// the sending agent's session id when a link fired, empty for a person.
+func (r *Runtime) sendInput(id, message, from string) error {
 	sessionID, err := r.sessionIDFor(id)
 	if err != nil {
 		return err
@@ -476,18 +479,18 @@ func (r *Runtime) sendInput(id, message string) error {
 	if strings.HasPrefix(trimmed, "/") && !strings.Contains(trimmed, "\n") {
 		// Slash commands are typed, not pasted: providers ignore
 		// bracketed-paste slash commands.
-		if err := r.client.Input(sessionID, []byte(trimmed)); err != nil {
+		if err := r.client.Send(sessionID, []byte(trimmed), from); err != nil {
 			return err
 		}
 	} else {
 		// Bracketed paste keeps multi-line messages one message.
 		payload := "\x1b[200~" + message + "\x1b[201~"
-		if err := r.client.Input(sessionID, []byte(payload)); err != nil {
+		if err := r.client.Send(sessionID, []byte(payload), from); err != nil {
 			return err
 		}
 	}
 	time.Sleep(sendSubmitDelay)
-	if err := r.client.Input(sessionID, []byte("\r")); err != nil {
+	if err := r.client.Send(sessionID, []byte("\r"), from); err != nil {
 		return err
 	}
 	return nil
