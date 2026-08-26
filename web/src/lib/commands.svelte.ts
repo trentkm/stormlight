@@ -51,9 +51,20 @@ export const ui = $state({
    * cursor leave the set alone, so a batch survives a look elsewhere.
    */
   selection: new SvelteSet<string>(),
-  /** The canvas tool in hand: "" is the hand itself. Escape drops it. */
-  tool: "" as "" | "frame",
+  /** The canvas's tool in hand. Escape returns to select. */
+  tool: "select" as Tool,
 });
+
+export type Tool =
+  | "select"
+  | "hand"
+  | "rect"
+  | "ellipse"
+  | "line"
+  | "arrow"
+  | "pencil"
+  | "text"
+  | "frame";
 
 /** The selection becomes exactly these. */
 export function select(ids: Iterable<string>): void {
@@ -491,7 +502,25 @@ export function run(id: string, argument?: string): void {
     case "select-none":
       // Escape drops whatever is in hand: the selection, and the tool.
       ui.selection.clear();
-      ui.tool = "";
+      ui.tool = "select";
+      return;
+
+    // The canvas's tools. Choosing one is meaningful only on the
+    // canvas, and the letters reach here only from it; the palette
+    // brings the canvas along so the choice is visible.
+    case "tool-select":
+    case "tool-hand":
+    case "tool-rect":
+    case "tool-ellipse":
+    case "tool-line":
+    case "tool-arrow":
+    case "tool-pencil":
+    case "tool-text":
+    case "tool-frame":
+      ui.tool = id.slice("tool-".length) as Tool;
+      ui.view = "canvas";
+      ui.walkedIn = false;
+      ui.zoomed = false;
       return;
     case "select-workspace":
       if (argument !== undefined) {

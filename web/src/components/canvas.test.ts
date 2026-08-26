@@ -107,7 +107,7 @@ vi.stubGlobal("localStorage", {
 });
 
 import Canvas from "./Canvas.svelte";
-import { ui } from "../lib/commands.svelte";
+import { run, ui } from "../lib/commands.svelte";
 import { fleet } from "../lib/state.svelte";
 import { tileMin, tileSize } from "../lib/canvas";
 
@@ -207,10 +207,20 @@ beforeEach(() => {
   ui.view = "canvas";
   ui.walkedIn = false;
   ui.selection.clear();
-  ui.tool = "";
+  ui.tool = "select";
 });
 
 const selection = () => [...ui.selection].sort();
+/** The tool overlay, present while a tool other than select is in
+ *  hand; every press under a tool lands on it. */
+const overlay = () => document.querySelector<HTMLElement>(".overlay");
+const overlayDrag = (x0: number, y0: number, x1: number, y1: number) => {
+  const target = overlay()!;
+  target.dispatchEvent(pointer("pointerdown", x0, y0));
+  target.dispatchEvent(pointer("pointermove", x1, y1));
+  target.dispatchEvent(pointer("pointerup", x1, y1));
+  flushSync();
+};
 const click = (tile: HTMLElement, shift = false) => {
   tile.dispatchEvent(pointer("pointerdown", 100, 100, 1, shift));
   tile.dispatchEvent(pointer("pointerup", 100, 100, 1, shift));
@@ -1108,51 +1118,46 @@ describe("frames", () => {
     [...document.querySelectorAll<HTMLButtonElement>(".controls button")].find(
       (b) => b.textContent?.trim() === label,
     );
-  const backdropDrag = (x0: number, y0: number, x1: number, y1: number) => {
-    canvas().dispatchEvent(pointer("pointerdown", x0, y0));
-    canvas().dispatchEvent(pointer("pointermove", x1, y1));
-    canvas().dispatchEvent(pointer("pointerup", x1, y1));
-    flushSync();
-  };
   /** A frame drawn around the first tile (stage 0..440 × 0..300) with
    *  room to spare; the home view puts stage 0 at client 40. */
   const drawAroundA = () => {
-    button("frame")!.click();
+    run("tool-frame");
     flushSync();
-    backdropDrag(20, 20, 520, 380);
+    overlayDrag(20, 20, 520, 380);
     return frames()[0];
   };
 
   test("the tool draws a frame, then puts itself down", () => {
     const done = mountCanvas();
     push({ id: "a" }, { id: "b" });
-    button("frame")!.click();
+    run("tool-frame");
     flushSync();
     expect(ui.tool).toBe("frame");
-    expect(canvas().classList.contains("framing")).toBe(true);
+    expect(overlay()).not.toBeNull();
 
-    backdropDrag(20, 20, 520, 380);
+    overlayDrag(20, 20, 520, 380);
 
     expect(frames()).toHaveLength(1);
     expect(nameOf(frames()[0])).toBe("frame 1");
     const drawn = boxOf(frames()[0]);
     expect(drawn).toEqual({ x: -20, y: -20, w: 500, h: 360 });
-    expect(ui.tool).toBe("");
+    expect(ui.tool).toBe("select");
+    expect(overlay()).toBeNull();
     done();
   });
 
   test("a twitch draws nothing and still puts the tool down", () => {
     const done = mountCanvas();
     push({ id: "a" });
-    button("frame")!.click();
+    run("tool-frame");
     flushSync();
-    backdropDrag(50, 50, 60, 60);
+    overlayDrag(50, 50, 60, 60);
     expect(frames()).toHaveLength(0);
-    expect(ui.tool).toBe("");
+    expect(ui.tool).toBe("select");
     done();
   });
 
-  test("with a selection in hand, the button frames it on the spot", () => {
+  test("with a selection in hand, the frame tool frames it on the spot", () => {
     const done = mountCanvas();
     push({ id: "a" }, { id: "b" }, { id: "c" });
     click(tileFor("a"));
@@ -1160,10 +1165,10 @@ describe("frames", () => {
     const a = boxOf(tileFor("a"));
     const b = boxOf(tileFor("b"));
 
-    button("frame")!.click();
+    run("tool-frame");
     flushSync();
 
-    expect(ui.tool).toBe("");
+    expect(ui.tool).toBe("select");
     expect(frames()).toHaveLength(1);
     const drawn = boxOf(frames()[0]);
     expect(drawn.x).toBe(a.x - 24);
@@ -1299,6 +1304,176 @@ describe("frames", () => {
     fleet.workspaceID = "ws";
     flushSync();
     expect(button("frame by workspace")).toBeUndefined();
+    done();
+  });
+});
+
+/**
+ * The drawing tools. Each is picked by command (the letter runs the
+ * same one), takes every press on an overlay while in hand, commits one
+ * shape on release, and hands back the select tool. Client points map
+ * to stage points minus 40 under the home view.
+ */
+describe("drawing", () => {
+  const shapes = () => [...document.querySelectorAll<SVGGElement>(".drawings .shape:not(.draft)")];
+  const kinds = () => shapes().map((g) => [...g.classList].find((c) => c !== "shape" && c !== "chosen"));
+  const overlay = () => document.querySelector<HTMLElement>(".overlay");
+  const sketch = (tool: string, path: Array<[number, number]>) => {
+    run(tool);
+    flushSync();
+    const target = overlay()!;
+    target.dispatchEvent(pointer("pointerdown", path[0][0], path[0][1]));
+    for (const [x, y] of path.slice(1)) target.dispatchEvent(pointer("pointermove", x, y));
+    const [x, y] = path[path.length - 1];
+    target.dispatchEvent(pointer("pointerup", x, y));
+    flushSync();
+  };
+
+  test("the toolbar names every tool, and lights the one in hand", () => {
+    const done = mountCanvas();
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".tools button")];
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Select", "Hand", "Rectangle", "Ellipse", "Line", "Arrow", "Pencil", "Text", "Frame",
+    ]);
+    expect(buttons[0].classList.contains("on")).toBe(true);
+    buttons[2].click();
+    flushSync();
+    expect(ui.tool).toBe("rect");
+    expect(buttons[2].classList.contains("on")).toBe(true);
+    expect(overlay()).not.toBeNull();
+    done();
+  });
+
+  test("a rectangle and an ellipse are the band they span", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    sketch("tool-rect", [[100, 100], [300, 200]]);
+    sketch("tool-ellipse", [[500, 400], [400, 300]]);
+
+    expect(kinds()).toEqual(["rect", "ellipse"]);
+    const rect = shapes()[0].querySelector<SVGRectElement>("rect.ink")!;
+    expect([rect.getAttribute("x"), rect.getAttribute("y"), rect.getAttribute("width"), rect.getAttribute("height")]).toEqual(["60", "60", "200", "100"]);
+    const ellipse = shapes()[1].querySelector<SVGEllipseElement>("ellipse.ink")!;
+    expect([ellipse.getAttribute("cx"), ellipse.getAttribute("cy"), ellipse.getAttribute("rx")]).toEqual(["410", "310", "50"]);
+    expect(ui.tool).toBe("select");
+    expect(overlay()).toBeNull();
+    done();
+  });
+
+  test("a line and an arrow run between their ends, whatever happened between", () => {
+    const done = mountCanvas();
+    sketch("tool-line", [[100, 100], [150, 400], [300, 200]]);
+    sketch("tool-arrow", [[300, 300], [100, 100]]);
+
+    const line = shapes()[0].querySelector<SVGPathElement>("path.ink")!;
+    expect(line.getAttribute("d")).toBe("M 0 0 L 200 100");
+    const arrow = shapes()[1].querySelector<SVGPathElement>("path.ink")!;
+    expect(arrow.getAttribute("marker-end")).toBe("url(#arrowhead)");
+    expect(arrow.getAttribute("d")).toBe("M 200 200 L 0 0");
+    done();
+  });
+
+  test("a pencil stroke keeps the points that moved, and a twitch is nothing", () => {
+    const done = mountCanvas();
+    sketch("tool-pencil", [[100, 100], [100.5, 100.2], [140, 120], [140.3, 120.1], [200, 100]]);
+    const stroke = shapes()[0].querySelector<SVGPathElement>("path.ink")!;
+    expect(stroke.getAttribute("d")).toBe("M 0 0 L 40 20 L 100 0");
+
+    sketch("tool-rect", [[100, 100], [102, 101]]);
+    expect(shapes()).toHaveLength(1);
+    expect(ui.tool).toBe("select");
+    done();
+  });
+
+  test("the draft shows while the hand is down", () => {
+    const done = mountCanvas();
+    run("tool-rect");
+    flushSync();
+    overlay()!.dispatchEvent(pointer("pointerdown", 100, 100));
+    overlay()!.dispatchEvent(pointer("pointermove", 200, 150));
+    flushSync();
+    expect(document.querySelector(".drawings .draft rect")).not.toBeNull();
+    overlay()!.dispatchEvent(pointer("pointerup", 200, 150));
+    flushSync();
+    expect(document.querySelector(".drawings .draft")).toBeNull();
+    done();
+  });
+
+  test("text is typed where the click was, and Enter places it", () => {
+    const done = mountCanvas();
+    run("tool-text");
+    flushSync();
+    overlay()!.dispatchEvent(pointer("pointerdown", 140, 90));
+    overlay()!.dispatchEvent(pointer("pointerup", 140, 90));
+    flushSync();
+    const field = document.querySelector<HTMLTextAreaElement>(".composer")!;
+    expect(field).not.toBeNull();
+    expect(field.style.left).toBe("100px");
+    field.value = "review this";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    flushSync();
+
+    expect(kinds()).toEqual(["text"]);
+    expect(shapes()[0].querySelector("text")!.textContent).toBe("review this");
+    expect(document.querySelector(".composer")).toBeNull();
+    expect(ui.tool).toBe("select");
+
+    // Escape leaves nothing behind.
+    run("tool-text");
+    flushSync();
+    overlay()!.dispatchEvent(pointer("pointerdown", 140, 90));
+    flushSync();
+    document.querySelector<HTMLTextAreaElement>(".composer")!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    flushSync();
+    expect(kinds()).toEqual(["text"]);
+    expect(ui.tool).toBe("select");
+    done();
+  });
+
+  test("the select tool picks a drawing up, carries it, and Delete removes it", () => {
+    const done = mountCanvas();
+    sketch("tool-rect", [[100, 100], [300, 200]]);
+    const shape = shapes()[0];
+    const stroke = shape.querySelector<SVGRectElement>("rect.hit")!;
+
+    stroke.dispatchEvent(pointer("pointerdown", 100, 100));
+    flushSync();
+    expect(shape.classList.contains("chosen")).toBe(true);
+    const canvas = document.querySelector<HTMLElement>(".canvas")!;
+    expect(document.activeElement).toBe(canvas);
+    canvas.dispatchEvent(pointer("pointermove", 160, 140));
+    canvas.dispatchEvent(pointer("pointerup", 160, 140));
+    flushSync();
+    const moved = shapes()[0].querySelector<SVGRectElement>("rect.ink")!;
+    expect([moved.getAttribute("x"), moved.getAttribute("y")]).toEqual(["120", "100"]);
+
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    flushSync();
+    expect(shapes()).toHaveLength(0);
+    done();
+  });
+
+  test("the hand pans, even over a tile", () => {
+    const done = mountCanvas();
+    push({ id: "a" });
+    const stage = document.querySelector<HTMLElement>(".stage")!;
+    const before = stage.style.transform;
+    const box = boxOf(tileFor("a"));
+    run("tool-hand");
+    flushSync();
+    // Over the tile's spot: the overlay takes it, so it pans rather
+    // than dragging the tile.
+    overlay()!.dispatchEvent(pointer("pointerdown", 100, 100));
+    overlay()!.dispatchEvent(pointer("pointermove", 200, 150));
+    overlay()!.dispatchEvent(pointer("pointerup", 200, 150));
+    flushSync();
+    expect(stage.style.transform).not.toBe(before);
+    expect(boxOf(tileFor("a"))).toEqual(box);
+    // The hand stays in hand.
+    expect(ui.tool).toBe("hand");
     done();
   });
 });

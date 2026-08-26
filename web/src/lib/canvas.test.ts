@@ -14,13 +14,16 @@ import {
   zoomAt,
   type Box,
   boundedFrame,
+  boundedShape,
   centeredOn,
   frameAround,
   frameMin,
   frameOf,
   intersects,
   showing,
+  simplified,
   spanning,
+  strokeOf,
   union,
 } from "./canvas";
 
@@ -363,5 +366,67 @@ describe("boundedFrame", () => {
     expect(frame.h).toBe(frameMin.h);
     expect(frame.name).toHaveLength(80);
     expect(frame.locked).toBe(false);
+  });
+});
+
+describe("simplified", () => {
+  test("drops the jitter and keeps the ends", () => {
+    const stroke: Array<[number, number]> = [
+      [0, 0],
+      [0.5, 0.2],
+      [1, 0.1],
+      [10, 0],
+      [10.4, 0.3],
+      [20, 0],
+    ];
+    expect(simplified(stroke, 1.5)).toEqual([
+      [0, 0],
+      [10, 0],
+      [20, 0],
+    ]);
+  });
+  test("leaves a dot or a dash alone", () => {
+    expect(simplified([[1, 1]])).toEqual([[1, 1]]);
+    expect(simplified([[1, 1], [1.1, 1]])).toEqual([[1, 1], [1.1, 1]]);
+  });
+});
+
+describe("strokeOf", () => {
+  test("puts the origin at the top-left and the points relative to it", () => {
+    const shape = strokeOf("line", [
+      [100, 50],
+      [40, 90],
+    ]);
+    expect(shape).toEqual({
+      kind: "line",
+      x: 40,
+      y: 50,
+      w: 60,
+      h: 40,
+      points: [
+        [60, 0],
+        [0, 40],
+      ],
+    });
+  });
+});
+
+describe("boundedShape", () => {
+  test("clamps the box, caps the stroke, and trims the text", () => {
+    const shape = boundedShape({
+      kind: "pencil",
+      x: 5e6,
+      y: 0,
+      w: -10,
+      h: 1e6,
+      points: Array.from({ length: 5000 }, (_, i) => [i, 1e6] as [number, number]),
+      text: "x".repeat(1000),
+    });
+    expect(shape.x).toBe(1_000_000);
+    expect(shape.w).toBe(0);
+    expect(shape.h).toBe(10_000);
+    expect(shape.points).toHaveLength(4000);
+    expect(shape.points![0]).toEqual([0, 10_000]);
+    expect(shape.text).toHaveLength(500);
   });
 });

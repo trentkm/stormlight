@@ -32,7 +32,31 @@ export interface Frame extends Box {
   locked: boolean;
 }
 
+/**
+ * A drawing on the stage. Its origin is (x, y); a closed shape spans
+ * (w, h) from there, and an open one — a line, an arrow, a pencil
+ * stroke — is its points, relative to the origin, so moving a shape
+ * is moving its origin whatever its kind. Text is its string at the
+ * origin. Nothing here knows about tiles: a drawing is a drawing.
+ */
+export type ShapeKind = "rect" | "ellipse" | "line" | "arrow" | "pencil" | "text";
+export interface Shape {
+  kind: ShapeKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  points?: Array<[number, number]>;
+  text?: string;
+}
+
 export const homeView: View = { x: 40, y: 40, z: 1 };
+
+/** How many points a stroke may keep, and how long a text may be. */
+export const strokeLimit = 4000;
+export const textLimit = 500;
+/** A stroke's points closer than this to the last kept one are noise. */
+export const strokeTolerance = 1.5;
 
 /** The room a frame keeps around what it was drawn to hold, and the
  *  height of its title bar, which sits above its box. */
@@ -285,6 +309,63 @@ export function resized(box: Box, w: number, h: number): Box {
     w: clamp(w, tileMin.w, extentLimit),
     h: clamp(h, tileMin.h, extentLimit),
   };
+}
+
+/** A pencil stroke with its jitter removed: a point closer than the
+ *  tolerance to the last one kept is not a movement of the hand. The
+ *  first and last points are always kept. */
+export function simplified(
+  points: Array<[number, number]>,
+  tolerance = strokeTolerance,
+): Array<[number, number]> {
+  if (points.length <= 2) return points.slice();
+  const kept: Array<[number, number]> = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const [px, py] = kept[kept.length - 1];
+    const [x, y] = points[i];
+    if (Math.hypot(x - px, y - py) >= tolerance) kept.push(points[i]);
+  }
+  kept.push(points[points.length - 1]);
+  return kept;
+}
+
+/** The shape a set of absolute stage points describes: its origin is
+ *  their top-left, its points are relative to it. */
+export function strokeOf(
+  kind: "line" | "arrow" | "pencil",
+  absolute: Array<[number, number]>,
+): Shape {
+  const left = Math.min(...absolute.map((p) => p[0]));
+  const top = Math.min(...absolute.map((p) => p[1]));
+  const right = Math.max(...absolute.map((p) => p[0]));
+  const bottom = Math.max(...absolute.map((p) => p[1]));
+  return {
+    kind,
+    x: left,
+    y: top,
+    w: right - left,
+    h: bottom - top,
+    points: absolute.map(([x, y]) => [x - left, y - top]),
+  };
+}
+
+/** A shape clamped into what load() believes: finite, inside the
+ *  world, its stroke capped in points and its text in length. */
+export function boundedShape(shape: Shape): Shape {
+  const bounded: Shape = {
+    kind: shape.kind,
+    x: clamp(shape.x, -positionLimit, positionLimit),
+    y: clamp(shape.y, -positionLimit, positionLimit),
+    w: clamp(shape.w, 0, extentLimit),
+    h: clamp(shape.h, 0, extentLimit),
+  };
+  if (shape.points) {
+    bounded.points = shape.points
+      .slice(0, strokeLimit)
+      .map(([x, y]) => [clamp(x, -extentLimit, extentLimit), clamp(y, -extentLimit, extentLimit)]);
+  }
+  if (shape.text !== undefined) bounded.text = shape.text.slice(0, textLimit);
+  return bounded;
 }
 
 /** A frame clamped the way a box is, with its name and lock believed

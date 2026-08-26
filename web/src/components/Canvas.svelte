@@ -14,14 +14,19 @@
     intersects,
     panBy,
     showing,
+    simplified,
     spanning,
     stagePoint,
+    strokeOf,
     zoomAt,
     type Box,
+    type Shape,
     type View,
   } from "../lib/canvas";
+  import CanvasDrawings from "./CanvasDrawings.svelte";
   import CanvasFrame from "./CanvasFrame.svelte";
   import CanvasTile from "./CanvasTile.svelte";
+  import CanvasTools from "./CanvasTools.svelte";
   import { isUrgent } from "../lib/types";
 
   let { onopen }: { onopen: () => void } = $props();
@@ -119,22 +124,187 @@
   };
 
   /**
-   * The frame tool. With a selection in hand, the button frames it on
-   * the spot; with none, it arms the tool and the next backdrop drag
-   * draws the frame. Escape (select-none) disarms.
+   * The frame tool, picked with a selection in hand, frames the
+   * selection on the spot — Excalidraw's F does the same — and hands
+   * back the select tool. With nothing selected it stays in hand and
+   * the next drag draws the frame.
    */
-  const frameButton = () => {
-    if (ui.selection.size > 0) {
-      const held = [...ui.selection]
-        .map((id) => layout.tiles[id])
-        .filter((box): box is Box => box !== undefined);
-      if (held.length > 0) {
-        layout.addFrame(frameAround(held));
-        return;
-      }
+  $effect(() => {
+    if (ui.tool !== "frame" || ui.selection.size === 0) return;
+    const held = [...ui.selection]
+      .map((id) => layout.tiles[id])
+      .filter((box): box is Box => box !== undefined);
+    if (held.length === 0) return;
+    layout.addFrame(frameAround(held));
+    ui.tool = "select";
+  });
+
+  /**
+   * The drawing tools, on an overlay that takes every press while one
+   * is in hand — a stroke has to be able to cross a tile without the
+   * tile taking it. Each gesture is one shape: a rectangle, an ellipse
+   * or a frame from the band it spans; a line or an arrow from its two
+   * ends; a pencil stroke from every point along the way. Letting go
+   * commits it and hands back the select tool, which is what Excalidraw
+   * does and what a hand expects: draw one thing, then deal with it.
+   * Text is a click, and the typing happens where the click was.
+   */
+  let sketch = $state<{
+    pointer: number;
+    kind: "rect" | "ellipse" | "frame" | "line" | "arrow" | "pencil";
+    points: Array<[number, number]>;
+  } | null>(null);
+
+  const draft = $derived.by((): Shape | null => {
+    if (!sketch) return null;
+    const { kind, points } = sketch;
+    if (kind === "rect" || kind === "ellipse" || kind === "frame") {
+      const band = spanning(
+        { x: points[0][0], y: points[0][1] },
+        { x: points[points.length - 1][0], y: points[points.length - 1][1] },
+      );
+      return { kind: kind === "frame" ? "rect" : kind, ...band };
     }
-    ui.tool = ui.tool === "frame" ? "" : "frame";
+    if (kind === "pencil") return strokeOf(kind, points);
+    return strokeOf(kind, [points[0], points[points.length - 1]]);
+  });
+
+  /** The text being typed, at the point clicked. */
+  let composing = $state<{ x: number; y: number; text: string } | null>(null);
+  let composer = $state<HTMLTextAreaElement>();
+  $effect(() => {
+    if (composing && composer) composer.focus();
+  });
+  const commitText = () => {
+    if (!composing) return;
+    const text = composing.text.trim();
+    if (text) layout.addShape({ kind: "text", x: composing.x, y: composing.y, w: 0, h: 0, text });
+    composing = null;
+    ui.tool = "select";
   };
+  const composerKey = (event: KeyboardEvent) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      commitText();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      composing = null;
+      ui.tool = "select";
+    }
+  };
+
+  const toolDown = (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const at = pointOf(event);
+    if (ui.tool === "hand") {
+      panning = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
+      (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+      return;
+    }
+    if (ui.tool === "text") {
+      if (composing) commitText();
+      composing = { x: at.x, y: at.y, text: "" };
+      return;
+    }
+    if (ui.tool === "select") return;
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    sketch = { pointer: event.pointerId, kind: ui.tool, points: [[at.x, at.y]] };
+  };
+  const toolMove = (event: PointerEvent) => {
+    if (panning?.pointer === event.pointerId) {
+      view = panBy(view, event.clientX - panning.x, event.clientY - panning.y);
+      panning = { ...panning, x: event.clientX, y: event.clientY };
+      return;
+    }
+    if (!sketch || sketch.pointer !== event.pointerId) return;
+    const at = pointOf(event);
+    sketch = { ...sketch, points: [...sketch.points, [at.x, at.y]] };
+  };
+  const toolUp = (event: PointerEvent) => {
+    if (panning?.pointer === event.pointerId) {
+      panning = null;
+      return;
+    }
+    if (!sketch || sketch.pointer !== event.pointerId) return;
+    const { kind } = sketch;
+    const shape = draft;
+    sketch = null;
+    ui.tool = "select";
+    if (!shape) return;
+    // A twitch is not a drawing: nothing under a few stage units is
+    // kept, and a pencil stroke keeps only the points that moved.
+    if (kind === "frame") {
+      if (shape.w >= frameMin.w && shape.h >= frameMin.h) layout.addFrame(shape);
+      return;
+    }
+    if (kind === "pencil") {
+      const points = simplified(shape.points ?? []);
+      if (points.length >= 2) {
+        layout.addShape(strokeOf("pencil", points.map(([x, y]) => [x + shape.x, y + shape.y])));
+      }
+      return;
+    }
+    if (Math.max(shape.w, shape.h) < 4) return;
+    layout.addShape(shape);
+  };
+  const toolCancel = (event: PointerEvent) => {
+    if (panning?.pointer === event.pointerId) panning = null;
+    if (sketch?.pointer === event.pointerId) sketch = null;
+  };
+
+  /**
+   * The select tool over a drawing: a press chooses it and, if the hand
+   * moves, carries it. Delete or Backspace on a chosen drawing removes
+   * it; the canvas holds the focus for that, and holding it is why a
+   * press on a drawing is not cancelled — the keyboard has to land
+   * somewhere Delete can reach.
+   */
+  let chosen = $state<string | null>(null);
+  let moving = $state<{ id: string; pointer: number; lastX: number; lastY: number; dx: number; dy: number } | null>(null);
+  const pick = (id: string, event: PointerEvent) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    chosen = id;
+    clip?.focus();
+    clip?.setPointerCapture?.(event.pointerId);
+    moving = { id, pointer: event.pointerId, lastX: event.clientX, lastY: event.clientY, dx: 0, dy: 0 };
+  };
+  const shapeMoved = (event: PointerEvent): boolean => {
+    if (!moving || moving.pointer !== event.pointerId) return false;
+    moving = {
+      ...moving,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      dx: moving.dx + (event.clientX - moving.lastX) / view.z,
+      dy: moving.dy + (event.clientY - moving.lastY) / view.z,
+    };
+    return true;
+  };
+  const shapeLanded = (event: PointerEvent, commit: boolean): boolean => {
+    if (!moving || moving.pointer !== event.pointerId) return false;
+    const { id, dx, dy } = moving;
+    moving = null;
+    if (commit && (dx !== 0 || dy !== 0) && layout.shapes[id]) {
+      const shape = layout.shapes[id];
+      layout.putShape(id, { ...shape, x: shape.x + dx, y: shape.y + dy });
+    }
+    return true;
+  };
+  const canvasKey = (event: KeyboardEvent) => {
+    if (event.target !== clip || !chosen) return;
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      layout.dropShape(chosen);
+      chosen = null;
+    }
+  };
+  // Picking up a tool lets go of the chosen drawing; Escape, which
+  // returns the select tool, has already dropped it by then.
+  $effect(() => {
+    if (ui.tool !== "select") chosen = null;
+  });
 
   /** One frame per workspace around its tiles: the wall's grouping,
    *  made spatial, on the canvas that shows everyone. */
@@ -273,7 +443,6 @@
   let panning: { pointer: number; x: number; y: number } | null = null;
   let marquee = $state<{
     pointer: number;
-    purpose: "select" | "frame";
     from: { x: number; y: number };
     to: { x: number; y: number };
   } | null>(null);
@@ -297,20 +466,17 @@
     // corner controls otherwise highlights their labels, and the
     // backdrop has nothing else a press could mean.
     event.preventDefault();
+    chosen = null;
     clip?.setPointerCapture?.(event.pointerId);
-    if (event.shiftKey || ui.tool === "frame") {
+    if (event.shiftKey) {
       const at = pointOf(event);
-      marquee = {
-        pointer: event.pointerId,
-        purpose: ui.tool === "frame" ? "frame" : "select",
-        from: at,
-        to: at,
-      };
+      marquee = { pointer: event.pointerId, from: at, to: at };
       return;
     }
     panning = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
   };
   const moved = (event: PointerEvent) => {
+    if (shapeMoved(event)) return;
     if (marquee?.pointer === event.pointerId) {
       marquee = { ...marquee, to: pointOf(event) };
       return;
@@ -320,29 +486,24 @@
     panning = { ...panning, x: event.clientX, y: event.clientY };
   };
   const up = (event: PointerEvent) => {
+    if (shapeLanded(event, true)) return;
     if (panning?.pointer === event.pointerId) panning = null;
     if (marquee?.pointer === event.pointerId && band) {
-      if (marquee.purpose === "frame") {
-        // A frame worth drawing has room in it; a twitch does not, and
-        // is the tool being put down.
-        if (band.w >= frameMin.w && band.h >= frameMin.h) layout.addFrame(band);
-        ui.tool = "";
-      } else {
-        // Whatever the band touches, and nothing if it touched nothing:
-        // a shift-drag over empty canvas is how a selection is dropped.
-        select(
-          agents
-            .filter((agent) => {
-              const box = layout.tiles[agent.id];
-              return box !== undefined && intersects(band, box);
-            })
-            .map((agent) => agent.id),
-        );
-      }
+      // Whatever the band touches, and nothing if it touched nothing:
+      // a shift-drag over empty canvas is how a selection is dropped.
+      select(
+        agents
+          .filter((agent) => {
+            const box = layout.tiles[agent.id];
+            return box !== undefined && intersects(band, box);
+          })
+          .map((agent) => agent.id),
+      );
       marquee = null;
     }
   };
   const cancelled = (event: PointerEvent) => {
+    if (shapeLanded(event, false)) return;
     if (panning?.pointer === event.pointerId) panning = null;
     if (marquee?.pointer === event.pointerId) marquee = null;
   };
@@ -410,17 +571,19 @@
 <!-- role=application: the surface really is one — every pointer and
      wheel event is a camera or tile gesture, not document scrolling —
      and it tells assistive tech the tiles inside carry the semantics. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="canvas"
-  class:framing={ui.tool === "frame"}
   role="application"
   aria-label="Agent canvas"
+  tabindex="-1"
   bind:this={clip}
   onwheel={wheel}
   onpointerdown={down}
   onpointermove={moved}
   onpointerup={up}
   onpointercancel={cancelled}
+  onkeydown={canvasKey}
 >
   <div
     class="stage"
@@ -463,17 +626,57 @@
         />
       {/if}
     {/each}
+    <!-- Drawings over everything: an arrow across a terminal is meant
+         to be seen across it. -->
+    <CanvasDrawings
+      shapes={layout.shapes}
+      {draft}
+      {chosen}
+      moving={moving && { id: moving.id, dx: moving.dx, dy: moving.dy }}
+      zoom={view.z}
+      interactive={ui.tool === "select"}
+      onpick={pick}
+    />
     {#if band}
       <div
         class="marquee"
-        class:drawing={marquee?.purpose === "frame"}
         style:left="{band.x}px"
         style:top="{band.y}px"
         style:width="{band.w}px"
         style:height="{band.h}px"
       ></div>
     {/if}
+    {#if composing}
+      <!-- svelte-ignore a11y_autofocus -->
+      <textarea
+        class="composer"
+        bind:this={composer}
+        value={composing.text}
+        oninput={(event) => {
+          if (composing) composing.text = event.currentTarget.value;
+        }}
+        style:left="{composing.x}px"
+        style:top="{composing.y}px"
+        aria-label="Text"
+        rows="1"
+        spellcheck="false"
+        onkeydown={composerKey}
+        onblur={commitText}
+        onpointerdown={(event) => event.stopPropagation()}
+      ></textarea>
+    {/if}
   </div>
+  {#if ui.tool !== "select"}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="overlay {ui.tool}"
+      onpointerdown={toolDown}
+      onpointermove={toolMove}
+      onpointerup={toolUp}
+      onpointercancel={toolCancel}
+    ></div>
+  {/if}
+  <CanvasTools />
   {#if agents.length === 0}
     <p class="empty">No agents to arrange.</p>
   {/if}
@@ -488,15 +691,6 @@
         frame by workspace
       </button>
     {/if}
-    <button
-      class:on={ui.tool === "frame"}
-      onclick={frameButton}
-      title={ui.selection.size > 0
-        ? "Frame the selected tiles"
-        : "Draw a frame: drag on the canvas"}
-    >
-      frame
-    </button>
     <button onclick={fit} title="Fit every tile in view">fit</button>
     <span class="zoom">{zoomLabel}</span>
   </div>
@@ -519,9 +713,40 @@
   .canvas:active {
     cursor: grabbing;
   }
-  .canvas.framing,
-  .canvas.framing:active {
+  .canvas:focus {
+    outline: none;
+  }
+  /* Under a tool, the overlay has the pointer: every press is the
+     tool's, wherever it lands. */
+  .overlay {
+    position: absolute;
+    inset: 0;
     cursor: crosshair;
+  }
+  .overlay.hand {
+    cursor: grab;
+  }
+  .overlay.hand:active {
+    cursor: grabbing;
+  }
+  .overlay.text {
+    cursor: text;
+  }
+  .composer {
+    position: absolute;
+    min-width: 12ch;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 1px dashed var(--accent);
+    color: var(--text-bright);
+    font: 14px "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    line-height: 1.3;
+    resize: none;
+    overflow: hidden;
+  }
+  .composer:focus {
+    outline: none;
   }
   .stage {
     position: absolute;
@@ -540,11 +765,6 @@
     border: 1px dashed var(--accent);
     background: var(--selected-bg);
     pointer-events: none;
-  }
-  .marquee.drawing {
-    border-color: var(--muted);
-    border-radius: 8px;
-    background: transparent;
   }
   .empty {
     position: absolute;
@@ -578,11 +798,6 @@
   }
   .controls button:hover {
     color: var(--accent);
-  }
-  .controls button.on {
-    background: var(--band);
-    color: var(--band-ink);
-    border-radius: 4px;
   }
   .controls button.urgent {
     color: var(--waiting);

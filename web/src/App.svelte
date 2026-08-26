@@ -84,6 +84,7 @@
       event,
       focusOf(document.activeElement, ui.walkedIn),
       ui.pending,
+      ui.view,
     );
     if (!found) {
       ui.pending = "";

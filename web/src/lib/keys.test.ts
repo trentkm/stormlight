@@ -287,7 +287,8 @@ describe("the table as documentation", () => {
         // out, from the roster it walks in. Both are this binding.
         const focus: Focus =
           binding.keys === "Ctrl-space" ? "terminal" : "roster";
-        return match(event, focus, "")?.id !== binding.id;
+        const view = binding.group === "Canvas" ? "canvas" : "roster";
+        return match(event, focus, "", view)?.id !== binding.id;
       })
       .map((binding) => `${binding.id} (${binding.keys})`);
     expect(unreachable).toEqual([]);
@@ -379,5 +380,27 @@ describe("fuzzy matching", () => {
   test("matching ignores case in both directions", () => {
     expect(fuzzy("SSH", "ssh remote workspaces")).not.toBeNull();
     expect(fuzzy("ssh", "SSH Remote Workspaces")).not.toBeNull();
+  });
+});
+
+/**
+ * The canvas's tool letters take precedence only on the canvas: t is
+ * the text tool there and the terminal tab everywhere else, and h and
+ * l — inert column steps on the canvas — become hand and line.
+ */
+describe("the tool letters", () => {
+  test("mean tools on the canvas and the page's keys elsewhere", () => {
+    expect(match(press("t"), "roster", "", "canvas")?.id).toBe("tool-text");
+    expect(match(press("t"), "roster", "", "roster")?.id).toBe("pane-terminal");
+    expect(match(press("t"), "roster", "", "wall")?.id).toBe("pane-terminal");
+    expect(match(press("h"), "roster", "", "canvas")?.id).toBe("tool-hand");
+    expect(match(press("h"), "roster", "", "roster")?.id).toBe("pane-left");
+    expect(match(press("v"), "roster", "", "canvas")?.id).toBe("tool-select");
+    expect(match(press("v"), "roster", "", "roster")).toBeUndefined();
+  });
+
+  test("never reach past a terminal or a field", () => {
+    expect(match(press("r"), "terminal", "", "canvas")).toBeUndefined();
+    expect(match(press("r"), "field", "", "canvas")).toBeUndefined();
   });
 });

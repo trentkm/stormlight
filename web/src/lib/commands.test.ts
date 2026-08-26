@@ -608,7 +608,18 @@ describe("the selection", () => {
     ui.tool = "frame";
     run("select-none");
     expect(ui.selection.size).toBe(0);
-    expect(ui.tool).toBe("");
+    expect(ui.tool).toBe("select");
+  });
+
+  test("a tool is picked up on the canvas, from anywhere", () => {
+    ui.view = "roster";
+    run("walk-in");
+    run("tool-pencil");
+    expect(ui.tool).toBe("pencil");
+    expect(ui.view).toBe("canvas");
+    expect(ui.walkedIn).toBe(false);
+    run("tool-select");
+    expect(ui.tool).toBe("select");
   });
 
   test("the keys that move the cursor leave it alone", () => {
