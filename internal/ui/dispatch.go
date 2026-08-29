@@ -34,6 +34,33 @@ func (m Model) updateDispatch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return updated, cmd
 }
 
+// updateDispatchMouse maps wheel input onto the textarea's established
+// Up/Down navigation. The textarea keeps its cursor in view after every
+// update, so this scrolls the wrapped viewport without changing task text.
+func (m Model) updateDispatchMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	wheel, ok := msg.(tea.MouseWheelMsg)
+	if !ok {
+		return m, nil
+	}
+	key := tea.KeyDown
+	switch wheel.Button {
+	case tea.MouseWheelUp:
+		key = tea.KeyUp
+	case tea.MouseWheelDown:
+		key = tea.KeyDown
+	default:
+		return m, nil
+	}
+
+	var cmds []tea.Cmd
+	for range max(3, m.taskInput.Height()) {
+		var cmd tea.Cmd
+		m.taskInput, cmd = m.taskInput.Update(tea.KeyPressMsg{Code: key})
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
+}
+
 func (m Model) dispatchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.formFocus == dispatchDirectory {

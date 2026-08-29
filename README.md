@@ -145,9 +145,11 @@ flags — `auto` (the default and the recommended way to run: never asks),
 `edits` (file edits apply immediately, shell and network still ask), or
 `ask` (approvals for consequential actions). In the New Agent form, press
 `m` to cycle the mode; `auto` agents are marked with an `AUTO` badge in the
-agent list. When an agent in a prompting mode does need an answer, the
-dashboard raises attention on it and `Enter` walks into its terminal —
-prompts are answered in the agent's own terminal, where the provider's real
+agent list. With the Task field focused, use the mouse wheel to scroll
+wrapped task text; Up/Down keyboard navigation remains available. When an
+agent in a prompting mode does need an answer, the dashboard raises attention
+on it and `Enter` walks into its terminal — prompts are answered in the
+agent's own terminal, where the provider's real
 UI lives.
 
 Inspect and control agents:

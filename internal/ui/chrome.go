@@ -235,7 +235,7 @@ func (m Model) commandHints() []string {
 			// here — it is the one affordance in this field with nothing
 			// on screen to suggest it. The name row keeps its own label
 			// and cursor, and the line is only so wide.
-			hints := []string{"Enter launch", "Ctrl-j newline"}
+			hints := []string{"Enter launch", "Ctrl-j newline", "wheel"}
 			if m.nvimPath != "" {
 				hints = append(hints, "Ctrl-o Neovim")
 			}

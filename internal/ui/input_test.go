@@ -566,6 +566,41 @@ func TestDispatchTaskComposerKeepsTypingInView(t *testing.T) {
 	}
 }
 
+func TestDispatchTaskWheelScrollsWithoutChangingText(t *testing.T) {
+	model := dispatchTaskFixture(t, 80, 24)
+	task := strings.Join([]string{
+		"first task line",
+		"second task line",
+		"third task line",
+		"fourth task line",
+		"fifth task line",
+		"sixth task line",
+		"seventh task line",
+		"eighth task line",
+	}, "\n")
+	model.taskInput.SetValue(task)
+	model.syncTaskComposerSize()
+	for range strings.Count(task, "\n") + 1 {
+		model.taskInput.CursorUp()
+	}
+
+	before := strings.Join(taskComposerRows(t, model), "\n")
+	updated, _ := model.Update(tea.MouseWheelMsg{
+		X:      40,
+		Y:      12,
+		Button: tea.MouseWheelDown,
+	})
+	model = updated.(Model)
+	after := strings.Join(taskComposerRows(t, model), "\n")
+
+	if got := model.taskInput.Value(); got != task {
+		t.Fatalf("wheel changed task value: got %q, want %q", got, task)
+	}
+	if before == after {
+		t.Fatalf("wheel did not move the task viewport:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 // The form's rows are a fixed budget: the composer takes what is left, and
 // the hint line below it is the first thing a miscount pushes off the
 // bottom of the modal. The path picker is the case that miscounted — it

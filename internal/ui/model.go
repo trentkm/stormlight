@@ -886,6 +886,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// beneath it.
 			return m, nil
 		}
+		if m.mode == modeDispatch && m.formFocus == dispatchTask {
+			return m.updateDispatchMouse(msg)
+		}
 		return m.handleMouse(msg)
 
 	case tea.PasteMsg:
