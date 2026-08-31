@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/trentkm/stormlight/internal/agent"
@@ -85,8 +86,20 @@ type Log struct {
 }
 
 type Tools struct {
-	Yazi string `toml:"yazi"`
-	Nvim string `toml:"nvim"`
+	Yazi     string                 `toml:"yazi"`
+	Nvim     string                 `toml:"nvim"`
+	Overlays map[string]ToolOverlay `toml:"overlays"`
+}
+
+// ToolOverlay is a user- and machine-scoped terminal program Stormlight can
+// float over the dashboard. Binary and Args are exec-style values: no shell
+// is involved.
+type ToolOverlay struct {
+	Title  string   `toml:"title"`
+	Binary string   `toml:"binary"`
+	Args   []string `toml:"args"`
+	Hotkey []string `toml:"hotkey"`
+	Host   string   `toml:"host"`
 }
 
 type WorkspaceOverride struct {
@@ -207,6 +220,7 @@ func (c Config) normalize(path string) (Config, []string, error) {
 			c.Hosts[name] = host
 		}
 	}
+	c.normalizeToolOverlays(warn)
 	for root, override := range c.Workspaces {
 		if _, err := agent.ParseMode(override.Mode); err != nil {
 			warn("workspaces.%q.mode: %v", root, err)
@@ -223,6 +237,118 @@ func (c Config) normalize(path string) (Config, []string, error) {
 		}
 	}
 	return c, warnings, nil
+}
+
+func (c *Config) normalizeToolOverlays(warn func(string, ...any)) {
+	seen := make(map[string]string)
+	for id, overlay := range c.Tools.Overlays {
+		if !validToolOverlayID(id) {
+			warn("tools.overlays.%q: id must start with a letter and contain only lowercase letters, digits, _ or -", id)
+			delete(c.Tools.Overlays, id)
+			continue
+		}
+		overlay.Title = strings.TrimSpace(overlay.Title)
+		overlay.Binary = strings.TrimSpace(overlay.Binary)
+		if overlay.Binary == "" {
+			warn("tools.overlays.%s.binary: required", id)
+			delete(c.Tools.Overlays, id)
+			continue
+		}
+		if overlay.Host != "" {
+			if _, ok := c.Hosts[overlay.Host]; !ok {
+				warn("tools.overlays.%s.host: %q is not configured under hosts", id, overlay.Host)
+				delete(c.Tools.Overlays, id)
+				continue
+			}
+		}
+		for index := range overlay.Hotkey {
+			overlay.Hotkey[index] = strings.ToLower(strings.TrimSpace(overlay.Hotkey[index]))
+		}
+		if err := validateToolOverlayHotkey(overlay.Hotkey); err != nil {
+			warn("tools.overlays.%s.hotkey: %v", id, err)
+			delete(c.Tools.Overlays, id)
+			continue
+		}
+		key := strings.Join(overlay.Hotkey, " ")
+		if other, exists := seen[key]; exists {
+			warn("tools.overlays.%s.hotkey: duplicates %s", id, other)
+			delete(c.Tools.Overlays, id)
+			continue
+		}
+		seen[key] = id
+		c.Tools.Overlays[id] = overlay
+	}
+	for id, overlay := range c.Tools.Overlays {
+		for otherID, other := range c.Tools.Overlays {
+			if id == otherID || len(overlay.Hotkey) >= len(other.Hotkey) {
+				continue
+			}
+			if equalToolHotkeys(overlay.Hotkey, other.Hotkey[:len(overlay.Hotkey)]) {
+				warn("tools.overlays.%s.hotkey: prefixes %s", id, otherID)
+				delete(c.Tools.Overlays, id)
+				break
+			}
+		}
+	}
+}
+
+func validToolOverlayID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for index, letter := range id {
+		if (index == 0 && !unicode.IsLower(letter)) ||
+			(index > 0 && !(unicode.IsLower(letter) || unicode.IsDigit(letter) || letter == '_' || letter == '-')) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateToolOverlayHotkey(hotkey []string) error {
+	if len(hotkey) < 2 || len(hotkey) > 3 {
+		return fmt.Errorf("must contain two or three keys")
+	}
+	for _, key := range hotkey {
+		if len(key) != 1 || key[0] < 'a' || key[0] > 'z' {
+			return fmt.Errorf("keys must be lowercase letters")
+		}
+	}
+	if !strings.ContainsRune("abcdpuvwy", rune(hotkey[0][0])) {
+		return fmt.Errorf("first key conflicts with a dashboard command")
+	}
+	return nil
+}
+
+func equalToolHotkeys(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// SetToolOverlays validates and applies a replacement overlay set. It is used
+// by the dashboard manager before the configuration is written.
+func (c *Config) SetToolOverlays(overlays map[string]ToolOverlay) error {
+	candidate := *c
+	candidate.Tools.Overlays = make(map[string]ToolOverlay, len(overlays))
+	for id, overlay := range overlays {
+		candidate.Tools.Overlays[id] = overlay
+	}
+	normalized, warnings, err := candidate.normalize(Path())
+	if err != nil {
+		return err
+	}
+	if len(warnings) > 0 {
+		return fmt.Errorf("invalid tool overlays: %s", strings.Join(warnings, "; "))
+	}
+	*c = normalized
+	return nil
 }
 
 // ModeForDir returns the permission-mode override whose directory key
@@ -309,4 +435,41 @@ func (c Config) EffectiveTOML() (string, error) {
 		return "", fmt.Errorf("render config: %w", err)
 	}
 	return string(rendered), nil
+}
+
+// Save writes config atomically. The dashboard manager writes parsed TOML,
+// so comments and hand-written layout are not retained after an edit.
+func Save(c Config) error {
+	path := Path()
+	if path == "" {
+		return fmt.Errorf("cannot resolve the configuration directory")
+	}
+	rendered, err := toml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("render config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".config.toml-*")
+	if err != nil {
+		return fmt.Errorf("create config temp file: %w", err)
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if _, err := temporary.Write(rendered); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("set config permissions: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close config: %w", err)
+	}
+	if err := os.Rename(temporaryName, path); err != nil {
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
 }

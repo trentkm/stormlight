@@ -59,6 +59,12 @@ of the display — and `Ctrl-q` returns to the dashboard. Closing the
 dashboard stops nothing: agents keep running in the daemon, terminals
 intact for the next run.
 
+Press `T` to configure user-and-machine-scoped Tool Overlays. A configured
+two- or three-key hotkey opens its executable and argument array in a
+Windrunner popup. `Ctrl-space` minimizes every tool overlay;
+its same hotkey restores the preserved terminal session. Tool overlays receive
+keyboard input, while mouse input remains with Stormlight.
+
 Conversations outlive their agents. Both providers name every session with
 an id their own `resume` command accepts, and Stormlight records it — with
 the task, workspace, and transcript path — in an append-only log at

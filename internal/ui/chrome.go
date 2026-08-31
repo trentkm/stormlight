@@ -131,6 +131,20 @@ func renderFooterRule(width int) string {
 }
 
 func (m Model) chordHints() string {
+	if len(m.toolPrefix) > 0 {
+		options := make([][2]string, 0)
+		for _, tool := range m.toolOverlays {
+			if len(tool.Hotkey) > len(m.toolPrefix) && startsToolHotkey(tool.Hotkey, m.toolPrefix) {
+				options = append(options, [2]string{tool.Hotkey[len(m.toolPrefix)], overlayTitle(tool)})
+			}
+		}
+		parts := []string{titleStyle().Render("Tool:")}
+		for _, option := range options {
+			parts = append(parts, accentStyle().Render(option[0])+" "+mutedStyle().Render(option[1]))
+		}
+		parts = append(parts, mutedStyle().Render("Esc cancel"))
+		return strings.Join(parts, "  ")
+	}
 	var label string
 	var options [][2]string
 	switch m.normalPrefix {
@@ -275,6 +289,7 @@ func (m Model) commandHints() []string {
 		if rowMode != "" {
 			hints = append(hints, rowMode)
 		}
+		hints = append(hints, m.toolFooterHints()...)
 		return append(hints, tail...)
 	}
 	switch m.activePane {
