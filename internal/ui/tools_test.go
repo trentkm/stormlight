@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestToolOverlayFormValidatesInputBeforeSave(t *testing.T) {
@@ -41,5 +42,29 @@ func TestToolOverlayFormExplainsHost(t *testing.T) {
 	model.focusToolField(5)
 	if rendered := model.renderToolEditModal(100, 28); !strings.Contains(rendered, "Blank runs here") {
 		t.Fatalf("host guidance missing:\n%s", rendered)
+	}
+}
+
+func TestToolShortcutsAppearInHelpNotFooter(t *testing.T) {
+	model := flowModelFixture(t, stubBackend{})
+	model.toolOverlays = []ToolOverlay{{
+		ID:     "review",
+		Title:  "Review tool",
+		Binary: "/opt/tools/review",
+		Hotkey: []string{"c", "r"},
+	}}
+
+	footer := ansi.Strip(model.renderFooter())
+	for _, unwanted := range []string{"T tools", "c r Review tool"} {
+		if strings.Contains(footer, unwanted) {
+			t.Fatalf("footer includes tool hint %q: %q", unwanted, footer)
+		}
+	}
+
+	help := ansi.Strip(model.renderHelpModal(100, 50))
+	for _, want := range []string{"Tools", "T", "configure tool overlays", "c r", "Review tool"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("help missing %q:\n%s", want, help)
+		}
 	}
 }

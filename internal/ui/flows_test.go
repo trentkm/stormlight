@@ -286,7 +286,9 @@ func TestHelpModalOpensRendersAndDismisses(t *testing.T) {
 		t.Fatalf("? mode = %d", model.mode)
 	}
 	view := ansi.Strip(model.View().Content)
-	for _, want := range []string{"Keys", "Navigate", "Act", "any key closes"} {
+	for _, want := range []string{
+		"Keys", "Navigate", "Act", "Tools", "T", "configure tool overlays", "any key closes",
+	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("help modal missing %q", want)
 		}

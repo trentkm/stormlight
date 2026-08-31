@@ -494,7 +494,7 @@ func (m Model) toolFormHelp() string {
 	case 0:
 		return "Lowercase config ID; letters, digits, _ and - only."
 	case 1:
-		return "Optional label shown in the overlay list and footer."
+		return "Optional label shown in the overlay list and help."
 	case 2:
 		return "Command to run on this host; an absolute path is most reliable."
 	case 3:
@@ -506,12 +506,4 @@ func (m Model) toolFormHelp() string {
 	default:
 		return ""
 	}
-}
-
-func (m Model) toolFooterHints() []string {
-	hints := []string{"T tools"}
-	for _, tool := range m.toolOverlays {
-		hints = append(hints, toolHotkeyLabel(tool.Hotkey)+" "+overlayTitle(tool))
-	}
-	return hints
 }

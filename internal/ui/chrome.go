@@ -289,7 +289,6 @@ func (m Model) commandHints() []string {
 		if rowMode != "" {
 			hints = append(hints, rowMode)
 		}
-		hints = append(hints, m.toolFooterHints()...)
 		return append(hints, tail...)
 	}
 	switch m.activePane {

@@ -132,6 +132,7 @@ func (m Model) renderHelpModal(width, height int) string {
 		title string
 		keys  [][2]string
 	}{
+		{"Tools", m.toolHelpKeys()},
 		{"Navigate", [][2]string{
 			{"h/l", "move between panes"},
 			{"j/k", "move in the pane; scroll Spanreed"},
@@ -187,6 +188,18 @@ func (m Model) renderHelpModal(width, height int) string {
 
 	modalWidth, modalHeight := modalDimensions(width, height, 64, len(lines)+2)
 	return renderModal(strings.Join(lines, "\n"), modalWidth, modalHeight)
+}
+
+func (m Model) toolHelpKeys() [][2]string {
+	keys := make([][2]string, 0, len(m.toolOverlays)+1)
+	keys = append(keys, [2]string{"T", "configure tool overlays"})
+	for _, tool := range m.toolOverlays {
+		keys = append(keys, [2]string{
+			toolHotkeyLabel(tool.Hotkey),
+			overlayTitle(tool),
+		})
+	}
+	return keys
 }
 
 func (m Model) beginRename() (tea.Model, tea.Cmd) {
