@@ -503,8 +503,20 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 		}
 	}()
 	options := ui.Options{
-		YaziPath: cfg.Tools.Yazi,
-		NvimPath: cfg.Tools.Nvim,
+		YaziPath:     cfg.Tools.Yazi,
+		NvimPath:     cfg.Tools.Nvim,
+		ToolOverlays: toolOverlayOptions(cfg.Tools.Overlays),
+		SaveToolOverlays: func(overlays []ui.ToolOverlay) error {
+			next := cfg
+			if err := next.SetToolOverlays(configToolOverlays(overlays)); err != nil {
+				return err
+			}
+			if err := config.Save(next); err != nil {
+				return err
+			}
+			cfg = next
+			return nil
+		},
 		Keys: ui.KeyBindings{
 			AgentsNext:     cfg.Keys.AgentsNext,
 			AgentsPrevious: cfg.Keys.AgentsPrevious,
@@ -565,6 +577,37 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 	}
 	printFarewell(command.OutOrStdout())
 	return nil
+}
+
+func toolOverlayOptions(overlays map[string]config.ToolOverlay) []ui.ToolOverlay {
+	ids := slices.Sorted(maps.Keys(overlays))
+	tools := make([]ui.ToolOverlay, 0, len(ids))
+	for _, id := range ids {
+		overlay := overlays[id]
+		tools = append(tools, ui.ToolOverlay{
+			ID:     id,
+			Title:  overlay.Title,
+			Binary: overlay.Binary,
+			Args:   append([]string(nil), overlay.Args...),
+			Hotkey: append([]string(nil), overlay.Hotkey...),
+			Host:   overlay.Host,
+		})
+	}
+	return tools
+}
+
+func configToolOverlays(overlays []ui.ToolOverlay) map[string]config.ToolOverlay {
+	configured := make(map[string]config.ToolOverlay, len(overlays))
+	for _, overlay := range overlays {
+		configured[overlay.ID] = config.ToolOverlay{
+			Title:  overlay.Title,
+			Binary: overlay.Binary,
+			Args:   append([]string(nil), overlay.Args...),
+			Hotkey: append([]string(nil), overlay.Hotkey...),
+			Host:   overlay.Host,
+		}
+	}
+	return configured
 }
 
 // printFarewell speaks the oath on the way out. Only on a clean exit — an

@@ -281,3 +281,38 @@ shell = "fish"
 		t.Fatal("a bad shell should not remove the host")
 	}
 }
+
+func TestToolOverlaysValidateHotkeysAndHosts(t *testing.T) {
+	path := writeConfig(t, `
+[hosts.remote]
+
+[tools.overlays.review]
+binary = "review-tool"
+hotkey = ["c", "r"]
+host = "remote"
+
+[tools.overlays.duplicate]
+binary = "other-tool"
+hotkey = ["c", "r"]
+host = "remote"
+
+[tools.overlays.conflict]
+binary = "conflict-tool"
+hotkey = ["n", "r"]
+`)
+	cfg, warnings, err := loadFrom(path)
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if len(cfg.Tools.Overlays) != 1 {
+		t.Fatalf("overlays = %#v", cfg.Tools.Overlays)
+	}
+	for _, got := range cfg.Tools.Overlays {
+		if got.Host != "remote" || len(got.Hotkey) != 2 || got.Hotkey[0] != "c" {
+			t.Fatalf("valid overlay = %#v", got)
+		}
+	}
+	if len(warnings) < 2 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}

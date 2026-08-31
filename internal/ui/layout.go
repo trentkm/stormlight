@@ -122,6 +122,10 @@ func (m Model) renderModeBody(width, contentHeight int) string {
 		modal = m.renderRenameModal(width, region)
 	case modeMark:
 		modal = m.renderMarkModal(width, region)
+	case modeTools:
+		modal = m.renderToolsModal(width, region)
+	case modeToolEdit:
+		modal = m.renderToolEditModal(width, region)
 	case modeInfo:
 		modal = m.renderInfoModal(width, region)
 	case modeHelp:

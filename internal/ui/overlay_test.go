@@ -132,6 +132,57 @@ func TestOverlayFloatsOverTheDashboardAndOwnsTheKeyboard(t *testing.T) {
 	waitForWrites(t, session, "j")
 }
 
+func TestConfiguredToolChordMinimizesAndRestoresTheTool(t *testing.T) {
+	model := flowModelFixture(t, stubBackend{})
+	model.toolOverlays = []ToolOverlay{{
+		ID:     "review",
+		Title:  "Review tool",
+		Binary: "/opt/tools/review",
+		Hotkey: []string{"c", "r"},
+	}}
+	updated, _ := model.updateNormal(runeKey("c"))
+	model = updated.(Model)
+	updated, open := model.updateNormal(runeKey("r"))
+	model = updated.(Model)
+	if open == nil {
+		t.Fatal("c r did not start the configured tool")
+	}
+	spec := model.toolOverlaySpec(model.toolOverlays[0])
+	if spec.path != "/opt/tools/review" || spec.host != "" || spec.dir != "" {
+		t.Fatalf("tool spec = %#v", spec)
+	}
+	session := newFakeOverlaySession("TOOL")
+	updated, _ = model.handleOverlayOpened(overlayOpenedMsg{
+		generation: model.overlayGeneration,
+		spec:       spec,
+		session:    session,
+	})
+	model = updated.(Model)
+	if model.overlay == nil || model.overlay.spec.title != "Review tool" {
+		t.Fatalf("tool overlay = %#v", model.overlay)
+	}
+
+	updated, _ = model.updateOverlayKey(tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl})
+	model = updated.(Model)
+	if model.overlay != nil || model.minimizedOverlay == nil {
+		t.Fatalf("minimize state: overlay=%#v hidden=%#v", model.overlay, model.minimizedOverlay)
+	}
+	if session.isClosed() {
+		t.Fatal("minimize closed the tool session")
+	}
+
+	updated, _ = model.updateNormal(runeKey("c"))
+	model = updated.(Model)
+	updated, restore := model.updateNormal(runeKey("r"))
+	model = updated.(Model)
+	if model.overlay == nil || model.minimizedOverlay != nil {
+		t.Fatalf("restore state: overlay=%#v hidden=%#v", model.overlay, model.minimizedOverlay)
+	}
+	if restore == nil {
+		t.Fatal("restore did not re-arm the overlay")
+	}
+}
+
 // waitForWrites waits for the terminal's writer goroutine to deliver what
 // the event loop queued.
 func waitForWrites(t *testing.T, session *fakeOverlaySession, want string) {
@@ -266,5 +317,24 @@ func TestAFailureWithNothingToSayStillReports(t *testing.T) {
 	picked, ok := cmd().(directoryPickedMsg)
 	if !ok || picked.err == nil || !strings.Contains(picked.err.Error(), "status 1") {
 		t.Fatalf("exit result = %#v", picked)
+	}
+}
+
+func TestToolOverlayConsumesCtrlSpaceWhenMinimizeIsDisabled(t *testing.T) {
+	model := flowModelFixture(t, stubBackend{})
+	session := newFakeOverlaySession("tool")
+	model = openFakeOverlay(t, model, session, overlaySpec{
+		title:       "Tool",
+		minimizable: false,
+		cleanup:     func() {},
+	})
+
+	updated, cmd := model.updateOverlayKey(tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl})
+	model = updated.(Model)
+	if cmd != nil || model.overlay == nil || model.minimizedOverlay != nil {
+		t.Fatalf("ctrl-space state: overlay=%#v hidden=%#v cmd=%v", model.overlay, model.minimizedOverlay, cmd)
+	}
+	if got := session.recorded(); got != "" {
+		t.Fatalf("ctrl-space reached the hosted tool: %q", got)
 	}
 }

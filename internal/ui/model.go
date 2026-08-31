@@ -70,6 +70,8 @@ const (
 	modeHelp
 	modeHistory
 	modeAlert
+	modeTools
+	modeToolEdit
 )
 
 // isForm reports that a mode is one the human is filling in — a field, a
@@ -79,7 +81,7 @@ const (
 // this whole surface exists to remove.
 func (m mode) isForm() bool {
 	switch m {
-	case modeDispatch, modeAddWorkspace, modeRename, modeCompose:
+	case modeDispatch, modeAddWorkspace, modeRename, modeCompose, modeToolEdit:
 		return true
 	}
 	return false
@@ -335,6 +337,7 @@ type Model struct {
 	// saying so is what keeps the gap from reading as an empty morning.
 	reachingHosts []string
 
+	toolPrefix     []string
 	normalPrefix   string
 	sortMode       sortMode
 	dispatchPrefix string
@@ -368,6 +371,11 @@ type Model struct {
 	// the Spanreed, composited over the dashboard. The generation ties
 	// async open/exit messages to the opening they belong to.
 	overlay           *overlayView
+	minimizedOverlay  *overlayView
+	toolOverlays      []ToolOverlay
+	toolCursor        int
+	toolForm          toolOverlayForm
+	saveToolOverlays  func([]ToolOverlay) error
 	overlayGeneration int
 
 	// holdFrame says the message just handled changed nothing that is
@@ -487,13 +495,15 @@ func NewModel(backend Backend) Model {
 // Options carries user-configuration defaults into the dashboard. Zero
 // values mean "use the built-in behavior".
 type Options struct {
-	YaziPath        string
-	NvimPath        string
-	DefaultMode     agent.PermissionMode
-	DefaultProvider agent.Provider
-	ExpandedRows    bool
-	ModeForDir      func(string) (agent.PermissionMode, bool)
-	ProviderForDir  func(string) (agent.Provider, bool)
+	YaziPath         string
+	NvimPath         string
+	ToolOverlays     []ToolOverlay
+	SaveToolOverlays func([]ToolOverlay) error
+	DefaultMode      agent.PermissionMode
+	DefaultProvider  agent.Provider
+	ExpandedRows     bool
+	ModeForDir       func(string) (agent.PermissionMode, bool)
+	ProviderForDir   func(string) (agent.Provider, bool)
 	// SelectWorkspaceID names the workspace the first dashboard refresh
 	// should land on, for launches like `stormlight <path>`.
 	SelectWorkspaceID string
@@ -552,6 +562,8 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		cwdInput:           cwdInput,
 		nameInput:          nameInput,
 		taskInput:          taskInput,
+		toolOverlays:       sortToolOverlays(options.ToolOverlays),
+		saveToolOverlays:   options.SaveToolOverlays,
 		sendInput:          sendInput,
 		initialCwd:         cwd,
 		initialWorkspaceID: options.SelectWorkspaceID,
@@ -978,6 +990,10 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.updateRename(msg)
 	case modeMark:
 		return m.updateMark(msg)
+	case modeTools:
+		return m.updateTools(msg)
+	case modeToolEdit:
+		return m.updateToolEdit(msg)
 	case modeHistory:
 		return m.updateHistory(msg)
 	case modeAlert:
@@ -1058,6 +1074,11 @@ func (m Model) View() tea.View {
 
 func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if tool, waiting := m.toolOverlayForKey(key); tool != nil {
+		return m.toggleToolOverlay(*tool)
+	} else if waiting {
+		return m, nil
+	}
 	// The seam chords work from this side too: the same keys that cycle
 	// inside the terminal cycle here, so the hands never relearn.
 	switch {
@@ -1115,9 +1136,12 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		// The agents themselves live on in the windrunner daemon,
 		// terminals intact for the next run.
-		return m, tea.Sequence(closeAllPTYCmd(m.ptyManager), tea.Quit)
+		return m, tea.Sequence(closeMinimizedOverlayCmd(m.minimizedOverlay), closeAllPTYCmd(m.ptyManager), tea.Quit)
 	case "t":
 		return m, m.togglePTY()
+	case "T":
+		m.beginToolManager()
+		return m, nil
 	case "F":
 		// The full-screen escape hatch: the same terminal, every column
 		// of the display, via an interactive attachment.

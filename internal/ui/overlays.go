@@ -19,11 +19,13 @@ import (
 // overlaySpec is one floating program the dashboard can host: what to run,
 // how to read its answer back, and how to clean up if it never answers.
 type overlaySpec struct {
-	title string
-	host  string
-	path  string
-	args  []string
-	dir   string
+	title       string
+	host        string
+	path        string
+	args        []string
+	dir         string
+	minimizable bool
+	toolID      string
 	// result turns the program's exit into a message. answer is what it
 	// left in its session — empty when it left none, which is what
 	// quitting without choosing looks like.
@@ -126,11 +128,16 @@ func (m Model) handleOverlayOpened(msg overlayOpenedMsg) (tea.Model, tea.Cmd) {
 // back. Cancel bumps the generation, so a late exit from a killed session
 // falls through the guard.
 func (m Model) handleOverlayExited(msg overlayExitedMsg) (tea.Model, tea.Cmd) {
-	if m.overlay == nil || msg.generation != m.overlay.generation {
+	view := m.overlay
+	if view != nil && msg.generation == view.generation {
+		m.overlay = nil
+	} else if hidden := m.minimizedOverlay; hidden != nil &&
+		msg.generation == hidden.generation {
+		view = hidden
+		m.minimizedOverlay = nil
+	} else {
 		return m, nil
 	}
-	view := m.overlay
-	m.overlay = nil
 	return m, func() tea.Msg {
 		// Read the answer before closing: Close destroys the session, and
 		// the session is where the answer is.
@@ -153,8 +160,15 @@ func (m Model) handleOverlayExited(msg overlayExitedMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateOverlayKey forwards the keyboard to the floating program, byte for
-// byte; ctrl+q is the one key that stays ours, and it cancels.
+// byte. ctrl+q cancels; ctrl+space minimizes a long-lived tool.
 func (m Model) updateOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+space" || msg.String() == "ctrl+@" {
+		if m.overlay.spec.minimizable {
+			return m.minimizeOverlay()
+		}
+		// Ctrl-space belongs to the overlay host whether or not this tool opts in.
+		return m, nil
+	}
 	if msg.String() == "ctrl+q" {
 		return m.cancelOverlay()
 	}
@@ -164,6 +178,25 @@ func (m Model) updateOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	writeTerminal(m.overlay.widget, data)
 	return m, nil
+}
+
+// minimizeOverlay hides a long-lived tool without interrupting its PTY.
+func (m Model) minimizeOverlay() (tea.Model, tea.Cmd) {
+	view := m.overlay
+	m.overlay = nil
+	view.widget.SetVisible(false)
+	m.minimizedOverlay = view
+	return m, nil
+}
+
+func closeMinimizedOverlayCmd(view *overlayView) tea.Cmd {
+	return func() tea.Msg {
+		if view != nil {
+			view.widget.Close()
+			view.spec.cleanup()
+		}
+		return nil
+	}
 }
 
 // cancelOverlay tears the popup down without an answer: the session dies

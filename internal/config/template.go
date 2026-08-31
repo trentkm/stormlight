@@ -37,6 +37,14 @@ const template = `# Stormlight configuration.
 # yazi = "/opt/homebrew/bin/yazi"
 # nvim = "/opt/homebrew/bin/nvim"
 
+# Tool overlays float an interactive program over the dashboard. Commands use
+# an executable plus arguments, never a shell string. Hotkeys are two or three
+# unused lowercase dashboard keys; press T to manage them in the TUI.
+# [tools.overlays.example]
+# title = "Review tool"
+# binary = "review-tool"
+# args = []
+# hotkey = ["c", "r"]
 # Per-directory dispatch defaults, applied when a flag or form choice
 # doesn't say otherwise. Keys may use ~ and match subdirectories.
 # [workspaces."~/repos/trusted-project"]
