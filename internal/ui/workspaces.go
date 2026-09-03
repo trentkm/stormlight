@@ -148,7 +148,7 @@ func (m Model) renderWorkspaces(width, height int) string {
 	// a machine that has not answered contributes no rows. Without a word
 	// about it the pane is a short list that grows on its own a second
 	// later; with one it is a list that says what is still coming.
-	note := m.reachingBar(width)
+	note := m.reachingNoteForLoad(width, m.catalogLoaded, m.reachingHosts...)
 	if len(m.groups) == 0 {
 		if note != "" {
 			return note

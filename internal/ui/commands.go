@@ -21,32 +21,28 @@ func (m Model) refreshCmd() tea.Cmd {
 		if err != nil {
 			return dashboardMsg{reaching: m.backend.Reaching(), err: err}
 		}
-		workspaces, err := m.backend.ListWorkspaces(ctx)
-		if err != nil {
-			return dashboardMsg{
-				agents:   agents,
-				reaching: m.backend.Reaching(),
-				err:      err,
-			}
-		}
-		roots, err := m.backend.ListWorkspaceRoots(ctx)
-		if err != nil {
-			return dashboardMsg{
-				agents:     agents,
-				workspaces: workspaces,
-				reaching:   m.backend.Reaching(),
-				err:        err,
-			}
-		}
-		// Asked last, and on purpose: the listings are what start the
-		// connections, so what is still outstanding is only knowable
-		// after they have all had their turn.
 		return dashboardMsg{
-			agents:     agents,
-			workspaces: workspaces,
-			roots:      roots,
-			reaching:   m.backend.Reaching(),
+			agents:   agents,
+			reaching: m.backend.Reaching(),
 		}
+	}
+}
+
+func (m Model) catalogCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		values, err := m.backend.ListWorkspaces(ctx)
+		return catalogMsg{values: values, err: err}
+	}
+}
+
+func (m Model) workspaceRootsCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		values, err := m.backend.ListWorkspaceRoots(ctx)
+		return workspaceRootsMsg{values: values, err: err}
 	}
 }
 

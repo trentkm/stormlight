@@ -19,7 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +35,11 @@ import (
 // The dashboard refreshes on a timer, and an unreachable host would
 // otherwise pay for an SSH attempt on every one of them.
 const retryAfter = 30 * time.Second
+
+const (
+	terminalRetryFloor   = 500 * time.Millisecond
+	terminalRetryCeiling = 30 * time.Second
+)
 
 // Member is one daemon in the fleet.
 type Member struct {
@@ -57,6 +64,11 @@ type member struct {
 	// away, and the dispatch that arrived mid-dial and must wait.
 	reaching bool
 	settled  chan struct{}
+
+	terminalMu      sync.Mutex
+	terminalFailure error
+	terminalRetryAt time.Time
+	terminalBackoff time.Duration
 }
 
 // errReaching is a member that has not answered yet — not a failure, and
@@ -395,6 +407,18 @@ func (f *Runtime) memberFor(ctx context.Context, id string) (session.Runtime, er
 }
 
 func (f *Runtime) lookup(id string) (session.Runtime, bool) {
+	owner, ok := f.lookupMember(id)
+	if !ok {
+		return nil, false
+	}
+	runtime, err := owner.resolve()
+	if err != nil {
+		return nil, false
+	}
+	return runtime, true
+}
+
+func (f *Runtime) lookupMember(id string) (*member, bool) {
 	f.mu.RLock()
 	owner, ok := f.owner[id]
 	f.mu.RUnlock()
@@ -416,11 +440,7 @@ func (f *Runtime) lookup(id string) (session.Runtime, bool) {
 			return nil, false
 		}
 	}
-	runtime, err := owner.resolve()
-	if err != nil {
-		return nil, false
-	}
-	return runtime, true
+	return owner, true
 }
 
 // hostFor is memberFor by host name rather than by agent: dispatch names
@@ -565,7 +585,93 @@ func (f *Runtime) AttachTerminal(
 	if !ok {
 		return nil, fmt.Errorf("runtime does not stream terminals")
 	}
-	return streamer.AttachTerminal(ctx, id, cols, rows)
+	var owner *member
+	if members := f.roster(); len(members) == 1 {
+		owner = members[0]
+	} else {
+		owner, _ = f.lookupMember(id)
+	}
+	if owner == nil || owner.host == "" {
+		return streamer.AttachTerminal(ctx, id, cols, rows)
+	}
+	return owner.attachTerminal(ctx, streamer, id, cols, rows)
+}
+
+func (m *member) attachTerminal(
+	ctx context.Context,
+	streamer session.TerminalStreamer,
+	id string,
+	cols, rows int,
+) (session.TerminalStream, error) {
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	if m.terminalFailure != nil && time.Now().Before(m.terminalRetryAt) {
+		diagnostic.Logger().Debug("terminal attach blocked by host circuit",
+			"request_type", "terminal_attach",
+			"host", hostName(m.host),
+			"agent_id", id,
+			"retry_reason", "circuit_open",
+			"retry_at", m.terminalRetryAt,
+		)
+		return nil, m.terminalFailure
+	}
+
+	started := time.Now()
+	stream, err := streamer.AttachTerminal(ctx, id, cols, rows)
+	if err == nil {
+		m.terminalFailure = nil
+		m.terminalRetryAt = time.Time{}
+		m.terminalBackoff = 0
+		diagnostic.Logger().Debug("terminal attach completed",
+			"request_type", "terminal_attach",
+			"host", hostName(m.host),
+			"agent_id", id,
+			"duration", time.Since(started),
+		)
+		return stream, nil
+	}
+	if !hostTerminalFailure(err) {
+		diagnostic.Logger().Warn("terminal attach failed",
+			"request_type", "terminal_attach",
+			"host", hostName(m.host),
+			"agent_id", id,
+			"duration", time.Since(started),
+			"retry_reason", "agent_error",
+			"error", err,
+		)
+		return nil, err
+	}
+
+	delay := m.terminalBackoff
+	if delay == 0 {
+		delay = terminalRetryFloor
+	}
+	jittered := time.Duration(float64(delay) * (0.8 + rand.Float64()*0.4))
+	if jittered > terminalRetryCeiling {
+		jittered = terminalRetryCeiling
+	}
+	m.terminalFailure = err
+	m.terminalRetryAt = time.Now().Add(jittered)
+	m.terminalBackoff = min(delay*2, terminalRetryCeiling)
+	diagnostic.Logger().Warn("terminal attach failed",
+		"request_type", "terminal_attach",
+		"host", hostName(m.host),
+		"agent_id", id,
+		"duration", time.Since(started),
+		"retry_reason", "attach_error",
+		"retry_after", jittered,
+		"error", err,
+	)
+	return nil, err
+}
+
+func hostTerminalFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return !strings.Contains(message, "agent") ||
+		!strings.Contains(message, "not found")
 }
 
 // ReadAgentFile forwards the file-reading capability to the daemon that

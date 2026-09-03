@@ -6,10 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/trentkm/stormlight/internal/diagnostic"
 	"github.com/trentkm/stormlight/internal/remote"
 )
+
+const remoteWorkspaceConcurrency = 4
+
+var remoteWorkspaceSlots = make(chan struct{}, remoteWorkspaceConcurrency)
 
 // NewRegistryForHost resolves workspaces on another machine.
 //
@@ -20,7 +28,7 @@ import (
 // both machines, and a local answer about a remote path looks entirely
 // correct until two different repositories share one workspace group.
 func NewRegistryForHost(host remote.Host) *Registry {
-	registry := NewRegistryWithResolvers(remoteResolver{
+	registry := NewRegistryWithResolvers(&remoteResolver{
 		transport: remote.NewTransport(host),
 		host:      host.Name,
 	})
@@ -93,11 +101,12 @@ func (r *Registry) forHost(host string) (*Registry, error) {
 type remoteResolver struct {
 	transport *remote.Transport
 	host      string
+	mu        sync.Mutex
 }
 
-func (r remoteResolver) Name() string { return "remote:" + r.host }
+func (r *remoteResolver) Name() string { return "remote:" + r.host }
 
-func (r remoteResolver) Resolve(ctx context.Context, path string) (Context, bool, error) {
+func (r *remoteResolver) Resolve(ctx context.Context, path string) (Context, bool, error) {
 	output, err := r.run(ctx, "_resolve", path)
 	if err != nil {
 		return Context{}, false, err
@@ -109,7 +118,7 @@ func (r remoteResolver) Resolve(ctx context.Context, path string) (Context, bool
 	return value, true, nil
 }
 
-func (r remoteResolver) ExecutionRoots(
+func (r *remoteResolver) ExecutionRoots(
 	ctx context.Context,
 	value Context,
 ) ([]Context, bool, error) {
@@ -124,12 +133,59 @@ func (r remoteResolver) ExecutionRoots(
 	return values, true, nil
 }
 
-func (r remoteResolver) run(ctx context.Context, args ...string) ([]byte, error) {
+func (r *remoteResolver) ResolveBatch(
+	ctx context.Context,
+	queries []ResolveQuery,
+) ([]ResolveReply, error) {
+	input, err := json.Marshal(queries)
+	if err != nil {
+		return nil, err
+	}
+	output, err := r.runInput(
+		ctx, bytes.NewReader(input), len(queries), "_resolve", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	var replies []ResolveReply
+	if err := json.Unmarshal(output, &replies); err != nil {
+		return nil, fmt.Errorf("%s: %w", r.Name(), err)
+	}
+	return replies, nil
+}
+
+func (r *remoteResolver) run(ctx context.Context, args ...string) ([]byte, error) {
+	return r.runInput(ctx, nil, 1, args...)
+}
+
+func (r *remoteResolver) runInput(
+	ctx context.Context,
+	stdin io.Reader,
+	count int,
+	args ...string,
+) ([]byte, error) {
+	select {
+	case remoteWorkspaceSlots <- struct{}{}:
+		defer func() { <-remoteWorkspaceSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	started := time.Now()
 	command := r.transport.CommandContext(ctx, nil, args...)
 	var stdout, stderr bytes.Buffer
+	command.Stdin = stdin
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
+		diagnostic.Logger().Warn("remote workspace request failed",
+			"request_type", "workspace_resolve",
+			"host", r.host,
+			"request_count", count,
+			"duration", time.Since(started),
+			"retry_reason", "transport_error",
+			"error", err,
+		)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -141,5 +197,11 @@ func (r remoteResolver) run(ctx context.Context, args ...string) ([]byte, error)
 		}
 		return nil, fmt.Errorf("%s: %w", r.Name(), err)
 	}
+	diagnostic.Logger().Debug("remote workspace request completed",
+		"request_type", "workspace_resolve",
+		"host", r.host,
+		"request_count", count,
+		"duration", time.Since(started),
+	)
 	return stdout.Bytes(), nil
 }

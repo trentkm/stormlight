@@ -244,9 +244,9 @@ export function attach(
     // repaint rather than to a screen that keeps state it was told to
     // drop.
     let replacing = false;
+    let seeded = false;
 
     live.onopen = () => {
-      onConnection("live");
       // Measure now: the pane may have been laid out since this viewer
       // last spoke, and the size in the URL was read before that.
       fit();
@@ -262,6 +262,10 @@ export function attach(
           // the backoff, turning an unreachable daemon into two full
           // attach attempts a second, forever.
           retry = retryFloor;
+          if (!seeded) {
+            seeded = true;
+            onConnection("live");
+          }
           replacing = true;
           return;
         }
@@ -318,7 +322,13 @@ export function attach(
     live.onclose = () => {
       if (closed || socket !== live) return;
       onConnection("reconnecting");
-      retryTimer = window.setTimeout(open, retry);
+      // Spread panes over a ±20% window so a host returning does not
+      // receive every terminal attachment in the same millisecond.
+      const delay = Math.min(
+        retryCeiling,
+        Math.round(retry * (0.8 + Math.random() * 0.4)),
+      );
+      retryTimer = window.setTimeout(open, delay);
       retry = Math.min(retry * 2, retryCeiling);
     };
   };

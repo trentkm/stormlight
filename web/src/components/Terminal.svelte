@@ -33,7 +33,7 @@
   const settleDelay = 120;
 
   let host: HTMLDivElement;
-  let connection = $state<Connection>("live");
+  let connection = $state<Connection>("reconnecting");
   let term = $state<Terminal>();
 
   /**

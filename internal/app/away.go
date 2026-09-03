@@ -2,18 +2,10 @@ package app
 
 // Questions for other machines.
 //
-// A dashboard refresh runs several times a second and asks two kinds of
-// question: what is here, and what is over there. The first is a syscall
-// away. The second is an SSH handshake bounded at ten seconds — and a
-// refresh that waits for it is a dashboard drawing nothing for ten
-// seconds, on the chance the answer changed since the last one.
-//
-// So it is not asked on the refresh path at all. What a machine last said
-// stands until something replaces it, the replacement is fetched behind
-// whoever wanted it, and a machine nobody has finished asking says so
-// rather than being reported as empty. That last part is the whole point:
-// "reaching devbox…" and "nothing on devbox" are different sentences, and
-// only one of them is true while a connection is being made.
+// Some one-off questions should not make their caller wait on another
+// machine. A successful answer stands for the process lifetime; a failed
+// answer gets a retry window, and the replacement is fetched behind the
+// caller that noticed it was due.
 
 import (
 	"context"
@@ -33,21 +25,6 @@ var errReaching = errors.New("reaching")
 // can name it too.
 func stillReaching(host string) error {
 	return fmt.Errorf("%w %s", errReaching, host)
-}
-
-// answerTTL is how long another machine's answer stands.
-//
-// A directory changes shape rarely, so a good answer is re-asked on a
-// leisurely cadence. A machine that could not be reached costs a
-// connection attempt to ask again, so it is left alone for longer — the
-// same reasoning the fleet applies to its members. Both bounds are about
-// how often the question is worth asking, not about how long anyone
-// waits: nobody waits.
-func answerTTL(failure error) time.Duration {
-	if failure != nil {
-		return unreachableResolveTTL
-	}
-	return workspaceResolveTTL
 }
 
 // remoteAskTimeout bounds a background ask. The refresh that wanted it is
@@ -72,9 +49,9 @@ type awayAnswer[T any] struct {
 	at    time.Time
 }
 
-// ask answers with what the machine last said and starts a fresh ask when
-// that has gone stale. It never waits. A machine that has never answered
-// returns errReaching, which is the caller's cue to say so.
+// ask answers with what the machine last said and retries failed answers
+// after their window. It never waits. A machine that has never answered
+// returns errReaching.
 func (a *away[T]) ask(
 	key, host string,
 	question func(context.Context) (T, error),
@@ -82,14 +59,14 @@ func (a *away[T]) ask(
 	a.mu.Lock()
 	answer, known := a.answers[key]
 	a.mu.Unlock()
-	if known && time.Since(answer.at) < answerTTL(answer.err) {
+	if known && (answer.err == nil ||
+		time.Since(answer.at) < unreachableResolveTTL) {
 		return answer.value, answer.err
 	}
 	a.begin(key, host, question)
 	if known {
-		// Stale, and still better than a workspace that drops out of the
-		// list every time its answer expires and reappears when the next
-		// one lands.
+		// Failed, but still a more useful answer than pretending the
+		// question has never been asked.
 		return answer.value, answer.err
 	}
 	var nothing T
@@ -97,11 +74,7 @@ func (a *away[T]) ask(
 }
 
 // here is the same question asked of this machine, which is close enough
-// to wait for. The answer is kept beside the ones from elsewhere, under
-// the same cache, but never under the unreachable window: a directory
-// here that could not be read costs a syscall to try again, and one that
-// reappears belongs back in the list on the next refresh rather than half
-// a minute later.
+// to wait for. Local failures use a shorter retry window.
 func (a *away[T]) here(
 	ctx context.Context,
 	key string,
@@ -110,7 +83,8 @@ func (a *away[T]) here(
 	a.mu.Lock()
 	answer, known := a.answers[key]
 	a.mu.Unlock()
-	if known && time.Since(answer.at) < workspaceResolveTTL {
+	if known && (answer.err == nil ||
+		time.Since(answer.at) < localResolveFailureTTL) {
 		return answer.value, answer.err
 	}
 	value, err := question(ctx)

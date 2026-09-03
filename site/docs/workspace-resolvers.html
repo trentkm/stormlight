@@ -117,10 +117,11 @@
     <h2 id="remote-resolution">Resolution on another machine</h2>
     <p>Resolution is filesystem work: <code>git rev-parse</code>, a directory that has to
     exist, an executable resolver in a host's own configuration directory. So for a
-    workspace on another machine it runs on that machine, through
-    <code>stormlight _resolve &lt;path&gt;</code> over SSH — the same chain, that host's
-    resolvers, its answer. <code>--roots</code> asks the same question about every runnable
-    checkout.</p>
+    workspace on another machine it runs on that machine. Catalog paths for one host travel
+    together through <code>stormlight _resolve --batch</code> over SSH — the same chain,
+    that host's resolvers, its per-path answers. Execution-root inventory can be included
+    in that same request. Successful resolution is cached for the process; reopening the
+    New Agent picker explicitly refreshes root inventory.</p>
     <p>Two rules follow from the asymmetry:</p>
     <ul>
       <li><strong>Paths are not canonicalized here.</strong> <code>EvalSymlinks</code> and

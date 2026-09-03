@@ -1596,6 +1596,9 @@ func (m Model) beginDispatch(chooseDirectory bool) (tea.Model, tea.Cmd) {
 	m.focusForm()
 	m.syncTaskComposerSize()
 	m.clearComplaint(modeDispatch)
+	if chooseDirectory {
+		return m, m.workspaceRootsCmd()
+	}
 	return m, nil
 }
 

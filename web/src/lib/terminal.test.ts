@@ -143,6 +143,7 @@ function runFrames() {
 beforeEach(() => {
   FakeSocket.live = [];
   frames = [];
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal("sessionStorage", {
     getItem: () => "test-token",
@@ -489,6 +490,8 @@ describe("losing the connection", () => {
   test("a closed socket reattaches, and says so while it is gone", () => {
     const { states, socket } = setup();
     socket().open();
+    expect(states).toEqual([]);
+    socket().deliverControl({ type: "seed" });
     expect(states).toEqual(["live"]);
 
     socket().close();
@@ -497,6 +500,8 @@ describe("losing the connection", () => {
     vi.advanceTimersByTime(500);
     expect(FakeSocket.live).toHaveLength(2);
     FakeSocket.live[1].open();
+    expect(states).toEqual(["live", "reconnecting"]);
+    FakeSocket.live[1].deliverControl({ type: "seed" });
     expect(states).toEqual(["live", "reconnecting", "live"]);
   });
 
@@ -543,6 +548,18 @@ describe("losing the connection", () => {
     expect(FakeSocket.live).toHaveLength(2);
     vi.advanceTimersByTime(500);
     expect(FakeSocket.live).toHaveLength(3);
+  });
+
+  test("retries are jittered so many panes do not reconnect together", () => {
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    const { socket } = setup();
+    socket().open();
+    socket().close();
+
+    vi.advanceTimersByTime(599);
+    expect(FakeSocket.live).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(FakeSocket.live).toHaveLength(2);
   });
 
   test("closing marks the attachment closed, not just the socket", () => {

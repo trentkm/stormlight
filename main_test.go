@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -185,6 +186,33 @@ func TestResolveCommandReportsEveryCheckout(t *testing.T) {
 	}
 	if len(values) == 0 {
 		t.Fatal("a workspace always has at least the checkout it was resolved from")
+	}
+}
+
+func TestResolveCommandBatchesPathsAndKeepsPartialFailures(t *testing.T) {
+	good := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "missing")
+	command := newResolveCommand()
+	var out bytes.Buffer
+	command.SetIn(strings.NewReader(
+		`[{"path":` + strconv.Quote(good) + `,"roots":true},` +
+			`{"path":` + strconv.Quote(missing) + `}]`,
+	))
+	command.SetOut(&out)
+	command.SetArgs([]string{"--batch"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var replies []workspace.ResolveReply
+	if err := json.Unmarshal(out.Bytes(), &replies); err != nil {
+		t.Fatalf("--batch must answer with JSON replies: %v (%q)", err, out.String())
+	}
+	if len(replies) != 2 || replies[0].Context.ID == "" || len(replies[0].Roots) == 0 {
+		t.Fatalf("successful reply = %#v", replies)
+	}
+	if replies[1].Error == "" {
+		t.Fatalf("one bad path must not erase the good reply: %#v", replies)
 	}
 }
 

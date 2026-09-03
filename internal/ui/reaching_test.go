@@ -15,22 +15,28 @@ import (
 // has not answered yet.
 type reachingBackend struct {
 	stubBackend
-	agents     []agent.Agent
-	workspaces []workspace.Context
-	hosts      []string
+	agents       []agent.Agent
+	workspaces   []workspace.Context
+	hosts        []string
+	agentCalls   int
+	catalogCalls int
+	rootCalls    int
 }
 
 func (b *reachingBackend) ListAgents(context.Context) ([]agent.Agent, error) {
+	b.agentCalls++
 	return b.agents, nil
 }
 
 func (b *reachingBackend) ListWorkspaces(context.Context) ([]workspace.Context, error) {
+	b.catalogCalls++
 	return b.workspaces, nil
 }
 
 func (b *reachingBackend) ListWorkspaceRoots(
 	context.Context,
 ) ([]workspace.Context, error) {
+	b.rootCalls++
 	return b.workspaces, nil
 }
 
@@ -74,6 +80,8 @@ func TestAnAnsweredDashboardSaysItIsEmptyPlainly(t *testing.T) {
 	model := reachingFixture(t, &reachingBackend{})
 	updated, _ := model.Update(dashboardMsg{})
 	model = updated.(Model)
+	updated, _ = model.Update(catalogMsg{})
+	model = updated.(Model)
 
 	workspaces := ansi.Strip(model.renderWorkspaces(30, 12))
 	agents := ansi.Strip(model.renderAgents(40, 12))
@@ -82,6 +90,18 @@ func TestAnAnsweredDashboardSaysItIsEmptyPlainly(t *testing.T) {
 	}
 	if !strings.Contains(agents, "No agents") {
 		t.Fatalf("agents = %q", agents)
+	}
+}
+
+func TestRosterCanLoadBeforeCatalogWithoutClaimingNoWorkspaces(t *testing.T) {
+	model := reachingFixture(t, &reachingBackend{})
+	updated, _ := model.Update(dashboardMsg{})
+	model = updated.(Model)
+
+	rendered := ansi.Strip(model.renderWorkspaces(30, 12))
+	if !strings.Contains(rendered, "Reaching") ||
+		strings.Contains(rendered, "No workspaces") {
+		t.Fatalf("workspace catalog still loading = %q", rendered)
 	}
 }
 
@@ -172,6 +192,8 @@ func TestTheDotsKeepMovingWhileAMachineIsBeingReached(t *testing.T) {
 	// And stop once nothing is outstanding.
 	settled, _ := model.Update(dashboardMsg{})
 	model = settled.(Model)
+	settled, _ = model.Update(catalogMsg{})
+	model = settled.(Model)
 	next, cmd = model.Update(shimmerTickMsg{})
 	model = next.(Model)
 	if model.shimmerRunning || cmd != nil {
@@ -193,5 +215,42 @@ func TestTheRefreshReportsWhatItCouldNotReach(t *testing.T) {
 	}
 	if len(refresh.reaching) != 1 || refresh.reaching[0] != "mini" {
 		t.Fatalf("reaching = %v", refresh.reaching)
+	}
+}
+
+func TestTheFastRefreshOnlyAsksForTheRoster(t *testing.T) {
+	backend := &reachingBackend{}
+	model := reachingFixture(t, backend)
+
+	if _, ok := model.refreshCmd()().(dashboardMsg); !ok {
+		t.Fatal("refresh must still return the dashboard roster message")
+	}
+	if backend.agentCalls != 1 || backend.catalogCalls != 0 || backend.rootCalls != 0 {
+		t.Fatalf("refresh calls: agents=%d catalog=%d roots=%d",
+			backend.agentCalls, backend.catalogCalls, backend.rootCalls)
+	}
+
+	if _, ok := model.catalogCmd()().(catalogMsg); !ok {
+		t.Fatal("catalog load must have its own message")
+	}
+	if backend.catalogCalls != 1 || backend.rootCalls != 0 {
+		t.Fatalf("catalog calls: catalog=%d roots=%d",
+			backend.catalogCalls, backend.rootCalls)
+	}
+}
+
+func TestOpeningTheDirectoryPickerLoadsExecutionRoots(t *testing.T) {
+	backend := &reachingBackend{}
+	model := reachingFixture(t, backend)
+
+	_, cmd := model.beginDispatch(true)
+	if cmd == nil {
+		t.Fatal("opening the directory picker must request execution roots")
+	}
+	if _, ok := cmd().(workspaceRootsMsg); !ok {
+		t.Fatal("execution-root load must have its own message")
+	}
+	if backend.rootCalls != 1 {
+		t.Fatalf("root calls = %d, want 1", backend.rootCalls)
 	}
 }

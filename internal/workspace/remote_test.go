@@ -111,6 +111,34 @@ esac`)
 	}
 }
 
+func TestRemoteWorkspaceQuestionsShareOneHostRequest(t *testing.T) {
+	directory := t.TempDir()
+	attempts := filepath.Join(directory, "attempts")
+	answer := `[{"path":"/srv/api","context":` + remoteAnswer + `},` +
+		`{"path":"/srv/web","context":{"id":"git:/srv/web/.git","kind":"git",` +
+		`"name":"web","root":"/srv/web","execution_root":"/srv/web"}}]`
+	host := fakeHost(t, "devbox",
+		`echo attempt >> `+attempts+`; cat >/dev/null; printf '%s\n' '`+answer+`'`)
+	registry := NewRegistry()
+	registry.AddHost(host)
+
+	replies := registry.ResolveBatchOn(context.Background(), "devbox", []ResolveQuery{
+		{Path: "/srv/api"},
+		{Path: "/srv/web"},
+	})
+	if len(replies) != 2 || replies[0].Context.Host != "devbox" ||
+		replies[1].Context.Host != "devbox" {
+		t.Fatalf("replies = %#v", replies)
+	}
+	content, err := os.ReadFile(attempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(content), "attempt") != 1 {
+		t.Fatalf("one host batch must use one SSH request: %q", content)
+	}
+}
+
 // TestRemoteResolutionReportsTheFarSidesComplaint: the first-run failures
 // are all on the other machine — no stormlight there, no such directory,
 // a key that is not accepted — and only that machine can say which.

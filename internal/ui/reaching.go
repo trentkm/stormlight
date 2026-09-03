@@ -53,7 +53,15 @@ func (m Model) reachingFrame() string {
 // appeared. Empty when there is nothing outstanding — the caller then has
 // an empty list on its hands and should say so plainly.
 func (m Model) reachingNote(width int, hosts ...string) string {
-	if len(hosts) == 0 && m.loaded {
+	return m.reachingNoteForLoad(width, m.loaded, hosts...)
+}
+
+func (m Model) reachingNoteForLoad(
+	width int,
+	loaded bool,
+	hosts ...string,
+) string {
+	if len(hosts) == 0 && loaded {
 		return ""
 	}
 	dots := accentStyle().Render(m.reachingFrame()) + " "

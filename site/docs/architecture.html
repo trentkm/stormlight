@@ -265,14 +265,14 @@
     asked for — a dispatch, an attach, a keystroke on its way to an agent — and one dial
     serves everyone waiting on it rather than opening a second connection beside the
     first.</p>
-    <p>The same rule governs the questions the service asks machines about their
-    filesystems: what a catalog entry resolves to, and which worktrees a repository has.
-    Those answers are cached, re-asked behind the refresh that wanted them, and a machine
-    nobody has finished asking is reported as being reached rather than as having nothing.
-    <code>Service.Reaching</code> collects both — connecting daemons and outstanding
-    questions — so the dashboard can name the machine it is waiting on. Drawing &ldquo;no
-    agents&rdquo; over a handshake in progress is the failure this exists to prevent: an
-    empty pane and an unfinished one look identical, and only one of them is a fact.</p>
+    <p>Filesystem questions are not part of that refresh. The workspace catalog is
+    resolved once when the dashboard starts (catalog mutations update it directly);
+    execution roots are requested when the New Agent directory picker opens. Remote questions are grouped
+    by host and sent through one <code>_resolve --batch</code> SSH request, with at most
+    four host requests running at once. Successful path resolution lives for the process
+    rather than expiring on an arbitrary timer. Workspace requests are serialized per host
+    and use a separate lane from terminal streams, so opening a picker cannot queue ahead
+    of terminal traffic.</p>
     <p>Dispatch follows the workspace it resolved: the context already names the machine,
     because resolution happened there. The name is also what qualifies workspace IDs.</p>
     <p>A host is known because something names it, not because it was configured: a

@@ -3,7 +3,6 @@ package app
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -47,16 +46,11 @@ type Service struct {
 	sessions *history.Log
 	// and one-shot commands want.
 
-	// resolved caches catalog-path resolution (one git spawn per path per
-	// call otherwise); the dashboard polls fast, directories change slowly.
-	// Keyed by host and path, so added or removed workspaces never consult
-	// a stale entry.
+	// resolved and roots support asynchronous one-off questions. Successful
+	// answers live for the process; failed remote questions retain a retry
+	// window.
 	resolved away[workspace.Context]
-
-	// roots caches what each machine says its workspaces' execution roots
-	// are — a second question, over the same wire, with the same rule
-	// about who waits for it.
-	roots away[[]workspace.Context]
+	roots    away[[]workspace.Context]
 
 	// transcripts caches renders of transcripts that had to cross a
 	// tunnel to get here.
@@ -90,9 +84,9 @@ type cachedTranscript struct {
 // transfer.
 const remoteTranscriptTTL = 2 * time.Second
 
-// workspaceResolveTTL bounds how stale a cached resolution can get; a
-// checkout converted to a worktree (or similar) is noticed within this.
-const workspaceResolveTTL = 10 * time.Second
+// localResolveFailureTTL keeps a temporarily unreadable local path from
+// being retried in a tight caller loop. Successful answers do not expire.
+const localResolveFailureTTL = 10 * time.Second
 
 // unreachableResolveTTL is how long a host that could not answer is left
 // alone. Long enough that a sleeping laptop is not dialled on every
@@ -264,29 +258,24 @@ func (s *Service) Resume(
 }
 
 func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, error) {
-	entries, err := s.catalog.Entries()
+	replies, err := s.resolveCatalog(ctx, false)
 	if err != nil {
 		return nil, err
 	}
-	values := make([]workspace.Context, 0, len(entries))
-	seen := make(map[string]bool, len(entries))
-	for _, entry := range entries {
-		value, resolveErr := s.resolveCached(ctx, entry)
-		if resolveErr != nil {
-			// A host that is asleep cannot describe its workspaces, and
-			// that is not a reason to fail the listing — the rest of the
-			// catalog is still answerable. A host being asked right now is
-			// not even that: it is a listing that is not finished, which
-			// Reaching reports and nothing needs to log.
-			if !errors.Is(resolveErr, errReaching) {
-				diagnostic.Logger().Warn("catalog workspace resolution failed",
-					"host", entry.Host,
-					"path", entry.Path,
-					"error", resolveErr,
-				)
-			}
+	values := make([]workspace.Context, 0, len(replies))
+	seen := make(map[string]bool, len(replies))
+	for _, reply := range replies {
+		if reply.Error != "" {
+			diagnostic.Logger().Warn("catalog workspace resolution failed",
+				"request_type", "workspace_catalog",
+				"host", reply.Host,
+				"path", reply.Path,
+				"retry_reason", "resolution_error",
+				"error", reply.Error,
+			)
 			continue
 		}
+		value := reply.Context
 		if seen[value.ID] {
 			continue
 		}
@@ -304,33 +293,81 @@ func (s *Service) ListWorkspaces(ctx context.Context) ([]workspace.Context, erro
 // available execution roots. It is the shared source for headless callers and
 // the dashboard's dispatch picker.
 func (s *Service) ListWorkspaceRoots(ctx context.Context) ([]workspace.Context, error) {
-	workspaces, err := s.ListWorkspaces(ctx)
+	replies, err := s.resolveCatalog(ctx, true)
 	if err != nil {
 		return nil, err
 	}
 	var roots []workspace.Context
-	for _, value := range workspaces {
-		values, rootErr := s.executionRoots(ctx, value)
-		if rootErr != nil {
-			// A machine that cannot list its worktrees costs its own
-			// worktrees, not the picker. The workspace itself is still a
-			// place to dispatch into, and it is the place the catalog
-			// actually names.
-			if !errors.Is(rootErr, errReaching) {
-				diagnostic.Logger().Warn("workspace execution roots unavailable",
-					"host", value.Host,
-					"workspace", value.ID,
-					"error", rootErr,
-				)
+	for _, reply := range replies {
+		if reply.Error != "" {
+			diagnostic.Logger().Warn("workspace execution roots unavailable",
+				"request_type", "workspace_roots",
+				"host", reply.Host,
+				"path", reply.Path,
+				"retry_reason", "resolution_error",
+				"error", reply.Error,
+			)
+			if reply.Context.ID != "" {
+				roots = append(roots, reply.Context)
 			}
-			roots = append(roots, value)
 			continue
 		}
-		roots = append(roots, values...)
+		if len(reply.Roots) == 0 {
+			roots = append(roots, reply.Context)
+			continue
+		}
+		roots = append(roots, reply.Roots...)
 	}
 	s.applyWorkspaceNames(roots)
 	sortWorkspaceRoots(roots)
 	return roots, nil
+}
+
+func (s *Service) resolveCatalog(
+	ctx context.Context,
+	includeRoots bool,
+) ([]workspace.ResolveReply, error) {
+	entries, err := s.catalog.Entries()
+	if err != nil {
+		return nil, err
+	}
+	type hostBatch struct {
+		host    string
+		indexes []int
+		queries []workspace.ResolveQuery
+	}
+	byHost := make(map[string]*hostBatch)
+	order := make([]string, 0)
+	for index, entry := range entries {
+		batch := byHost[entry.Host]
+		if batch == nil {
+			batch = &hostBatch{host: entry.Host}
+			byHost[entry.Host] = batch
+			order = append(order, entry.Host)
+		}
+		batch.indexes = append(batch.indexes, index)
+		batch.queries = append(batch.queries, workspace.ResolveQuery{
+			Path:  entry.Path,
+			Roots: includeRoots,
+		})
+	}
+	replies := make([]workspace.ResolveReply, len(entries))
+	var requests sync.WaitGroup
+	for _, host := range order {
+		batch := byHost[host]
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			answered := s.workspaces.ResolveBatchOn(ctx, batch.host, batch.queries)
+			for index, reply := range answered {
+				if index < len(batch.indexes) {
+					replies[batch.indexes[index]] = reply
+				}
+			}
+		}()
+	}
+	requests.Wait()
+	return replies, nil
 }
 
 // WorkspaceRoots resolves one path without adding it to the catalog, then

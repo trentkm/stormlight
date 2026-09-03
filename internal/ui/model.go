@@ -329,6 +329,10 @@ type Model struct {
 	// different sentence from "there is nothing here", and the only
 	// honest one to draw in the first moments of a launch.
 	loaded bool
+	// catalogLoaded is separate because the roster deliberately does not
+	// wait for workspace resolution. One can answer while the other is
+	// still in flight.
+	catalogLoaded bool
 	// reachingHosts are the machines the last refresh was still waiting on:
 	// a daemon being connected to, a directory being asked about. Their
 	// agents and workspaces are missing from what it returned, and
@@ -422,13 +426,25 @@ func machineChoices(hosts []HostChoice) []machineChoice {
 }
 
 type dashboardMsg struct {
-	agents     []agent.Agent
+	agents []agent.Agent
+	// workspaces and roots remain accepted for callers that deliver a
+	// complete snapshot, but the fast refresh leaves them nil.
 	workspaces []workspace.Context
 	roots      []workspace.Context
 	// reaching are the machines this refresh could not include because
 	// they had not answered yet.
 	reaching []string
 	err      error
+}
+
+type catalogMsg struct {
+	values []workspace.Context
+	err    error
+}
+
+type workspaceRootsMsg struct {
+	values []workspace.Context
+	err    error
 }
 
 type interactionMsg struct {
@@ -585,6 +601,7 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.refreshCmd(),
+		m.catalogCmd(),
 		tickCmd(),
 		shimmerTickCmd(),
 		// Ask the terminal what it is painted on. Lip Gloss v1 answered this
@@ -695,8 +712,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// it came back is worse than no card.
 			m.resolvePolled()
 			m.agents = msg.agents
-			m.catalogWorkspaces = msg.workspaces
-			m.workspaceRoots = msg.roots
+			if msg.workspaces != nil {
+				m.catalogWorkspaces = msg.workspaces
+			}
+			if msg.roots != nil {
+				m.workspaceRoots = msg.roots
+			}
 			m.rebuildGroups(workspaceID, agentID)
 			m.initialWorkspaceID = ""
 			if m.mode == modeCompose {
@@ -730,6 +751,38 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadInteractionCmd())
 		}
 		return m, tea.Batch(cmds...)
+
+	case catalogMsg:
+		m.catalogLoaded = true
+		if msg.err != nil {
+			m.raise(msg.err)
+			diagnostic.Logger().Error("workspace catalog load failed", "error", msg.err)
+			return m, nil
+		}
+		workspaceID := m.selectedWorkspaceID()
+		if workspaceID == "" {
+			workspaceID = m.initialWorkspaceID
+		}
+		m.catalogWorkspaces = msg.values
+		m.rebuildGroups(workspaceID, m.selectedAgentID())
+		m.initialWorkspaceID = ""
+		return m, nil
+
+	case workspaceRootsMsg:
+		if msg.err != nil {
+			m.raise(msg.err)
+			diagnostic.Logger().Error("workspace root load failed", "error", msg.err)
+			return m, nil
+		}
+		m.workspaceRoots = msg.values
+		if m.mode == modeDispatch && m.chooseDispatchDirectory {
+			preferred := m.pickerStart
+			if selected, ok := m.selectedDirectory(); ok {
+				preferred = selected.path
+			}
+			m.prepareDirectoryChoices(m.dispatchHost, preferred)
+		}
+		return m, nil
 
 	case historyMsg:
 		m.historyLoading = false
@@ -1374,7 +1427,7 @@ func (m Model) anyAgentsActive() bool {
 // animation tick alive, because a spinner that has stopped moving is a
 // worse lie than no spinner at all.
 func (m Model) stillReaching() bool {
-	return !m.loaded || len(m.reachingHosts) > 0
+	return !m.loaded || !m.catalogLoaded || len(m.reachingHosts) > 0
 }
 
 // shimmerPhaseOrRest returns the sweep phase while the shimmer is running

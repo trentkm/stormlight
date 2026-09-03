@@ -208,17 +208,48 @@ func newWindrunnerBridgeCommand() *cobra.Command {
 // JSON, with --roots for every runnable checkout in the same workspace.
 func newResolveCommand() *cobra.Command {
 	var roots bool
+	var batch bool
 	command := &cobra.Command{
 		Use:    "_resolve <path>",
 		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if batch {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			registry := workspace.NewRegistry()
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			if batch {
+				var queries []workspace.ResolveQuery
+				if err := json.NewDecoder(cmd.InOrStdin()).Decode(&queries); err != nil {
+					return fmt.Errorf("decode resolve batch: %w", err)
+				}
+				replies := make([]workspace.ResolveReply, 0, len(queries))
+				for _, query := range queries {
+					reply := workspace.ResolveReply{Path: query.Path}
+					value, err := registry.Resolve(cmd.Context(), query.Path)
+					if err != nil {
+						reply.Error = err.Error()
+						replies = append(replies, reply)
+						continue
+					}
+					reply.Context = value
+					if query.Roots {
+						reply.Roots, err = registry.ExecutionRoots(cmd.Context(), value)
+						if err != nil {
+							reply.Error = err.Error()
+						}
+					}
+					replies = append(replies, reply)
+				}
+				return encoder.Encode(replies)
+			}
 			value, err := registry.Resolve(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			encoder := json.NewEncoder(cmd.OutOrStdout())
 			if !roots {
 				return encoder.Encode(value)
 			}
@@ -231,6 +262,8 @@ func newResolveCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&roots, "roots", false,
 		"report every runnable checkout in the workspace")
+	command.Flags().BoolVar(&batch, "batch", false,
+		"read resolve queries from stdin and report per-path replies")
 	return command
 }
 

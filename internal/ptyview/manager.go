@@ -6,7 +6,9 @@ package ptyview
 
 import (
 	"context"
+	"math/rand/v2"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -28,6 +30,7 @@ type Manager struct {
 
 	mu      sync.Mutex
 	entries map[string]pty.Model
+	retries map[string]terminalRetry
 	// pending is the newest desired state an Ensure has recorded and no
 	// reconcile has applied yet; reconciling marks the one caller
 	// working through it. Together they are the single-flight: however
@@ -41,6 +44,16 @@ type Manager struct {
 	height      int
 }
 
+type terminalRetry struct {
+	next    time.Time
+	backoff time.Duration
+}
+
+const (
+	terminalRetryFloor   = 500 * time.Millisecond
+	terminalRetryCeiling = 30 * time.Second
+)
+
 // roster is one desired state of the herd: which agents exist and what
 // size their boxes are.
 type roster struct {
@@ -53,6 +66,7 @@ func NewManager(backend Backend) *Manager {
 		backend: backend,
 		gate:    pty.NewGate(),
 		entries: make(map[string]pty.Model),
+		retries: make(map[string]terminalRetry),
 	}
 }
 
@@ -128,6 +142,7 @@ func (g *Manager) reconcile(ctx context.Context, want roster) {
 		if !wanted[id] {
 			closing = append(closing, widget)
 			delete(g.entries, id)
+			delete(g.retries, id)
 		}
 	}
 	existing := make([]pty.Model, 0, len(g.entries))
@@ -137,6 +152,9 @@ func (g *Manager) reconcile(ctx context.Context, want roster) {
 	missing := make([]string, 0, len(want.ids))
 	for _, id := range want.ids {
 		if _, ok := g.entries[id]; !ok {
+			if retry, waiting := g.retries[id]; waiting && time.Now().Before(retry.next) {
+				continue
+			}
 			missing = append(missing, id)
 		}
 	}
@@ -158,14 +176,33 @@ func (g *Manager) reconcile(ctx context.Context, want roster) {
 		surplus := err == nil && g.draining
 		if err == nil && !g.draining {
 			g.entries[id] = widget
+			delete(g.retries, id)
+		} else if err != nil && !g.draining {
+			retry := g.retries[id]
+			delay := retry.backoff
+			if delay == 0 {
+				delay = terminalRetryFloor
+			}
+			jittered := time.Duration(float64(delay) * (0.8 + rand.Float64()*0.4))
+			if jittered > terminalRetryCeiling {
+				jittered = terminalRetryCeiling
+			}
+			g.retries[id] = terminalRetry{
+				next:    time.Now().Add(jittered),
+				backoff: min(delay*2, terminalRetryCeiling),
+			}
 		}
 		g.mu.Unlock()
 		if surplus {
 			widget.Close()
 		}
 		if err != nil {
-			diagnostic.Logger().Warn("terminal open",
-				"agent_id", id, "error", err)
+			diagnostic.Logger().Warn("terminal open failed",
+				"request_type", "terminal_attach",
+				"agent_id", id,
+				"retry_reason", "attach_error",
+				"error", err,
+			)
 		}
 	}
 }
@@ -257,6 +294,7 @@ func (g *Manager) CloseAll() {
 		widgets = append(widgets, widget)
 	}
 	g.entries = make(map[string]pty.Model)
+	g.retries = make(map[string]terminalRetry)
 	g.mu.Unlock()
 	for _, widget := range widgets {
 		widget.Close()

@@ -92,10 +92,12 @@ dashboard refresh; it logs the failure and exposes the resolved primary root.
 
 Resolution is filesystem work: `git rev-parse`, a directory that has to
 exist, an executable resolver in a host's own configuration directory. So
-for a workspace on another machine it runs on that machine, through
-`stormlight _resolve <path>` over SSH — the same chain, that host's
-resolvers, its answer. `--roots` asks the same question about every
-runnable checkout.
+for a workspace on another machine it runs on that machine. Catalog paths
+for one host travel together through `stormlight _resolve --batch` over
+SSH — the same chain, that host's resolvers, its per-path answers.
+Execution-root inventory can be included in that same request. Successful
+resolution is cached for the process; reopening the New Agent picker
+explicitly refreshes root inventory.
 
 Two rules follow from the asymmetry:
 

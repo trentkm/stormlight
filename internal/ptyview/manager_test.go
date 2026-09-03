@@ -83,12 +83,32 @@ func (t *fakeTransport) count() int {
 	return len(t.applied)
 }
 
-type fakeBackend struct{ transport *fakeTransport }
+type fakeBackend struct {
+	transport *fakeTransport
+	err       error
+	calls     int
+}
 
 func (b *fakeBackend) AttachTerminal(
 	_ context.Context, _ string, _, _ int,
 ) (pty.Transport, error) {
+	b.calls++
+	if b.err != nil {
+		return nil, b.err
+	}
 	return b.transport, nil
+}
+
+func TestFailedTerminalOpenBacksOffBetweenRefreshes(t *testing.T) {
+	backend := &fakeBackend{err: errors.New("agent exited")}
+	manager := NewManager(backend)
+
+	for range 5 {
+		manager.Ensure(context.Background(), []string{"agent"}, 100, 40)
+	}
+	if backend.calls != 1 {
+		t.Fatalf("five immediate refreshes made %d attach attempts", backend.calls)
+	}
 }
 
 // A drag across the screen is a burst of window sizes, and the dashboard

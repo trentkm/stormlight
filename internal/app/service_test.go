@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/history"
 	"github.com/trentkm/stormlight/internal/provider"
+	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -341,6 +343,50 @@ func TestListWorkspaceRootsDegradesOnResolverFailure(t *testing.T) {
 	}
 	if len(roots) != 1 || roots[0].ExecutionRoot != root {
 		t.Fatalf("roots = %#v", roots)
+	}
+}
+
+func TestListWorkspacesBatchesAndKeepsSuccessfulRemoteResolutions(t *testing.T) {
+	directory := t.TempDir()
+	attempts := filepath.Join(directory, "attempts")
+	ssh := filepath.Join(directory, "ssh")
+	answer := `[{"path":"/srv/api","context":{"id":"git:/srv/api/.git","kind":"git",` +
+		`"name":"api","root":"/srv/api","execution_root":"/srv/api"}},` +
+		`{"path":"/srv/web","context":{"id":"git:/srv/web/.git","kind":"git",` +
+		`"name":"web","root":"/srv/web","execution_root":"/srv/web"}}]`
+	script := "#!/bin/sh\necho attempt >> " + attempts +
+		"\ncat >/dev/null\nprintf '%s\\n' '" + answer + "'\n"
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalog := workspace.NewCatalogAt(filepath.Join(directory, "workspaces.json"))
+	for _, path := range []string{"/srv/api", "/srv/web"} {
+		if err := catalog.Add(workspace.Entry{Host: "devbox", Path: path}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry := workspace.NewRegistry()
+	registry.AddHost(remote.Host{Name: "devbox", SSHProgram: ssh})
+	service := NewServiceWithCatalog(
+		&recordingRuntime{},
+		provider.NewRegistry(),
+		registry,
+		catalog,
+		history.NewLogAt(filepath.Join(directory, "sessions.jsonl")),
+	)
+
+	for range 2 {
+		values, err := service.ListWorkspaces(context.Background())
+		if err != nil || len(values) != 2 {
+			t.Fatalf("ListWorkspaces = %#v, %v", values, err)
+		}
+	}
+	content, err := os.ReadFile(attempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(content), "attempt") != 1 {
+		t.Fatalf("successful catalog resolution should live for the process: %q", content)
 	}
 }
 

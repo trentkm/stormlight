@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/pty"
 	"github.com/trentkm/stormlight/internal/session"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -18,15 +19,20 @@ import (
 // stub is one daemon's worth of runtime: a roster it will report and a
 // record of what was asked of it.
 type stub struct {
-	mu        sync.Mutex
-	agents    []agent.Agent
-	listErr   error
-	sent      []string
-	commands  []string
-	deleted   []string
-	launched  []session.DispatchRequest
-	lists     int
-	readPaths []string
+	mu            sync.Mutex
+	agents        []agent.Agent
+	listErr       error
+	sent          []string
+	commands      []string
+	deleted       []string
+	launched      []session.DispatchRequest
+	lists         int
+	readPaths     []string
+	attachErr     error
+	attachErrors  map[string]error
+	attachCalls   int
+	attachEntered chan struct{}
+	attachRelease chan struct{}
 }
 
 func (s *stub) ListAgents(context.Context) ([]agent.Agent, error) {
@@ -85,6 +91,30 @@ func (s *stub) ReadAgentFile(
 func (s *stub) Attach(context.Context, string) (session.AttachResult, error) {
 	return session.AttachResult{}, nil
 }
+func (s *stub) AttachTerminal(
+	_ context.Context,
+	id string,
+	_ int,
+	_ int,
+) (session.TerminalStream, error) {
+	s.mu.Lock()
+	s.attachCalls++
+	entered, release, err := s.attachEntered, s.attachRelease, s.attachErr
+	if specific := s.attachErrors[id]; specific != nil {
+		err = specific
+	}
+	s.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+	}
+	if release != nil {
+		<-release
+	}
+	if err != nil {
+		return nil, err
+	}
+	return fleetTestTransport{}, nil
+}
 func (s *stub) Interrupt(context.Context, string) error              { return nil }
 func (s *stub) Rename(context.Context, string, string) error         { return nil }
 func (s *stub) Update(context.Context, string, session.Update) error { return nil }
@@ -99,6 +129,14 @@ func reachable(host string, runtime session.Runtime) Member {
 func unreachable(host string, err error) Member {
 	return Member{Host: host, Connect: func() (session.Runtime, error) { return nil, err }}
 }
+
+type fleetTestTransport struct{}
+
+func (fleetTestTransport) Seed() pty.Message                      { return pty.Message{} }
+func (fleetTestTransport) Output() <-chan pty.Message             { return make(chan pty.Message) }
+func (fleetTestTransport) Write([]byte) error                     { return nil }
+func (fleetTestTransport) Resize(context.Context, int, int) error { return nil }
+func (fleetTestTransport) Close()                                 {}
 
 // eventually polls the way the dashboard does. A remote member's dial
 // runs in the background and the refresh that started it does not wait,
@@ -237,6 +275,75 @@ func TestOneDialServesEveryoneWaitingOnIt(t *testing.T) {
 	}
 	if got := connects.Load(); got != 1 {
 		t.Fatalf("one machine, one handshake: %d connects", got)
+	}
+}
+
+func TestOneFailedTerminalAttachOpensTheCircuitForTheHost(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	devbox := &stub{
+		agents:        []agent.Agent{{ID: "bbb"}, {ID: "ccc"}},
+		attachErr:     errors.New("ssh: connection timed out"),
+		attachEntered: entered,
+		attachRelease: release,
+	}
+	f := New(nil, reachable("", &stub{}), reachable("devbox", devbox))
+	eventually(t, "remote ownership to be known", func() bool {
+		agents, err := f.ListAgents(context.Background())
+		return err == nil && len(agents) == 2
+	})
+
+	results := make(chan error, 2)
+	go func() {
+		_, err := f.AttachTerminal(context.Background(), "bbb", 80, 24)
+		results <- err
+	}()
+	<-entered
+	go func() {
+		_, err := f.AttachTerminal(context.Background(), "ccc", 80, 24)
+		results <- err
+	}()
+	close(release)
+	for range 2 {
+		if err := <-results; err == nil {
+			t.Fatal("the failed host attach unexpectedly succeeded")
+		}
+	}
+	if devbox.attachCalls != 1 {
+		t.Fatalf("one host failure caused %d terminal attempts", devbox.attachCalls)
+	}
+
+	if _, err := f.AttachTerminal(context.Background(), "bbb", 80, 24); err == nil {
+		t.Fatal("the open circuit must reject another immediate retry")
+	}
+	if devbox.attachCalls != 1 {
+		t.Fatalf("the open circuit retried immediately: %d attempts", devbox.attachCalls)
+	}
+}
+
+func TestAnAgentFailureDoesNotOpenTheHostCircuit(t *testing.T) {
+	devbox := &stub{
+		agents: []agent.Agent{{ID: "bbb"}, {ID: "ccc"}},
+		attachErrors: map[string]error{
+			"bbb": errors.New(`agent "bbb" not found`),
+		},
+	}
+	f := New(nil, reachable("", &stub{}), reachable("devbox", devbox))
+	eventually(t, "remote ownership to be known", func() bool {
+		agents, err := f.ListAgents(context.Background())
+		return err == nil && len(agents) == 2
+	})
+
+	if _, err := f.AttachTerminal(context.Background(), "bbb", 80, 24); err == nil {
+		t.Fatal("the missing agent unexpectedly attached")
+	}
+	stream, err := f.AttachTerminal(context.Background(), "ccc", 80, 24)
+	if err != nil {
+		t.Fatalf("another agent on the healthy host was blocked: %v", err)
+	}
+	stream.Close()
+	if devbox.attachCalls != 2 {
+		t.Fatalf("agent failure should not open host circuit: %d calls", devbox.attachCalls)
 	}
 }
 
