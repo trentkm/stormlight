@@ -2,6 +2,7 @@ package agent
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -150,15 +151,17 @@ func ParseMode(value string) (PermissionMode, error) {
 	return "", fmt.Errorf("invalid permission mode %q (ask, edits, or auto)", value)
 }
 
-// ZedDiffRequest asks the local dashboard to open Zed's project diff for
-// repositories on the machine this agent runs on. Paths name repository roots
-// so Zed loads every changed file before opening the project diff.
+// DashboardActionRequest asks the dashboard to run one user-installed action
+// plugin. Payload belongs entirely to that plugin; Stormlight only transports
+// it from the prepare phase beside the agent to the handle phase beside the
+// dashboard.
 //
 // The request rides in agent metadata because that metadata already crosses
 // the local/remote daemon seam. The dashboard clears it after one attempt.
-type ZedDiffRequest struct {
-	ID    string   `json:"id"`
-	Paths []string `json:"paths"`
+type DashboardActionRequest struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 type Agent struct {
@@ -203,10 +206,10 @@ type Agent struct {
 	// conversation (Claude Code session JSONL), reported by its hooks.
 	TranscriptPath string            `json:"transcript_path,omitempty"`
 	Workspace      workspace.Context `json:"workspace"`
-	// ZedDiff is a one-shot desktop request made by this agent. It is
-	// executed by a dashboard on the user's machine, never by the daemon
-	// beside the repository.
-	ZedDiff *ZedDiffRequest `json:"zed_diff,omitempty"`
+	// DashboardAction is a one-shot plugin request made by this agent. It is
+	// handled by a dashboard on the user's machine, never by the daemon
+	// beside the agent.
+	DashboardAction *DashboardActionRequest `json:"dashboard_action,omitempty"`
 }
 
 // EffectiveMark is the mark the dashboard honors. A dead pane has an exit

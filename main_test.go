@@ -24,11 +24,21 @@ func TestRootCommandUsesStormlightIdentity(t *testing.T) {
 		{"workspace", "add"},
 		{"workspace", "list"},
 		{"workspace", "roots"},
-		{"zed", "diff"},
+		{"action"},
 	} {
 		if _, _, err := command.Find(path); err != nil {
 			t.Fatalf("missing command %v: %v", path, err)
 		}
+	}
+}
+
+func TestActionCommandRequiresAManagedAgent(t *testing.T) {
+	t.Setenv("STORMLIGHT_ID", "")
+	command := newActionCommand()
+	command.SetArgs([]string{"review-changes"})
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "agent id is required") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

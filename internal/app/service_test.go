@@ -178,10 +178,10 @@ func TestUpdateRecordsSessionHistory(t *testing.T) {
 	}
 }
 
-func TestAcknowledgeZedDiffUsesTheRequestID(t *testing.T) {
+func TestAcknowledgeDashboardActionUsesTheRequestID(t *testing.T) {
 	current := &recordingRuntime{}
 	service := serviceWithRuntime(t, current)
-	if err := service.AcknowledgeZedDiff(
+	if err := service.AcknowledgeDashboardAction(
 		context.Background(),
 		"agent-one",
 		"request-one",
@@ -189,7 +189,7 @@ func TestAcknowledgeZedDiffUsesTheRequestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(current.updates) != 1 ||
-		current.updates[0].ClearZedDiff != "request-one" {
+		current.updates[0].ClearDashboardAction != "request-one" {
 		t.Fatalf("updates = %#v", current.updates)
 	}
 }

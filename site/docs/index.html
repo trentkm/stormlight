@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#f2f6fa">
 <title>Docs · Stormlight</title>
-<meta name="description" content="Stormlight documentation: architecture, workspace resolvers, configuration.">
+<meta name="description" content="Stormlight documentation: architecture, workspace resolvers, dashboard actions, configuration.">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="../assets/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
@@ -36,14 +36,15 @@
     <li class="current"><a href="./">Overview</a></li>
     <li><a href="architecture.html">Architecture</a></li>
     <li><a href="workspace-resolvers.html">Workspace resolvers</a></li>
+    <li><a href="dashboard-actions.html">Dashboard actions</a></li>
     <li><a href="configuration.html">Configuration</a></li>
   </ul>
 </aside>
 <main class="doc">
   <p class="kicker">documentation</p>
   <h1 class="doc-title">Docs</h1>
-  <p class="doc-lede">How Stormlight is put together, and the two public contracts —
-  workspace resolution and configuration. The
+  <p class="doc-lede">How Stormlight is put together, and its public extension contracts —
+  workspace resolution, dashboard actions, and configuration. The
   <a href="https://github.com/trentkm/stormlight#readme">README</a> is the user-facing
   reference for the dashboard itself.</p>
 
@@ -60,6 +61,13 @@
       <p>How directories resolve into workspace groups and execution roots, and the
       executable protocol that lets a monorepo or proprietary layout define its own
       workspace semantics — no Stormlight-specific code required.</p>
+      <p class="go">read →</p>
+    </a>
+    <a class="doc-card" href="dashboard-actions.html">
+      <h3>Dashboard actions</h3>
+      <p>The executable protocol that carries an opaque request from a managed agent to a
+      trusted plugin beside the local dashboard, without putting tool-specific behavior
+      into Stormlight.</p>
       <p class="go">read →</p>
     </a>
     <a class="doc-card" href="configuration.html">

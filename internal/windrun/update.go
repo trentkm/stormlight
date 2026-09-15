@@ -25,15 +25,15 @@ func applyUpdate(managedAgent agent.Agent, update session.Update) agent.Agent {
 	if update.Activity != "" {
 		managedAgent.Activity = update.Activity
 	}
-	if update.ZedDiff != nil {
-		request := *update.ZedDiff
-		request.Paths = append([]string(nil), update.ZedDiff.Paths...)
-		managedAgent.ZedDiff = &request
+	if update.DashboardAction != nil {
+		request := *update.DashboardAction
+		request.Payload = append([]byte(nil), update.DashboardAction.Payload...)
+		managedAgent.DashboardAction = &request
 	}
-	if update.ClearZedDiff != "" &&
-		managedAgent.ZedDiff != nil &&
-		managedAgent.ZedDiff.ID == update.ClearZedDiff {
-		managedAgent.ZedDiff = nil
+	if update.ClearDashboardAction != "" &&
+		managedAgent.DashboardAction != nil &&
+		managedAgent.DashboardAction.ID == update.ClearDashboardAction {
+		managedAgent.DashboardAction = nil
 	}
 	if update.SessionID != "" {
 		managedAgent.SessionID = update.SessionID

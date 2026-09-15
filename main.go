@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	actionplugin "github.com/trentkm/stormlight/internal/action"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/config"
@@ -31,7 +32,6 @@ import (
 	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/windrun"
 	"github.com/trentkm/stormlight/internal/workspace"
-	"github.com/trentkm/stormlight/internal/zed"
 	"github.com/trentkm/windrunner"
 	wrclient "github.com/trentkm/windrunner/client"
 	"github.com/trentkm/windrunner/server"
@@ -121,7 +121,7 @@ func newRootCommand() *cobra.Command {
 		newMarkCommand(cfg),
 		newWorkspaceCommand(cfg),
 		newRemoteCommand(cfg),
-		newZedCommand(),
+		newActionCommand(),
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
@@ -528,6 +528,7 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 	if err != nil {
 		return err
 	}
+	actions := actionplugin.NewRegistry()
 	// The session history log accretes one line per provider event, and
 	// dashboard launch is the natural moment to fold it down: off every
 	// event path, once per run. Best-effort — a log that cannot compact
@@ -547,12 +548,12 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 			QueuePrevious:  cfg.Keys.QueuePrevious,
 			Zoom:           cfg.Keys.Zoom,
 		},
-		DefaultProvider: agent.Provider(cfg.Defaults.Provider),
-		ExpandedRows:    cfg.UI.Rows == "expanded",
-		ModeForDir:      cfg.ModeForDir,
-		ProviderForDir:  cfg.ProviderForDir,
-		Columns:         ui.LoadColumnPrefs(),
-		OpenZedDiff:     zed.OpenDiff,
+		DefaultProvider:    agent.Provider(cfg.Defaults.Provider),
+		ExpandedRows:       cfg.UI.Rows == "expanded",
+		ModeForDir:         cfg.ModeForDir,
+		ProviderForDir:     cfg.ProviderForDir,
+		Columns:            ui.LoadColumnPrefs(),
+		RunDashboardAction: actions.Handle,
 		// The machines to offer when adding a workspace: the ones the
 		// user's SSH configuration names, plus any they have configured
 		// here. Naming one is what makes it usable, so this list is

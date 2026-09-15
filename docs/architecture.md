@@ -181,15 +181,21 @@ verbatim (providers ignore pasted slash commands), then a beat later the
 Enter that submits. Nothing is ever interpolated into a shell command
 string.
 
-Desktop requests use that same metadata seam in the other direction. A
-managed agent running `stormlight zed diff` discovers changed repositories on
-its own filesystem and records a request containing each changed repository's
-root. The local dashboard is the only consumer: it maps a remote
-request to `ssh://<host>/<path>`, opens a new Zed workspace and its Project
-Diff, then acknowledges the exact request id. The separate workspace keeps
-the dashboard's own Zed terminal intact. The id match keeps a late
-acknowledgement from erasing a newer request. Repository bytes never cross the
-daemon protocol; Zed reads them through its existing local or SSH project.
+Dashboard actions use that same metadata seam in the other direction.
+`stormlight action <name>` invokes the named plugin's `prepare` phase beside
+the managed agent, then records its opaque JSON output with the action name
+and a request id. The local dashboard invokes the matching installed
+plugin's `handle` phase with that payload and a small agent context, then
+acknowledges the exact request id after one attempt. The id match keeps a late
+acknowledgement from erasing a newer request.
+
+Stormlight owns only this mailbox. It does not classify paths, inspect
+repositories, rewrite remote locations, or know which desktop application the
+plugin controls. A request can select only an executable already installed by
+the user under `~/.config/stormlight/actions`; it cannot supply a command path.
+The two phases may have different platform-specific implementations under the
+same action name. Their public contract is documented in
+[dashboard actions](dashboard-actions.md).
 
 #### Remote hosts
 

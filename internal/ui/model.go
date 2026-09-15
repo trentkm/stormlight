@@ -41,7 +41,7 @@ type Backend interface {
 	Interrupt(context.Context, string) error
 	ClearAttention(context.Context, string) error
 	SetMark(context.Context, string, agent.Mark) error
-	AcknowledgeZedDiff(context.Context, string, string) error
+	AcknowledgeDashboardAction(context.Context, string, string) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
@@ -396,12 +396,12 @@ type Model struct {
 	// the goroutine it updates on.
 	frame *frame
 
-	// Zed diff requests originate inside managed agents, including remote
-	// ones, and are fulfilled by this local dashboard. One runs at a time so
-	// two agents cannot race for Zed's active repository.
-	openZedDiff    ZedDiffOpener
-	zedDiffRunning bool
-	zedDiffSeen    map[string]bool
+	// Dashboard actions originate inside managed agents, including remote
+	// ones, and are fulfilled by user-installed plugins on this machine. One
+	// runs at a time so desktop-side effects cannot race each other.
+	runDashboardAction     DashboardActionRunner
+	dashboardActionRunning bool
+	dashboardActionSeen    map[dashboardActionKey]bool
 }
 
 // frame is the dashboard as View last built it. builds counts how many
@@ -465,9 +465,10 @@ type actionMsg struct {
 	err error
 }
 
-type zedDiffMsg struct {
+type dashboardActionMsg struct {
 	agentID   string
 	requestID string
+	action    string
 	err       error
 }
 
@@ -538,9 +539,9 @@ type Options struct {
 	// order they should appear — read from the user's SSH configuration.
 	// This machine is not among them; it has its own tab.
 	Hosts []HostChoice
-	// OpenZedDiff performs the desktop-local half of an agent's diff
-	// request. It is nil in clients that cannot control a local Zed.
-	OpenZedDiff ZedDiffOpener
+	// RunDashboardAction performs the desktop-local half of an agent's
+	// plugin request. It is nil in clients that do not run local actions.
+	RunDashboardAction DashboardActionRunner
 }
 
 // HostChoice is a machine the Add Workspace modal can offer: the name
@@ -580,32 +581,32 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 	})
 
 	model := Model{
-		backend:            backend,
-		providers:          backend.Providers(),
-		cwdInput:           cwdInput,
-		nameInput:          nameInput,
-		taskInput:          taskInput,
-		sendInput:          sendInput,
-		initialCwd:         cwd,
-		initialWorkspaceID: options.SelectWorkspaceID,
-		yaziPath:           yaziPath,
-		nvimPath:           nvimPath,
-		activePane:         paneWorkspaces,
-		rowsExpanded:       options.ExpandedRows,
-		dispatchMode:       dispatchMode,
-		modeForDir:         options.ModeForDir,
-		providerForDir:     options.ProviderForDir,
-		shimmerRunning:     true,
-		columns:            options.Columns,
-		ptyEnabled:         true,
-		ptyManager:         ptyview.NewManager(backend),
-		keys:               fillKeyDefaults(options.Keys),
-		machines:           machineChoices(options.Hosts),
-		checkHost:          options.CheckHost,
-		hostInput:          newLineInput("user@host"),
-		frame:              &frame{},
-		openZedDiff:        options.OpenZedDiff,
-		zedDiffSeen:        make(map[string]bool),
+		backend:             backend,
+		providers:           backend.Providers(),
+		cwdInput:            cwdInput,
+		nameInput:           nameInput,
+		taskInput:           taskInput,
+		sendInput:           sendInput,
+		initialCwd:          cwd,
+		initialWorkspaceID:  options.SelectWorkspaceID,
+		yaziPath:            yaziPath,
+		nvimPath:            nvimPath,
+		activePane:          paneWorkspaces,
+		rowsExpanded:        options.ExpandedRows,
+		dispatchMode:        dispatchMode,
+		modeForDir:          options.ModeForDir,
+		providerForDir:      options.ProviderForDir,
+		shimmerRunning:      true,
+		columns:             options.Columns,
+		ptyEnabled:          true,
+		ptyManager:          ptyview.NewManager(backend),
+		keys:                fillKeyDefaults(options.Keys),
+		machines:            machineChoices(options.Hosts),
+		checkHost:           options.CheckHost,
+		hostInput:           newLineInput("user@host"),
+		frame:               &frame{},
+		runDashboardAction:  options.RunDashboardAction,
+		dashboardActionSeen: make(map[dashboardActionKey]bool),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -757,7 +758,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmds []tea.Cmd
-		if command := m.nextZedDiffCmd(msg.agents); command != nil {
+		if command := m.nextDashboardActionCmd(msg.agents); command != nil {
 			cmds = append(cmds, command)
 		}
 		// Reconcile the terminal herd against the roster on every refresh:
@@ -774,13 +775,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case zedDiffMsg:
-		m.zedDiffRunning = false
+	case dashboardActionMsg:
+		m.dashboardActionRunning = false
 		if msg.err != nil {
 			m.raise(msg.err)
-			diagnostic.Logger().Error("Zed diff request failed",
+			diagnostic.Logger().Error("dashboard action failed",
 				"agent_id", msg.agentID,
 				"request_id", msg.requestID,
+				"action", msg.action,
 				"error", msg.err,
 			)
 		}

@@ -21,27 +21,33 @@ func TestApplyUpdateRecordsProviderSessionName(t *testing.T) {
 	}
 }
 
-func TestApplyUpdateSetsAndAcknowledgesTheExactZedRequest(t *testing.T) {
+func TestApplyUpdateSetsAndAcknowledgesTheExactDashboardAction(t *testing.T) {
 	managedAgent := agent.Agent{}
-	request := agent.ZedDiffRequest{
-		ID:    "request-one",
-		Paths: []string{"/workspace/src/file.go"},
+	request := agent.DashboardActionRequest{
+		ID:      "request-one",
+		Name:    "review-diff",
+		Payload: []byte(`{"path":"/workspace/src/file.go"}`),
 	}
 	updated := applyUpdate(
 		managedAgent,
-		session.Update{ZedDiff: &request},
+		session.Update{DashboardAction: &request},
 	)
-	if updated.ZedDiff == nil || updated.ZedDiff.ID != request.ID {
-		t.Fatalf("Zed request = %#v", updated.ZedDiff)
+	if updated.DashboardAction == nil ||
+		updated.DashboardAction.ID != request.ID ||
+		string(updated.DashboardAction.Payload) != string(request.Payload) {
+		t.Fatalf("dashboard action = %#v", updated.DashboardAction)
 	}
 
 	// A late acknowledgement for an older request cannot erase this one.
-	updated = applyUpdate(updated, session.Update{ClearZedDiff: "older"})
-	if updated.ZedDiff == nil {
+	updated = applyUpdate(updated, session.Update{ClearDashboardAction: "older"})
+	if updated.DashboardAction == nil {
 		t.Fatal("a mismatched acknowledgement cleared the request")
 	}
-	updated = applyUpdate(updated, session.Update{ClearZedDiff: request.ID})
-	if updated.ZedDiff != nil {
-		t.Fatalf("request was not cleared: %#v", updated.ZedDiff)
+	updated = applyUpdate(
+		updated,
+		session.Update{ClearDashboardAction: request.ID},
+	)
+	if updated.DashboardAction != nil {
+		t.Fatalf("request was not cleared: %#v", updated.DashboardAction)
 	}
 }

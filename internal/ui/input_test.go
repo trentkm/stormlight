@@ -2535,7 +2535,11 @@ func (stubBackend) SetMark(context.Context, string, agent.Mark) error {
 	return nil
 }
 
-func (stubBackend) AcknowledgeZedDiff(context.Context, string, string) error {
+func (stubBackend) AcknowledgeDashboardAction(
+	context.Context,
+	string,
+	string,
+) error {
 	return nil
 }
 

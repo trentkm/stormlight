@@ -46,6 +46,9 @@ Spanreed terminal](site/assets/poster.jpg)](https://stormlight.sh)
 - Custom provider specs give unsupported agent CLIs a fallback.
 - Workspace resolvers are provider-neutral and external resolvers are
   supported.
+- Dashboard actions are executable plugins. Stormlight transports their
+  opaque JSON requests between an agent and the local dashboard without
+  knowing what tool, repository layout, or desktop behavior they implement.
 
 The Spanreed pane shows the selected agent's real terminal, live. Walking
 into it (`Enter` or `Ctrl-space`) hands the keyboard to the agent, byte for
@@ -183,26 +186,19 @@ peer agents when a task calls for parallel work:
   "Investigate the failing integration test"
 ```
 
-They can also ask the local dashboard to open their current Git changes in
-Zed:
+They can also ask the local dashboard to run a user-installed action plugin:
 
 ```bash
-"$STORMLIGHT_BIN" zed diff
+"$STORMLIGHT_BIN" action <name> [args...]
 ```
 
-The command runs beside the repository, records a one-shot request on the
-managed agent, and returns. A Stormlight dashboard running on macOS consumes
-the request: it opens the repository in a new Zed workspace — through Zed's
-`ssh://` URL for a remote agent — and opens Zed's native Project Diff. The new
-workspace preserves the one containing the Stormlight dashboard. A Brazil
-workspace root is expanded into its changed package repositories under
-`src/`, so each package gets its own Project Diff workspace. The Zed CLI must
-be installed, and macOS must allow the terminal running Stormlight to control
-Zed through Accessibility.
-
-Project Diff follows Zed's own `git.diff_base` setting. Set it to
-`"default_branch"` when committed branch work should remain visible rather
-than showing only staged and unstaged changes.
+Actions are executables in `~/.config/stormlight/actions`. Their `prepare`
+phase runs beside the managed agent and emits an opaque JSON payload; the
+matching `handle` phase runs beside the dashboard and receives that payload
+with the agent's host, id, name, and working directory. On a remote host, the
+action must be installed on both machines. Stormlight selects only a trusted,
+locally installed executable by name and never interprets the payload. See
+[dashboard actions](docs/dashboard-actions.md) for the protocol.
 
 `workspace roots` defaults to the current directory and emits every runnable
 location in the resolved workspace. An orchestrating agent can use that
