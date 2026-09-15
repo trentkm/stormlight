@@ -24,6 +24,7 @@ func TestRootCommandUsesStormlightIdentity(t *testing.T) {
 		{"workspace", "add"},
 		{"workspace", "list"},
 		{"workspace", "roots"},
+		{"zed", "diff"},
 	} {
 		if _, _, err := command.Find(path); err != nil {
 			t.Fatalf("missing command %v: %v", path, err)

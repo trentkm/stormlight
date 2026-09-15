@@ -31,6 +31,7 @@ import (
 	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/windrun"
 	"github.com/trentkm/stormlight/internal/workspace"
+	"github.com/trentkm/stormlight/internal/zed"
 	"github.com/trentkm/windrunner"
 	wrclient "github.com/trentkm/windrunner/client"
 	"github.com/trentkm/windrunner/server"
@@ -120,6 +121,7 @@ func newRootCommand() *cobra.Command {
 		newMarkCommand(cfg),
 		newWorkspaceCommand(cfg),
 		newRemoteCommand(cfg),
+		newZedCommand(),
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
@@ -550,6 +552,7 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 		ModeForDir:      cfg.ModeForDir,
 		ProviderForDir:  cfg.ProviderForDir,
 		Columns:         ui.LoadColumnPrefs(),
+		OpenZedDiff:     zed.OpenDiff,
 		// The machines to offer when adding a workspace: the ones the
 		// user's SSH configuration names, plus any they have configured
 		// here. Naming one is what makes it usable, so this list is

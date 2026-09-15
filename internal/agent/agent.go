@@ -150,6 +150,18 @@ func ParseMode(value string) (PermissionMode, error) {
 	return "", fmt.Errorf("invalid permission mode %q (ask, edits, or auto)", value)
 }
 
+// ZedDiffRequest asks the local dashboard to open Zed's project diff for
+// repositories on the machine this agent runs on. Paths name files inside
+// those repositories so a Zed workspace containing several repositories can
+// make the right one active before opening its diff.
+//
+// The request rides in agent metadata because that metadata already crosses
+// the local/remote daemon seam. The dashboard clears it after one attempt.
+type ZedDiffRequest struct {
+	ID    string   `json:"id"`
+	Paths []string `json:"paths"`
+}
+
 type Agent struct {
 	// Host names the machine this agent is running on; empty is this one.
 	// It is never stored in the agent's document: the daemon that
@@ -192,6 +204,10 @@ type Agent struct {
 	// conversation (Claude Code session JSONL), reported by its hooks.
 	TranscriptPath string            `json:"transcript_path,omitempty"`
 	Workspace      workspace.Context `json:"workspace"`
+	// ZedDiff is a one-shot desktop request made by this agent. It is
+	// executed by a dashboard on the user's machine, never by the daemon
+	// beside the repository.
+	ZedDiff *ZedDiffRequest `json:"zed_diff,omitempty"`
 }
 
 // EffectiveMark is the mark the dashboard honors. A dead pane has an exit

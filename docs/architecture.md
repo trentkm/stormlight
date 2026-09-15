@@ -151,8 +151,8 @@ The daemon never learns what an agent is; that is the library's boundary.
 Agent identity and state ride in the session's opaque metadata as one JSON
 document under the `stormlight_agent` key — the serialized `agent.Agent`:
 id, provider, task, name, workspace context, permission mode, activity,
-attention, mark, session id, and transcript path. Two rules keep the
-document honest:
+attention, mark, session id, transcript path, and any pending desktop request.
+Two rules keep the document honest:
 
 - Liveness and exit are the daemon's facts. Listing decodes the document
   and then overwrites process state from the session itself — `Alive`,
@@ -180,6 +180,15 @@ bracketed paste so they arrive as one message, slash commands typed
 verbatim (providers ignore pasted slash commands), then a beat later the
 Enter that submits. Nothing is ever interpolated into a shell command
 string.
+
+Desktop requests use that same metadata seam in the other direction. A
+managed agent running `stormlight zed diff` discovers changed repositories on
+its own filesystem and records a request containing one focus path per
+repository. The local dashboard is the only consumer: it maps a remote
+request to `ssh://<host>/<path>`, opens Zed's Project Diff, and acknowledges
+the exact request id. The id match keeps a late acknowledgement from erasing
+a newer request. Repository bytes never cross the daemon protocol; Zed reads
+them through its existing local or SSH project.
 
 #### Remote hosts
 

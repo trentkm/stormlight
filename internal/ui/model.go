@@ -41,6 +41,7 @@ type Backend interface {
 	Interrupt(context.Context, string) error
 	ClearAttention(context.Context, string) error
 	SetMark(context.Context, string, agent.Mark) error
+	AcknowledgeZedDiff(context.Context, string, string) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
@@ -394,6 +395,13 @@ type Model struct {
 	// the same way. Only the event loop touches it: Bubble Tea renders on
 	// the goroutine it updates on.
 	frame *frame
+
+	// Zed diff requests originate inside managed agents, including remote
+	// ones, and are fulfilled by this local dashboard. One runs at a time so
+	// two agents cannot race for Zed's active repository.
+	openZedDiff    ZedDiffOpener
+	zedDiffRunning bool
+	zedDiffSeen    map[string]bool
 }
 
 // frame is the dashboard as View last built it. builds counts how many
@@ -455,6 +463,12 @@ type interactionMsg struct {
 
 type actionMsg struct {
 	err error
+}
+
+type zedDiffMsg struct {
+	agentID   string
+	requestID string
+	err       error
 }
 
 type attachMsg struct {
@@ -524,6 +538,9 @@ type Options struct {
 	// order they should appear — read from the user's SSH configuration.
 	// This machine is not among them; it has its own tab.
 	Hosts []HostChoice
+	// OpenZedDiff performs the desktop-local half of an agent's diff
+	// request. It is nil in clients that cannot control a local Zed.
+	OpenZedDiff ZedDiffOpener
 }
 
 // HostChoice is a machine the Add Workspace modal can offer: the name
@@ -587,6 +604,8 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		checkHost:          options.CheckHost,
 		hostInput:          newLineInput("user@host"),
 		frame:              &frame{},
+		openZedDiff:        options.OpenZedDiff,
+		zedDiffSeen:        make(map[string]bool),
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -738,6 +757,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmds []tea.Cmd
+		if command := m.nextZedDiffCmd(msg.agents); command != nil {
+			cmds = append(cmds, command)
+		}
 		// Reconcile the terminal herd against the roster on every refresh:
 		// new agents get sessions, deleted agents lose them, and when
 		// nothing changed this is a cheap map diff.
@@ -751,6 +773,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadInteractionCmd())
 		}
 		return m, tea.Batch(cmds...)
+
+	case zedDiffMsg:
+		m.zedDiffRunning = false
+		if msg.err != nil {
+			m.raise(msg.err)
+			diagnostic.Logger().Error("Zed diff request failed",
+				"agent_id", msg.agentID,
+				"request_id", msg.requestID,
+				"error", msg.err,
+			)
+		}
+		return m, m.refreshCmd()
 
 	case catalogMsg:
 		m.catalogLoaded = true

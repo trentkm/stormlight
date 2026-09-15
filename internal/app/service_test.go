@@ -178,6 +178,22 @@ func TestUpdateRecordsSessionHistory(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeZedDiffUsesTheRequestID(t *testing.T) {
+	current := &recordingRuntime{}
+	service := serviceWithRuntime(t, current)
+	if err := service.AcknowledgeZedDiff(
+		context.Background(),
+		"agent-one",
+		"request-one",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.updates) != 1 ||
+		current.updates[0].ClearZedDiff != "request-one" {
+		t.Fatalf("updates = %#v", current.updates)
+	}
+}
+
 func TestSessionNameSyncUsesLiveCodexCommand(t *testing.T) {
 	current := &recordingRuntime{
 		agents: []agent.Agent{{

@@ -2535,6 +2535,10 @@ func (stubBackend) SetMark(context.Context, string, agent.Mark) error {
 	return nil
 }
 
+func (stubBackend) AcknowledgeZedDiff(context.Context, string, string) error {
+	return nil
+}
+
 func (stubBackend) RenameWorkspace(context.Context, workspace.Context, string) error {
 	return nil
 }

@@ -780,6 +780,16 @@ func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error
 	})
 }
 
+// AcknowledgeZedDiff clears the exact desktop request the dashboard handled.
+// Matching the id matters: an agent may ask again while the first request is
+// still opening, and that newer request must survive the older acknowledgement.
+func (s *Service) AcknowledgeZedDiff(
+	ctx context.Context,
+	id, requestID string,
+) error {
+	return s.runtime.Update(ctx, id, session.Update{ClearZedDiff: requestID})
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.runtime.Delete(ctx, id)
 }

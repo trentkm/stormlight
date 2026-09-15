@@ -25,6 +25,16 @@ func applyUpdate(managedAgent agent.Agent, update session.Update) agent.Agent {
 	if update.Activity != "" {
 		managedAgent.Activity = update.Activity
 	}
+	if update.ZedDiff != nil {
+		request := *update.ZedDiff
+		request.Paths = append([]string(nil), update.ZedDiff.Paths...)
+		managedAgent.ZedDiff = &request
+	}
+	if update.ClearZedDiff != "" &&
+		managedAgent.ZedDiff != nil &&
+		managedAgent.ZedDiff.ID == update.ClearZedDiff {
+		managedAgent.ZedDiff = nil
+	}
 	if update.SessionID != "" {
 		managedAgent.SessionID = update.SessionID
 	}

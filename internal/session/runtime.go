@@ -139,6 +139,12 @@ type Update struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// ZedDiff records a one-shot request for the local dashboard to open
+	// this agent's repository changes in Zed.
+	ZedDiff *agent.ZedDiffRequest
+	// ClearZedDiff removes the request only when its id still matches. A
+	// late acknowledgement must not erase a newer request.
+	ClearZedDiff string
 	// SessionID records the provider's own conversation id when an event
 	// carries it; empty means "leave as is".
 	SessionID string

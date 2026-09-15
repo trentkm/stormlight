@@ -183,6 +183,26 @@ peer agents when a task calls for parallel work:
   "Investigate the failing integration test"
 ```
 
+They can also ask the local dashboard to open their current Git changes in
+Zed:
+
+```bash
+"$STORMLIGHT_BIN" zed diff
+```
+
+The command runs beside the repository, records a one-shot request on the
+managed agent, and returns. A Stormlight dashboard running on macOS consumes
+the request: it focuses an existing file in the repository — through Zed's
+`ssh://` URL for a remote agent — and opens Zed's native Project Diff. A
+Brazil workspace root is expanded into its changed package repositories under
+`src/`, so each package gets its own Project Diff tab. The Zed CLI must be
+installed, and macOS must allow the terminal running Stormlight to control Zed
+through Accessibility.
+
+Project Diff follows Zed's own `git.diff_base` setting. Set it to
+`"default_branch"` when committed branch work should remain visible rather
+than showing only staged and unstaged changes.
+
 `workspace roots` defaults to the current directory and emits every runnable
 location in the resolved workspace. An orchestrating agent can use that
 inventory to dispatch one peer per checkout. The dashboard polls the same
