@@ -47,6 +47,22 @@ func TestTerminalRendersSeedAndScrollback(t *testing.T) {
 	}
 }
 
+func TestTerminalClampsScrollMarginsToItsGrid(t *testing.T) {
+	// A TUI may repaint once at its old width after SIGWINCH. Real terminals
+	// constrain a DECSLRM right edge to the grid; x/vt must do the same or a
+	// following reverse-index scroll indexes past every row.
+	transport := newFakeTransport("\x1b[?69h\x1b[1;31s\x1b[H\x1bMX")
+	terminal := New(transport, NewGate(), 30, 4)
+	defer terminal.Close()
+
+	if cols, rows := terminal.TerminalSize(); cols != 30 || rows != 4 {
+		t.Fatalf("terminal size = %dx%d, want 30x4", cols, rows)
+	}
+	if lines := terminal.Text(); len(lines) == 0 || !strings.HasPrefix(lines[0], "X") {
+		t.Fatalf("reverse index after clamped margin rendered %q", lines)
+	}
+}
+
 func TestTerminalCursorAndKeyEncoding(t *testing.T) {
 	transport := newFakeTransport("one\r\ntwo")
 	terminal := New(transport, NewGate(), 8, 3)

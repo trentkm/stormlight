@@ -47,3 +47,5 @@ require (
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 )
+
+replace github.com/charmbracelet/x/vt => github.com/trentkm/x/vt v0.0.0-20260820002401-ae9d7dca09ce
