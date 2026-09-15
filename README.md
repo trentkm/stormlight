@@ -192,12 +192,13 @@ Zed:
 
 The command runs beside the repository, records a one-shot request on the
 managed agent, and returns. A Stormlight dashboard running on macOS consumes
-the request: it focuses an existing file in the repository — through Zed's
-`ssh://` URL for a remote agent — and opens Zed's native Project Diff. A
-Brazil workspace root is expanded into its changed package repositories under
-`src/`, so each package gets its own Project Diff tab. The Zed CLI must be
-installed, and macOS must allow the terminal running Stormlight to control Zed
-through Accessibility.
+the request: it opens the repository in a new Zed workspace — through Zed's
+`ssh://` URL for a remote agent — and opens Zed's native Project Diff. The new
+workspace preserves the one containing the Stormlight dashboard. A Brazil
+workspace root is expanded into its changed package repositories under
+`src/`, so each package gets its own Project Diff workspace. The Zed CLI must
+be installed, and macOS must allow the terminal running Stormlight to control
+Zed through Accessibility.
 
 Project Diff follows Zed's own `git.diff_base` setting. Set it to
 `"default_branch"` when committed branch work should remain visible rather

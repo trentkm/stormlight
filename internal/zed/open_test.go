@@ -56,9 +56,9 @@ func TestOpenDiffFocusesEachRepositoryThenRunsProjectDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"/test/zed [ssh://cloud/remote/one/file.go]",
+		"/test/zed [--new ssh://cloud/remote/one/file.go]",
 		"/test/osascript [-e " + openProjectDiffScript + "]",
-		"/test/zed [ssh://cloud/remote/two/file.go]",
+		"/test/zed [--new ssh://cloud/remote/two/file.go]",
 		"/test/osascript [-e " + openProjectDiffScript + "]",
 	}
 	if !slices.Equal(calls, want) {

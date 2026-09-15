@@ -209,10 +209,11 @@
     agent running <code>stormlight zed diff</code> discovers changed repositories on its
     own filesystem and records a request containing one focus path per repository. The
     local dashboard is the only consumer: it maps a remote request to
-    <code>ssh://&lt;host&gt;/&lt;path&gt;</code>, opens Zed's Project Diff, and
-    acknowledges the exact request id. The id match keeps a late acknowledgement from
-    erasing a newer request. Repository bytes never cross the daemon protocol; Zed reads
-    them through its existing local or SSH project.</p>
+    <code>ssh://&lt;host&gt;/&lt;path&gt;</code>, opens a new Zed workspace and its
+    Project Diff, then acknowledges the exact request id. The separate workspace keeps
+    the dashboard's own Zed terminal intact. The id match keeps a late acknowledgement
+    from erasing a newer request. Repository bytes never cross the daemon protocol; Zed
+    reads them through its existing local or SSH project.</p>
 
     <h4 id="remote-hosts">Remote hosts</h4>
     <p>A host that is not this machine runs its own daemon, and the dashboard reaches it

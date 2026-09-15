@@ -35,9 +35,10 @@ tell application "System Events"
 end tell
 `
 
-// OpenDiff focuses each requested repository in the local Zed application and
-// opens its native project diff. Remote paths use Zed's ssh:// URL, so the
-// source stays on the agent's machine.
+// OpenDiff opens each requested repository in a new Zed workspace and opens
+// its native project diff. A new workspace preserves the one containing the
+// Stormlight dashboard. Remote paths use Zed's ssh:// URL, so the source stays
+// on the agent's machine.
 func OpenDiff(ctx context.Context, host string, paths []string) error {
 	if operatingSystem != "darwin" {
 		return fmt.Errorf("opening Zed from Stormlight currently requires macOS")
@@ -59,7 +60,7 @@ func OpenDiff(ctx context.Context, host string, paths []string) error {
 		if err != nil {
 			return err
 		}
-		if output, runErr := runCommand(ctx, zedPath, target); runErr != nil {
+		if output, runErr := runCommand(ctx, zedPath, "--new", target); runErr != nil {
 			return commandError("open "+target+" in Zed", runErr, output)
 		}
 		// The CLI hands the request to the running app and exits. Give Zed a

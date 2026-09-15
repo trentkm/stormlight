@@ -185,10 +185,11 @@ Desktop requests use that same metadata seam in the other direction. A
 managed agent running `stormlight zed diff` discovers changed repositories on
 its own filesystem and records a request containing one focus path per
 repository. The local dashboard is the only consumer: it maps a remote
-request to `ssh://<host>/<path>`, opens Zed's Project Diff, and acknowledges
-the exact request id. The id match keeps a late acknowledgement from erasing
-a newer request. Repository bytes never cross the daemon protocol; Zed reads
-them through its existing local or SSH project.
+request to `ssh://<host>/<path>`, opens a new Zed workspace and its Project
+Diff, then acknowledges the exact request id. The separate workspace keeps
+the dashboard's own Zed terminal intact. The id match keeps a late
+acknowledgement from erasing a newer request. Repository bytes never cross the
+daemon protocol; Zed reads them through its existing local or SSH project.
 
 #### Remote hosts
 
