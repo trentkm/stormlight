@@ -151,9 +151,8 @@ func ParseMode(value string) (PermissionMode, error) {
 }
 
 // ZedDiffRequest asks the local dashboard to open Zed's project diff for
-// repositories on the machine this agent runs on. Paths name files inside
-// those repositories so a Zed workspace containing several repositories can
-// make the right one active before opening its diff.
+// repositories on the machine this agent runs on. Paths name repository roots
+// so Zed loads every changed file before opening the project diff.
 //
 // The request rides in agent metadata because that metadata already crosses
 // the local/remote daemon seam. The dashboard clears it after one attempt.

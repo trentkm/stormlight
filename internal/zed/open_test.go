@@ -49,16 +49,16 @@ func TestOpenDiffFocusesEachRepositoryThenRunsProjectDiff(t *testing.T) {
 	pause = func(time.Duration) {}
 
 	err := OpenDiff(context.Background(), "cloud", []string{
-		"/remote/one/file.go",
-		"/remote/two/file.go",
+		"/remote/one",
+		"/remote/two",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		"/test/zed [--new ssh://cloud/remote/one/file.go]",
+		"/test/zed [--new ssh://cloud/remote/one]",
 		"/test/osascript [-e " + openProjectDiffScript + "]",
-		"/test/zed [--new ssh://cloud/remote/two/file.go]",
+		"/test/zed [--new ssh://cloud/remote/two]",
 		"/test/osascript [-e " + openProjectDiffScript + "]",
 	}
 	if !slices.Equal(calls, want) {

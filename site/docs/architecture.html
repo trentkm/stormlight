@@ -207,7 +207,7 @@
     interpolated into a shell command string.</p>
     <p>Desktop requests use that same metadata seam in the other direction. A managed
     agent running <code>stormlight zed diff</code> discovers changed repositories on its
-    own filesystem and records a request containing one focus path per repository. The
+    own filesystem and records a request containing each changed repository's root. The
     local dashboard is the only consumer: it maps a remote request to
     <code>ssh://&lt;host&gt;/&lt;path&gt;</code>, opens a new Zed workspace and its
     Project Diff, then acknowledges the exact request id. The separate workspace keeps

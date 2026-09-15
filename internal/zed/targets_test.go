@@ -45,16 +45,33 @@ func testRepository(t *testing.T, directory string) {
 func TestDiffTargetsFindsWorkingChangesInsideARepository(t *testing.T) {
 	directory := t.TempDir()
 	testRepository(t, directory)
-	path := filepath.Join(directory, "README.md")
-	if err := os.WriteFile(path, []byte("before\nafter\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"one.txt", "two.txt"} {
+		if err := os.WriteFile(
+			filepath.Join(directory, name),
+			[]byte("before\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testGit(t, directory, "add", ".")
+	testGit(t, directory, "commit", "-q", "-m", "add fixtures")
+
+	for _, name := range []string{"README.md", "one.txt", "two.txt"} {
+		if err := os.WriteFile(
+			filepath.Join(directory, name),
+			[]byte("before\nafter\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	targets, err := DiffTargets(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := filepath.EvalSymlinks(path)
+	want, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +96,7 @@ func TestDiffTargetsKeepsCommittedBranchWorkVisible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := filepath.EvalSymlinks(path)
+	want, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +111,11 @@ func TestDiffTargetsFindsChangedPackagesAtABrazilWorkspaceRoot(t *testing.T) {
 	second := filepath.Join(workspace, "src", "PackageB")
 	testRepository(t, first)
 	testRepository(t, second)
-	changed := filepath.Join(second, "README.md")
-	if err := os.WriteFile(changed, []byte("before\nchanged\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(second, "README.md"),
+		[]byte("before\nchanged\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +123,79 @@ func TestDiffTargetsFindsChangedPackagesAtABrazilWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := filepath.EvalSymlinks(changed)
+	want, err := filepath.EvalSymlinks(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0] != want {
+		t.Fatalf("targets = %#v, want only %q", targets, want)
+	}
+}
+
+func TestDiffTargetsFindsBrazilPackagesInsideAnEnclosingRepository(t *testing.T) {
+	metarepo := t.TempDir()
+	testRepository(t, metarepo)
+	if err := os.WriteFile(
+		filepath.Join(metarepo, ".gitignore"),
+		[]byte("workspaces/\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, metarepo, "add", ".gitignore")
+	testGit(t, metarepo, "commit", "-q", "-m", "ignore workspaces")
+
+	workspace := filepath.Join(
+		metarepo,
+		"workspaces",
+		"SigzilBlocks",
+		"worktrees",
+		"git-diff-fixture",
+	)
+	if err := os.MkdirAll(filepath.Join(workspace, ".brazil"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pkg := filepath.Join(workspace, "src", "SigzilWeb")
+	testRepository(t, pkg)
+	if err := os.WriteFile(
+		filepath.Join(pkg, "README.md"),
+		[]byte("before\nchanged\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := DiffTargets(context.Background(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0] != want {
+		t.Fatalf("targets = %#v, want only %q", targets, want)
+	}
+}
+
+func TestDiffTargetsDoesNotMistakeAnOrdinarySrcDirectoryForBrazil(t *testing.T) {
+	directory := t.TempDir()
+	testRepository(t, directory)
+	nested := filepath.Join(directory, "src", "package")
+	testRepository(t, nested)
+	if err := os.WriteFile(
+		filepath.Join(directory, "README.md"),
+		[]byte("before\nchanged\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := DiffTargets(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		t.Fatal(err)
 	}

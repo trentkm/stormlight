@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// DiffTargets returns one existing path per changed Git repository under
-// start. Opening a file rather than only its containing directory makes the
-// repository active in Zed before project diff is invoked.
+// DiffTargets returns the root of each changed Git repository under start.
+// Opening the repository root gives Zed the complete project before project
+// diff is invoked.
 //
 // A path inside a Git repository resolves directly. A Brazil workspace root
 // is the other important shape: each package is its own repository under
@@ -26,35 +26,48 @@ func DiffTargets(ctx context.Context, start string) ([]string, error) {
 		return nil, err
 	}
 
-	if root, ok := repositoryRoot(ctx, directory); ok {
-		target, changed, err := repositoryDiffTarget(ctx, root)
+	root, insideRepository := repositoryRoot(ctx, directory)
+	roots, err := brazilPackageRepositories(ctx, directory)
+	if err != nil {
+		return nil, err
+	}
+	if len(roots) > 0 && (!insideRepository || isBrazilWorkspace(directory)) {
+		var targets []string
+		for _, root := range roots {
+			changed, targetErr := repositoryHasChanges(ctx, root)
+			if targetErr != nil {
+				return nil, targetErr
+			}
+			if changed {
+				targets = append(targets, root)
+			}
+		}
+		if len(targets) == 0 {
+			return nil, fmt.Errorf("no Git changes found under %s", directory)
+		}
+		return targets, nil
+	}
+
+	if insideRepository {
+		changed, err := repositoryHasChanges(ctx, root)
 		if err != nil {
 			return nil, err
 		}
 		if !changed {
 			return nil, fmt.Errorf("no Git changes found in %s", root)
 		}
-		return []string{target}, nil
+		return []string{root}, nil
 	}
 
-	roots, err := brazilPackageRepositories(ctx, directory)
-	if err != nil {
-		return nil, err
+	return nil, fmt.Errorf("%s is neither a Git repository nor a Brazil workspace", directory)
+}
+
+func isBrazilWorkspace(directory string) bool {
+	if filepath.Base(directory) == "src" {
+		directory = filepath.Dir(directory)
 	}
-	var targets []string
-	for _, root := range roots {
-		target, changed, targetErr := repositoryDiffTarget(ctx, root)
-		if targetErr != nil {
-			return nil, targetErr
-		}
-		if changed {
-			targets = append(targets, target)
-		}
-	}
-	if len(targets) == 0 {
-		return nil, fmt.Errorf("no Git changes found under %s", directory)
-	}
-	return targets, nil
+	info, err := os.Stat(filepath.Join(directory, ".brazil"))
+	return err == nil && info.IsDir()
 }
 
 func diffDirectory(start string) (string, error) {
@@ -110,7 +123,7 @@ func brazilPackageRepositories(
 	entries, err := os.ReadDir(source)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%s is neither a Git repository nor a Brazil workspace", directory)
+			return nil, nil
 		}
 		return nil, fmt.Errorf("read Brazil packages under %s: %w", source, err)
 	}
@@ -121,56 +134,24 @@ func brazilPackageRepositories(
 		if !entry.IsDir() {
 			continue
 		}
-		root, ok := repositoryRoot(ctx, filepath.Join(source, entry.Name()))
-		if !ok || seen[root] {
+		packageDirectory := filepath.Join(source, entry.Name())
+		root, ok := repositoryRoot(ctx, packageDirectory)
+		if !ok || root != filepath.Clean(packageDirectory) || seen[root] {
 			continue
 		}
 		seen[root] = true
 		roots = append(roots, root)
 	}
-	if len(roots) == 0 {
-		return nil, fmt.Errorf("%s contains no Git package repositories", source)
-	}
 	slices.Sort(roots)
 	return roots, nil
 }
 
-func repositoryDiffTarget(
-	ctx context.Context,
-	root string,
-) (target string, changed bool, err error) {
+func repositoryHasChanges(ctx context.Context, root string) (bool, error) {
 	paths, err := repositoryChangedPaths(ctx, root)
 	if err != nil {
-		return "", false, fmt.Errorf("inspect Git changes in %s: %w", root, err)
+		return false, fmt.Errorf("inspect Git changes in %s: %w", root, err)
 	}
-	if len(paths) == 0 {
-		return "", false, nil
-	}
-	for _, path := range paths {
-		candidate, ok := repositoryPath(root, path)
-		if !ok {
-			continue
-		}
-		info, statErr := os.Stat(candidate)
-		if statErr == nil && !info.IsDir() {
-			return candidate, true, nil
-		}
-	}
-
-	// A repository whose only change is deletion still needs an existing
-	// file to make it active in a workspace containing several repositories.
-	tracked, _ := gitOutput(ctx, root, "ls-files", "-z")
-	for _, path := range nulPaths(tracked) {
-		candidate, ok := repositoryPath(root, path)
-		if !ok {
-			continue
-		}
-		info, statErr := os.Stat(candidate)
-		if statErr == nil && !info.IsDir() {
-			return candidate, true, nil
-		}
-	}
-	return root, true, nil
+	return len(paths) > 0, nil
 }
 
 func repositoryChangedPaths(ctx context.Context, root string) ([]string, error) {
@@ -233,19 +214,6 @@ func repositoryMergeBase(ctx context.Context, root string) string {
 		}
 	}
 	return ""
-}
-
-func repositoryPath(root, name string) (string, bool) {
-	if filepath.IsAbs(name) {
-		return "", false
-	}
-	candidate := filepath.Clean(filepath.Join(root, name))
-	relative, err := filepath.Rel(root, candidate)
-	if err != nil || relative == ".." ||
-		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return candidate, true
 }
 
 func nulPaths(output []byte) []string {
