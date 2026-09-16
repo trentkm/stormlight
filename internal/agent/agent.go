@@ -202,9 +202,11 @@ const (
 	// a dead dashboard and the request runs twice. That longest run is
 	// the claim's own write, the handler's deadline, and three attempts
 	// to retire, where every daemon call is bounded at ten seconds by the
-	// client and a conditional write may need a list and two writes —
-	// under three minutes altogether, with a remote daemon answering
-	// each call as slowly as it is allowed to. Five leaves a margin.
+	// client, a conditional write may need a list and two writes, and a
+	// remote host the dashboard had lost may first need its SSH bridge
+	// dialled again, bounded at thirty — about four minutes altogether,
+	// with a remote daemon answering each call as slowly as it is
+	// allowed to. Five leaves a margin over even that.
 	DashboardActionClaimTTL = 5 * time.Minute
 )
 

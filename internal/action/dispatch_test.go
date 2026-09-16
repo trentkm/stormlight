@@ -32,8 +32,8 @@ func (s *recordingStore) ClaimDashboardAction(_ context.Context, agentID, reques
 func (s *recordingStore) AcknowledgeDashboardAction(ctx context.Context, agentID, requestID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// A real store's daemon call is refused under a finished context;
-	// so is this one, which is what pins the ack outliving the caller.
+	// A store that honours its context refuses one that is finished; so
+	// does this one, which is what pins the ack outliving the caller.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
