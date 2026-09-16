@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/trentkm/stormlight/internal/action"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -41,6 +42,7 @@ type Backend interface {
 	Interrupt(context.Context, string) error
 	ClearAttention(context.Context, string) error
 	SetMark(context.Context, string, agent.Mark) error
+	ClaimDashboardAction(context.Context, string, string, string) error
 	AcknowledgeDashboardAction(context.Context, string, string) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
@@ -397,11 +399,10 @@ type Model struct {
 	frame *frame
 
 	// Dashboard actions originate inside managed agents, including remote
-	// ones, and are fulfilled by user-installed plugins on this machine. One
-	// runs at a time so desktop-side effects cannot race each other.
-	runDashboardAction     DashboardActionRunner
-	dashboardActionRunning bool
-	dashboardActionSeen    map[dashboardActionKey]bool
+	// ones, and are fulfilled by user-installed plugins on this machine.
+	// The dispatcher runs them one at a time; nil in clients that do not
+	// run local actions.
+	actions *action.Dispatcher
 }
 
 // frame is the dashboard as View last built it. builds counts how many
@@ -581,32 +582,33 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 	})
 
 	model := Model{
-		backend:             backend,
-		providers:           backend.Providers(),
-		cwdInput:            cwdInput,
-		nameInput:           nameInput,
-		taskInput:           taskInput,
-		sendInput:           sendInput,
-		initialCwd:          cwd,
-		initialWorkspaceID:  options.SelectWorkspaceID,
-		yaziPath:            yaziPath,
-		nvimPath:            nvimPath,
-		activePane:          paneWorkspaces,
-		rowsExpanded:        options.ExpandedRows,
-		dispatchMode:        dispatchMode,
-		modeForDir:          options.ModeForDir,
-		providerForDir:      options.ProviderForDir,
-		shimmerRunning:      true,
-		columns:             options.Columns,
-		ptyEnabled:          true,
-		ptyManager:          ptyview.NewManager(backend),
-		keys:                fillKeyDefaults(options.Keys),
-		machines:            machineChoices(options.Hosts),
-		checkHost:           options.CheckHost,
-		hostInput:           newLineInput("user@host"),
-		frame:               &frame{},
-		runDashboardAction:  options.RunDashboardAction,
-		dashboardActionSeen: make(map[dashboardActionKey]bool),
+		backend:            backend,
+		providers:          backend.Providers(),
+		cwdInput:           cwdInput,
+		nameInput:          nameInput,
+		taskInput:          taskInput,
+		sendInput:          sendInput,
+		initialCwd:         cwd,
+		initialWorkspaceID: options.SelectWorkspaceID,
+		yaziPath:           yaziPath,
+		nvimPath:           nvimPath,
+		activePane:         paneWorkspaces,
+		rowsExpanded:       options.ExpandedRows,
+		dispatchMode:       dispatchMode,
+		modeForDir:         options.ModeForDir,
+		providerForDir:     options.ProviderForDir,
+		shimmerRunning:     true,
+		columns:            options.Columns,
+		ptyEnabled:         true,
+		ptyManager:         ptyview.NewManager(backend),
+		keys:               fillKeyDefaults(options.Keys),
+		machines:           machineChoices(options.Hosts),
+		checkHost:          options.CheckHost,
+		hostInput:          newLineInput("user@host"),
+		frame:              &frame{},
+	}
+	if options.RunDashboardAction != nil {
+		model.actions = action.NewDispatcher(backend, options.RunDashboardAction)
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -776,7 +778,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case dashboardActionMsg:
-		m.dashboardActionRunning = false
 		if msg.err != nil {
 			m.raise(msg.err)
 			diagnostic.Logger().Error("dashboard action failed",

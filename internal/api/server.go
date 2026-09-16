@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trentkm/stormlight/internal/action"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
 )
@@ -52,13 +53,23 @@ func NewToken() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
+// Option adjusts how the server runs.
+type Option func(*Server)
+
+// WithActions makes this server a dashboard that runs agents' action
+// requests: the roster poll that feeds the event stream also feeds the
+// dispatcher, and it polls whether or not a browser is connected, because
+// the actions run here regardless of who is watching.
+func WithActions(dispatcher *action.Dispatcher) Option {
+	return func(s *Server) { s.events.actions = dispatcher }
+}
+
 // New builds the server. The token is required, not optional: these
 // routes dispatch agents and stream terminals in every workspace the
 // catalog knows, which is shell access to all of them. There is
-// deliberately no unauthenticated mode to ship by accident.
-// New builds the server. assets is the built web client, or nil to serve
-// the API alone.
-func New(service *app.Service, token string, assets Assets) (*Server, error) {
+// deliberately no unauthenticated mode to ship by accident. assets is the
+// built web client, or nil to serve the API alone.
+func New(service *app.Service, token string, assets Assets, options ...Option) (*Server, error) {
 	if service == nil {
 		return nil, fmt.Errorf("api: a service is required")
 	}
@@ -71,6 +82,9 @@ func New(service *app.Service, token string, assets Assets) (*Server, error) {
 		events:  newHub(service),
 		mux:     http.NewServeMux(),
 		assets:  assets,
+	}
+	for _, option := range options {
+		option(s)
 	}
 	s.routes()
 	return s, nil

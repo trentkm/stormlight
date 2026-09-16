@@ -9,7 +9,10 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/trentkm/stormlight/internal/action"
+	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
+	"github.com/trentkm/stormlight/internal/diagnostic"
 )
 
 // pollInterval is how often the hub asks the runtime for the roster. It
@@ -37,6 +40,10 @@ type hub struct {
 
 	// wake asks the poller for a roster now rather than at the next tick.
 	wake chan struct{}
+
+	// actions, when set, sees every roster the poll fetches and runs the
+	// agents' queued requests from it. See Server.WithActions.
+	actions *action.Dispatcher
 }
 
 func newHub(service *app.Service) *hub {
@@ -68,7 +75,7 @@ func (h *hub) poll(ctx context.Context) {
 			previous = ""
 		case <-ticker.C:
 		}
-		if !h.hasClients() {
+		if !h.hasClients() && h.actions == nil {
 			// Nobody is listening; do not spend a daemon round trip.
 			continue
 		}
@@ -76,6 +83,10 @@ func (h *hub) poll(ctx context.Context) {
 		agents, err := h.service.ListAgents(listCtx)
 		cancel()
 		if err != nil {
+			continue
+		}
+		h.runActions(ctx, agents)
+		if !h.hasClients() {
 			continue
 		}
 		payload, err := json.Marshal(rosterEvent{Type: "agents", Agents: viewOf(agents)})
@@ -88,6 +99,29 @@ func (h *hub) poll(ctx context.Context) {
 		previous = string(payload)
 		h.broadcast(payload)
 	}
+}
+
+// runActions hands the roster to the dispatcher and runs whatever it
+// proposes off the poll loop, so a slow handler never stalls the event
+// stream. The dispatcher proposes nothing while a run is in flight.
+func (h *hub) runActions(ctx context.Context, agents []agent.Agent) {
+	if h.actions == nil {
+		return
+	}
+	managedAgent, request, ok := h.actions.Next(agents)
+	if !ok {
+		return
+	}
+	go func() {
+		if err := h.actions.Run(ctx, managedAgent, request); err != nil {
+			diagnostic.Logger().Error("dashboard action failed",
+				"agent_id", managedAgent.ID,
+				"request_id", request.ID,
+				"action", request.Name,
+				"error", err,
+			)
+		}
+	}()
 }
 
 type rosterEvent struct {

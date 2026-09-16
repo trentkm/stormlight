@@ -56,9 +56,11 @@ and may be an object, array, string, number, boolean, or `null`. Empty output,
 invalid JSON, and payloads larger than 256 KiB fail the request. Diagnostics
 belong on standard error.
 
-On success, Stormlight records the action name, payload, and a fresh request
-id in the managed agent's metadata. No files or executables cross the daemon
-boundary.
+On success, Stormlight appends the action name, payload, and a fresh request
+id to the managed agent's queue, which lives in the agent's metadata document.
+No files or executables cross the daemon boundary. An agent may have at most
+8 requests waiting; a ninth is refused with an error that says so, because a
+queue that only grows means no dashboard is running to drain it.
 
 ## Handling an action
 
@@ -95,11 +97,31 @@ Exit status zero reports success. A nonzero exit reports standard error, or
 standard output when standard error is empty, in the dashboard. The handler
 has 30 seconds to finish. Successful standard output is ignored.
 
-The dashboard handles one action at a time and acknowledges the exact request
-id after the handler returns, whether it succeeded or failed. Delivery is not
-an exactly-once transaction: a dashboard crash or two dashboards observing
-the same request can repeat a handler. Actions with non-idempotent effects
-should use the agent id and their own payload identity to suppress duplicates.
+A handler often starts something that outlives it — an editor, a browser —
+and what it starts inherits its output pipes. Stormlight reads those for one
+second after the handler exits and then closes them; it does not wait for the
+editor to quit. A program that needs its output read should not be left
+behind holding the handler's pipes.
+
+Both kinds of dashboard run actions: the terminal dashboard, and
+`stormlight serve`, whether or not a browser is connected to it.
+
+Each dashboard handles one action at a time. Before running a request it
+claims it — a conditional write on the agent's document, refused if any
+other writer has moved the document since it was read, and rebuilt on the
+current state until it lands — so of two dashboards reaching for the same
+request exactly one runs it. Requests are handled in the order the agent made
+them, and a request another dashboard holds blocks the ones behind it rather
+than being skipped. After the handler returns, whether it succeeded or
+failed, the dashboard retires the exact request id; the ones queued since
+stay.
+
+A claim stands for two minutes. A dashboard that dies mid-run leaves its
+claim behind, and once it is that old another dashboard takes the request
+over and runs it again. That is the one path to a repeated handler: a
+dashboard crash, not ordinary concurrency. Actions whose effects must not
+repeat even then should use the agent id and their own payload identity to
+recognise a request they have seen.
 
 ## Security model
 
@@ -110,6 +132,8 @@ action grants managed agents the capability represented by that executable;
 do not install actions you do not trust.
 
 Stormlight validates the name and JSON envelope, caps the transported
-payload, applies the handler deadline, and acknowledges the request. The
-plugin remains responsible for validating its payload and safely invoking
-every external tool it controls.
+payload, bounds both phases (60 seconds for `prepare`, 30 for `handle`), and
+claims and retires the request. The plugin remains responsible for validating
+its payload and safely invoking every external tool it controls — and its
+payload is written by whatever runs beside the agent, so a plugin must treat
+it as untrusted input, including when the agent is on another machine.

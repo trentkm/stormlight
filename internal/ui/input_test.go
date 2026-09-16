@@ -2535,6 +2535,15 @@ func (stubBackend) SetMark(context.Context, string, agent.Mark) error {
 	return nil
 }
 
+func (stubBackend) ClaimDashboardAction(
+	context.Context,
+	string,
+	string,
+	string,
+) error {
+	return nil
+}
+
 func (stubBackend) AcknowledgeDashboardAction(
 	context.Context,
 	string,

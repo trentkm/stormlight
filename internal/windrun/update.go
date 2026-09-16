@@ -1,6 +1,7 @@
 package windrun
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -21,19 +22,52 @@ import (
 //     authority on what it is doing.
 //   - AttentionAt records entry into the amber inbox, not the latest
 //     signal, so escalations keep their place in line.
-func applyUpdate(managedAgent agent.Agent, update session.Update) agent.Agent {
+//
+// The dashboard-action parts can refuse: a full queue, a claim on a
+// request that is gone or held. A refusal leaves the agent untouched and
+// is the error the caller sees; the runtime writes nothing for it.
+func applyUpdate(managedAgent agent.Agent, update session.Update) (agent.Agent, error) {
 	if update.Activity != "" {
 		managedAgent.Activity = update.Activity
 	}
 	if update.DashboardAction != nil {
+		if len(managedAgent.DashboardActions) >= agent.DashboardActionQueueLimit {
+			return managedAgent, agent.ErrDashboardActionsFull
+		}
 		request := *update.DashboardAction
 		request.Payload = append([]byte(nil), update.DashboardAction.Payload...)
-		managedAgent.DashboardAction = &request
+		request.ClaimedBy = ""
+		request.ClaimedAt = time.Time{}
+		managedAgent.DashboardActions = append(
+			slices.Clone(managedAgent.DashboardActions),
+			request,
+		)
 	}
-	if update.ClearDashboardAction != "" &&
-		managedAgent.DashboardAction != nil &&
-		managedAgent.DashboardAction.ID == update.ClearDashboardAction {
-		managedAgent.DashboardAction = nil
+	if claim := update.ClaimDashboardAction; claim != nil {
+		index := slices.IndexFunc(managedAgent.DashboardActions,
+			func(request agent.DashboardActionRequest) bool {
+				return request.ID == claim.RequestID
+			})
+		if index < 0 {
+			return managedAgent, agent.ErrDashboardActionGone
+		}
+		queued := slices.Clone(managedAgent.DashboardActions)
+		if queued[index].Held(claim.At) && queued[index].ClaimedBy != claim.By {
+			return managedAgent, agent.ErrDashboardActionHeld
+		}
+		queued[index].ClaimedBy = claim.By
+		queued[index].ClaimedAt = claim.At
+		managedAgent.DashboardActions = queued
+	}
+	if update.ClearDashboardAction != "" {
+		managedAgent.DashboardActions = slices.DeleteFunc(
+			slices.Clone(managedAgent.DashboardActions),
+			func(request agent.DashboardActionRequest) bool {
+				return request.ID == update.ClearDashboardAction
+			})
+		if len(managedAgent.DashboardActions) == 0 {
+			managedAgent.DashboardActions = nil
+		}
 	}
 	if update.SessionID != "" {
 		managedAgent.SessionID = update.SessionID
@@ -80,5 +114,5 @@ func applyUpdate(managedAgent agent.Agent, update session.Update) agent.Agent {
 	case previousAttention == "" || managedAgent.AttentionAt.IsZero():
 		managedAgent.AttentionAt = time.Now()
 	}
-	return managedAgent
+	return managedAgent, nil
 }

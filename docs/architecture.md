@@ -183,11 +183,20 @@ string.
 
 Dashboard actions use that same metadata seam in the other direction.
 `stormlight action <name>` invokes the named plugin's `prepare` phase beside
-the managed agent, then records its opaque JSON output with the action name
-and a request id. The local dashboard invokes the matching installed
-plugin's `handle` phase with that payload and a small agent context, then
-acknowledges the exact request id after one attempt. The id match keeps a late
-acknowledgement from erasing a newer request.
+the managed agent, then queues its opaque JSON output with the action name
+and a request id on the agent's document. A dashboard on the user's machine
+— the TUI or `stormlight serve` — claims the request at the head of the
+queue, invokes the matching installed plugin's `handle` phase with that
+payload and a small agent context, then retires the exact request id.
+
+The document has more than one writer — hooks stamping state, the agent
+queueing a request, a dashboard claiming and retiring it — so every write to
+it is conditional: it names the daemon's revision of the document it was
+derived from, and the daemon refuses it, handing back the current document
+to rebuild on, if anything moved the document in between. That is what
+makes a claim a claim: two dashboards reaching for one request cannot both
+have it. It is also why a hook firing under a dashboard cannot silently
+undo either's write.
 
 Stormlight owns only this mailbox. It does not classify paths, inspect
 repositories, rewrite remote locations, or know which desktop application the

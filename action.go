@@ -64,7 +64,7 @@ func newActionCommand() *cobra.Command {
 			}
 			fmt.Fprintf(
 				cmd.OutOrStdout(),
-				"Queued dashboard action %q.\n",
+				"Queued dashboard action %q; a dashboard on your machine will run it.\n",
 				name,
 			)
 			return nil

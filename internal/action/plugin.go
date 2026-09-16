@@ -13,10 +13,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
 )
@@ -24,6 +26,17 @@ import (
 const (
 	ProtocolVersion = 1
 	maxPayloadBytes = 256 * 1024
+	// prepareTimeout bounds the prepare phase. It runs beside the agent,
+	// often asking Git about a working tree, so it gets more room than the
+	// handler; a plugin still running after this is stuck, not thorough.
+	prepareTimeout = 60 * time.Second
+	// pipeGrace is how long after a plugin exits — or is stopped — its
+	// output pipes are still read before being closed. It exists for the
+	// processes a plugin leaves behind holding them: an editor the
+	// handler opened, a helper the prepare phase forgot. Their output is
+	// not the plugin's, and waiting for them is waiting for the editor
+	// to quit.
+	pipeGrace = time.Second
 )
 
 // Registry finds action plugins in one directory. The default follows the
@@ -68,26 +81,46 @@ func (r *Registry) Prepare(
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, prepareTimeout)
+	defer cancel()
 	command := exec.CommandContext(ctx, path, append([]string{"prepare"}, args...)...)
 	command.Dir = directory
-	var stdout bytes.Buffer
+	command.WaitDelay = pipeGrace
 	var stderr bytes.Buffer
-	command.Stdout = &stdout
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
-		return nil, pluginError(ctx, name, "prepare", err, stderr.Bytes(), nil)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("action plugin %q prepare: %w", name, err)
 	}
-	payload := bytes.TrimSpace(stdout.Bytes())
-	if len(payload) == 0 {
-		return nil, fmt.Errorf("action plugin %q emitted no JSON payload", name)
+	if err := command.Start(); err != nil {
+		return nil, pluginError(ctx, name, "prepare", err, nil, nil)
 	}
+	// The payload is bounded, so what is read of it is too: one byte past
+	// the limit is proof enough, and the plugin is stopped there rather
+	// than allowed to fill memory before a size check could reject it.
+	payload, readErr := io.ReadAll(io.LimitReader(stdout, maxPayloadBytes+1))
 	if len(payload) > maxPayloadBytes {
+		// Closing the pipe is what stops the plugin: its next write is a
+		// broken pipe. Cancelling only kills the plugin process itself,
+		// and whatever it started inherits the pipe and lives on.
+		_ = stdout.Close()
+		cancel()
+		_ = command.Wait()
 		return nil, fmt.Errorf(
-			"action plugin %q payload is %d bytes; maximum is %d",
+			"action plugin %q payload exceeds the maximum of %d bytes",
 			name,
-			len(payload),
 			maxPayloadBytes,
 		)
+	}
+	if err := command.Wait(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		return nil, pluginError(ctx, name, "prepare", err, stderr.Bytes(), nil)
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("action plugin %q prepare: read payload: %w", name, readErr)
+	}
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("action plugin %q emitted no JSON payload", name)
 	}
 	if !json.Valid(payload) {
 		return nil, fmt.Errorf("action plugin %q emitted invalid JSON", name)
@@ -123,11 +156,17 @@ func (r *Registry) Handle(
 	command := exec.CommandContext(ctx, path, "handle")
 	command.Dir = filepath.Dir(path)
 	command.Stdin = bytes.NewReader(input)
+	// A handler's whole job is often to start something else — an
+	// editor, a browser — and what it starts inherits its output pipes.
+	// Waiting for those to close would be waiting for the editor to
+	// quit; the grace period is how long after the handler exits its
+	// output is still read before the pipes are closed on it.
+	command.WaitDelay = pipeGrace
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := command.Run(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return pluginError(
 			ctx,
 			request.Name,

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
 )
@@ -180,5 +181,25 @@ func TestActionDirectoryHonorsXDGAndItsExplicitOverride(t *testing.T) {
 	t.Setenv("STORMLIGHT_ACTIONS_DIR", "/tmp/custom-actions")
 	if got := actionDirectory(); got != "/tmp/custom-actions" {
 		t.Fatalf("override = %q", got)
+	}
+}
+
+func TestPrepareStopsAPluginThatWillNotStopTalking(t *testing.T) {
+	plugins := t.TempDir()
+	// A plugin that prints forever. Reading it all would never end;
+	// buffering it all would fill memory first.
+	writePlugin(t, plugins, "chatty", "#!/bin/sh\nyes '{\"line\":1}'\n")
+	started := time.Now()
+	_, err := NewRegistryAt(plugins).Prepare(
+		context.Background(),
+		"chatty",
+		t.TempDir(),
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "exceeds the maximum") {
+		t.Fatalf("error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("stopping the plugin took %s; it should end at the limit, not the deadline", elapsed)
 	}
 }

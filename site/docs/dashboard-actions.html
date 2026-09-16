@@ -84,8 +84,11 @@
     JSON value to standard output. That value is opaque to Stormlight and may be any JSON
     type. Empty output, invalid JSON, and payloads larger than 256 KiB fail the request.
     Diagnostics belong on standard error.</p>
-    <p>On success, Stormlight records the action name, payload, and a fresh request id in
-    the managed agent's metadata. No files or executables cross the daemon boundary.</p>
+    <p>On success, Stormlight appends the action name, payload, and a fresh request id to
+    the managed agent's queue, which lives in the agent's metadata document. No files or
+    executables cross the daemon boundary. An agent may have at most 8 requests waiting; a
+    ninth is refused with an error that says so, because a queue that only grows means no
+    dashboard is running to drain it.</p>
 
     <h2 id="handling">Handling an action</h2>
     <p>The local dashboard notices the pending request and invokes:</p>
@@ -111,11 +114,26 @@
     <p>Exit status zero reports success. A nonzero exit reports standard error, or standard
     output when standard error is empty, in the dashboard. The handler has 30 seconds to
     finish. Successful standard output is ignored.</p>
-    <p>The dashboard handles one action at a time and acknowledges the exact request id
-    after the handler returns, whether it succeeded or failed. Delivery is not an
-    exactly-once transaction: a dashboard crash or two dashboards observing the same
-    request can repeat a handler. Actions with non-idempotent effects should use the agent
-    id and their own payload identity to suppress duplicates.</p>
+    <p>A handler often starts something that outlives it &mdash; an editor, a browser
+    &mdash; and what it starts inherits its output pipes. Stormlight reads those for one
+    second after the handler exits and then closes them; it does not wait for the editor
+    to quit. A program that needs its output read should not be left behind holding the
+    handler's pipes.</p>
+    <p>Both kinds of dashboard run actions: the terminal dashboard, and
+    <code>stormlight serve</code>, whether or not a browser is connected to it.</p>
+    <p>Each dashboard handles one action at a time. Before running a request it claims it
+    &mdash; a conditional write on the agent's document, refused if any other writer has
+    moved the document since it was read, and rebuilt on the current state until it lands
+    &mdash; so of two dashboards reaching for the same request exactly one runs it.
+    Requests are handled in the order the agent made them, and a request another dashboard
+    holds blocks the ones behind it rather than being skipped. After the handler returns,
+    whether it succeeded or failed, the dashboard retires the exact request id; the ones
+    queued since stay.</p>
+    <p>A claim stands for two minutes. A dashboard that dies mid-run leaves its claim
+    behind, and once it is that old another dashboard takes the request over and runs it
+    again. That is the one path to a repeated handler: a dashboard crash, not ordinary
+    concurrency. Actions whose effects must not repeat even then should use the agent id
+    and their own payload identity to recognise a request they have seen.</p>
 
     <h2 id="security">Security model</h2>
     <p>The managed agent controls the action name, arguments to its local
@@ -124,9 +142,11 @@
     action grants managed agents the capability represented by that executable; do not
     install actions you do not trust.</p>
     <p>Stormlight validates the name and JSON envelope, caps the transported payload,
-    applies the handler deadline, and acknowledges the request. The plugin remains
-    responsible for validating its payload and safely invoking every external tool it
-    controls.</p>
+    bounds both phases (60 seconds for <code>prepare</code>, 30 for <code>handle</code>),
+    and claims and retires the request. The plugin remains responsible for validating its
+    payload and safely invoking every external tool it controls &mdash; and its payload is
+    written by whatever runs beside the agent, so a plugin must treat it as untrusted
+    input, including when the agent is on another machine.</p>
   </article>
 
   <nav class="doc-pager"><a href="workspace-resolvers.html">← Workspace resolvers</a><a href="configuration.html">Configuration →</a></nav>

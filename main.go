@@ -379,12 +379,20 @@ func writeOverlayMetadata(key, value string) error {
 	if err != nil {
 		return err
 	}
-	metadata := info.Metadata
-	if metadata == nil {
-		metadata = map[string]string{}
+	// The other end of this session may be writing its own keys into the
+	// same bag; a conditional write rebuilt on conflict keeps both.
+	for {
+		metadata := make(map[string]string, len(info.Metadata)+1)
+		maps.Copy(metadata, info.Metadata)
+		metadata[key] = value
+		_, err := c.SetMetadataIf(sessionID, metadata, info.Revision)
+		var conflict *wrclient.Conflict
+		if errors.As(err, &conflict) {
+			info = conflict.Current
+			continue
+		}
+		return err
 	}
-	metadata[key] = value
-	return c.SetMetadata(sessionID, metadata)
 }
 
 // newHistoryCommand hands this machine's conversation log to a dashboard
