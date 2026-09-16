@@ -46,6 +46,9 @@ Spanreed terminal](site/assets/poster.jpg)](https://stormlight.sh)
 - Custom provider specs give unsupported agent CLIs a fallback.
 - Workspace resolvers are provider-neutral and external resolvers are
   supported.
+- Dashboard actions are executable plugins. Stormlight transports their
+  opaque JSON requests between an agent and the local dashboard without
+  knowing what tool, repository layout, or desktop behavior they implement.
 
 The Spanreed pane shows the selected agent's real terminal, live. Walking
 into it (`Enter` or `Ctrl-space`) hands the keyboard to the agent, byte for
@@ -182,6 +185,20 @@ peer agents when a task calls for parallel work:
 "$STORMLIGHT_BIN" dispatch --cwd ~/src/project \
   "Investigate the failing integration test"
 ```
+
+They can also ask the local dashboard to run a user-installed action plugin:
+
+```bash
+"$STORMLIGHT_BIN" action <name> [args...]
+```
+
+Actions are executables in `~/.config/stormlight/actions`. Their `prepare`
+phase runs beside the managed agent and emits an opaque JSON payload; the
+matching `handle` phase runs beside the dashboard and receives that payload
+with the agent's host, id, name, and working directory. On a remote host, the
+action must be installed on both machines. Stormlight selects only a trusted,
+locally installed executable by name and never interprets the payload. See
+[dashboard actions](docs/dashboard-actions.md) for the protocol.
 
 `workspace roots` defaults to the current directory and emits every runnable
 location in the resolved workspace. An orchestrating agent can use that

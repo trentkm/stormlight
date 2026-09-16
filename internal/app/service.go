@@ -780,6 +780,38 @@ func (s *Service) SetMark(ctx context.Context, id string, mark agent.Mark) error
 	})
 }
 
+// ClaimDashboardAction takes one of an agent's queued plugin requests for
+// the dashboard named by claimer. It is a conditional write on the agent's
+// document, so of two dashboards reaching for the same request exactly one
+// gets it; the other sees agent.ErrDashboardActionHeld, or
+// agent.ErrDashboardActionGone once the first has retired it.
+func (s *Service) ClaimDashboardAction(
+	ctx context.Context,
+	id, requestID, claimer string,
+) error {
+	return s.runtime.Update(ctx, id, session.Update{
+		ClaimDashboardAction: &agent.DashboardActionClaim{
+			RequestID: requestID,
+			By:        claimer,
+			At:        time.Now(),
+		},
+	})
+}
+
+// AcknowledgeDashboardAction retires the exact plugin request the dashboard
+// handled. Matching the id matters: an agent may have queued more since,
+// and those must survive the older acknowledgement.
+func (s *Service) AcknowledgeDashboardAction(
+	ctx context.Context,
+	id, requestID string,
+) error {
+	return s.runtime.Update(
+		ctx,
+		id,
+		session.Update{ClearDashboardAction: requestID},
+	)
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.runtime.Delete(ctx, id)
 }

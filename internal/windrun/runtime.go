@@ -10,10 +10,13 @@ package windrun
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -376,35 +379,56 @@ func providerName(launch session.Launch) string {
 
 // sessionIDFor maps an agent id to the daemon's session id.
 func (r *Runtime) sessionIDFor(id string) (string, error) {
-	if id == "" {
-		// An empty id would prefix-match the first agent listed —
-		// destructive commands must never guess.
-		return "", fmt.Errorf("agent id is required")
-	}
-	sessions, err := r.client.List()
+	info, err := r.sessionFor(id)
 	if err != nil {
 		return "", err
 	}
-	match := ""
-	for _, info := range sessions {
-		managedAgent, ok := decodeAgent(info)
+	return info.ID, nil
+}
+
+// Find reports the agent with this id, or the one agent whose id starts
+// with it.
+func (r *Runtime) Find(_ context.Context, id string) (agent.Agent, error) {
+	info, err := r.sessionFor(id)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	managedAgent, _ := decodeAgent(info)
+	return managedAgent, nil
+}
+
+// sessionFor finds the daemon session hosting an agent, by its full id or
+// an unambiguous prefix, as the daemon currently describes it.
+func (r *Runtime) sessionFor(id string) (wire.SessionInfo, error) {
+	if id == "" {
+		// An empty id would prefix-match the first agent listed —
+		// destructive commands must never guess.
+		return wire.SessionInfo{}, fmt.Errorf("agent id is required")
+	}
+	sessions, err := r.client.List()
+	if err != nil {
+		return wire.SessionInfo{}, err
+	}
+	var match *wire.SessionInfo
+	for index := range sessions {
+		managedAgent, ok := decodeAgent(sessions[index])
 		if !ok {
 			continue
 		}
 		if managedAgent.ID == id {
-			return info.ID, nil
+			return sessions[index], nil
 		}
 		if strings.HasPrefix(managedAgent.ID, id) {
-			if match != "" {
-				return "", fmt.Errorf("agent id %q is ambiguous", id)
+			if match != nil {
+				return wire.SessionInfo{}, fmt.Errorf("agent id %q is ambiguous", id)
 			}
-			match = info.ID
+			match = &sessions[index]
 		}
 	}
-	if match == "" {
-		return "", fmt.Errorf("agent %q not found", id)
+	if match == nil {
+		return wire.SessionInfo{}, fmt.Errorf("agent %q not found", id)
 	}
-	return match, nil
+	return *match, nil
 }
 
 func (r *Runtime) Capture(ctx context.Context, id string, lines int) (string, error) {
@@ -513,58 +537,103 @@ func (r *Runtime) Delete(ctx context.Context, id string) error {
 }
 
 func (r *Runtime) Rename(ctx context.Context, id, name string) error {
-	return r.mutateAgent(id, func(managedAgent *agent.Agent) {
+	return r.mutateAgent(ctx, id, func(managedAgent *agent.Agent) error {
 		managedAgent.Name = name
+		return nil
 	})
 }
 
 func (r *Runtime) SetWorkspace(ctx context.Context, id string, value workspace.Context) error {
-	return r.mutateAgent(id, func(managedAgent *agent.Agent) {
+	return r.mutateAgent(ctx, id, func(managedAgent *agent.Agent) error {
 		managedAgent.Workspace = value
+		return nil
 	})
 }
 
 func (r *Runtime) Update(ctx context.Context, id string, update session.Update) error {
-	return r.mutateAgent(id, func(managedAgent *agent.Agent) {
-		*managedAgent = applyUpdate(*managedAgent, update)
+	return r.mutateAgent(ctx, id, func(managedAgent *agent.Agent) error {
+		updated, err := applyUpdate(*managedAgent, update)
+		if err != nil {
+			return err
+		}
+		*managedAgent = updated
+		return nil
 	})
 }
 
-// mutateAgent is the read-modify-write on the metadata document. Two
-// near-simultaneous writers (a hook event racing the dashboard) can lose
-// one update; events are sparse enough that the next one repairs it, and
-// the daemon-side CAS this wants is noted for later.
-func (r *Runtime) mutateAgent(id string, mutate func(*agent.Agent)) error {
-	sessions, err := r.client.List()
+// mutateBudget bounds how long a write keeps being rebuilt on fresh reads
+// before giving up. Each conflict is one other writer landing in the
+// window between this one's read and its write, a daemon round trip wide;
+// the retry backs off with jitter so a burst of writers spreads out
+// rather than colliding again in lockstep. A document that keeps moving
+// for this long is being hammered, and that is worth an error rather
+// than a wait.
+const mutateBudget = 10 * time.Second
+
+// mutateAgent is the read-modify-write on the agent's metadata document,
+// made safe by the daemon's revisions: the write names the revision it
+// read, and lands only if nothing else has moved the document since.
+// When something has — a hook stamping state under a dashboard retiring a
+// request — the daemon answers with the document as it now stands, and
+// the mutation is rebuilt on that and tried again. No writer ever
+// overwrites what it did not see.
+//
+// mutate may refuse, in which case nothing is written and its error is
+// the answer; a refusal computed on the current document stands.
+func (r *Runtime) mutateAgent(ctx context.Context, id string, mutate func(*agent.Agent) error) error {
+	info, err := r.sessionFor(id)
 	if err != nil {
 		return err
 	}
-	for _, info := range sessions {
+	caller := ctx
+	ctx, cancel := context.WithTimeout(ctx, mutateBudget)
+	defer cancel()
+	for attempt := 0; ; attempt++ {
 		managedAgent, ok := decodeAgent(info)
 		if !ok {
-			continue
+			// The document was replaced with something that is not an
+			// agent — nothing here is ours to write.
+			return fmt.Errorf("agent %q not found", id)
 		}
-		if managedAgent.ID != id && !strings.HasPrefix(managedAgent.ID, id) {
-			continue
+		if err := mutate(&managedAgent); err != nil {
+			return err
 		}
-		mutate(&managedAgent)
 		encoded, err := json.Marshal(managedAgent)
 		if err != nil {
 			return fmt.Errorf("encode agent metadata: %w", err)
 		}
-		metadata := info.Metadata
-		if metadata == nil {
-			metadata = map[string]string{}
-		}
+		metadata := make(map[string]string, len(info.Metadata)+1)
+		maps.Copy(metadata, info.Metadata)
 		metadata[metadataKey] = string(encoded)
-		return r.client.SetMetadata(info.ID, metadata)
+		_, err = r.client.SetMetadataIf(info.ID, metadata, info.Revision)
+		var conflict *client.Conflict
+		if !errors.As(err, &conflict) {
+			return err
+		}
+		info = conflict.Current
+		select {
+		case <-ctx.Done():
+			if err := caller.Err(); err != nil {
+				return fmt.Errorf("agent %q: update abandoned after %d attempts: %w", id, attempt+1, err)
+			}
+			return fmt.Errorf("agent %q: its document kept changing for %s (%d attempts) — something is hammering it",
+				id, mutateBudget, attempt+1)
+		case <-time.After(conflictBackoff(attempt)):
+		}
 	}
-	return fmt.Errorf("agent %q not found", id)
+}
+
+// conflictBackoff is how long to wait before rebuilding a write that lost
+// its race: exponential from a millisecond, capped, and jittered so that
+// writers which collided once do not all come back at the same instant.
+func conflictBackoff(attempt int) time.Duration {
+	ceiling := min(time.Millisecond<<min(attempt, 6), 64*time.Millisecond)
+	return time.Duration(rand.Int64N(int64(ceiling)) + 1)
 }
 
 func newID() (string, error) {
 	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
+	if _, err := cryptorand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generate agent id: %w", err)
 	}
 	return hex.EncodeToString(raw[:]), nil

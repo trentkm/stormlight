@@ -47,6 +47,7 @@
     <li><a href="#workspace-boundary">Workspace boundary</a></li>
     </ul></li>
     <li><a href="workspace-resolvers.html">Workspace resolvers</a></li>
+    <li><a href="dashboard-actions.html">Dashboard actions</a></li>
     <li><a href="configuration.html">Configuration</a></li>
   </ul>
 </aside>
@@ -180,7 +181,8 @@
     identity and state ride in the session's opaque metadata as one JSON document under the
     <code>stormlight_agent</code> key — the serialized <code>agent.Agent</code>: id,
     provider, task, name, workspace context, permission mode, activity, attention, mark,
-    session id, and transcript path. Two rules keep the document honest:</p>
+    session id, transcript path, and any pending desktop request. Two rules keep the
+    document honest:</p>
     <ul>
       <li>Liveness and exit are the daemon's facts. Listing decodes the document and then
       overwrites process state from the session itself — <code>Alive</code>,
@@ -204,6 +206,27 @@
     paste so they arrive as one message, slash commands typed verbatim (providers ignore
     pasted slash commands), then a beat later the Enter that submits. Nothing is ever
     interpolated into a shell command string.</p>
+    <p>Dashboard actions use that same metadata seam in the other direction.
+    <code>stormlight action &lt;name&gt;</code> invokes the named plugin's
+    <code>prepare</code> phase beside the managed agent, then queues its opaque JSON
+    output with the action name and a request id on the agent's document. A dashboard on
+    the user's machine &mdash; the TUI or <code>stormlight serve</code> &mdash; claims the
+    request at the head of the queue, invokes the matching installed plugin's
+    <code>handle</code> phase with that payload and a small agent context, then retires
+    the exact request id.</p>
+    <p>The document has more than one writer &mdash; hooks stamping state, the agent
+    queueing a request, a dashboard claiming and retiring it &mdash; so every write to it
+    is conditional: it names the daemon's revision of the document it was derived from,
+    and the daemon refuses it, handing back the current document to rebuild on, if
+    anything moved the document in between. That is what makes a claim a claim: two
+    dashboards reaching for one request cannot both have it. It is also why a hook firing
+    under a dashboard cannot silently undo either's write.</p>
+    <p>Stormlight owns only this mailbox. It does not classify paths, inspect repositories,
+    rewrite remote locations, or know which desktop application the plugin controls. A
+    request can select only an executable already installed by the user under
+    <code>~/.config/stormlight/actions</code>; it cannot supply a command path. The two
+    phases may have different platform-specific implementations under the same action name.
+    See <a href="dashboard-actions.html">dashboard actions</a> for the protocol.</p>
 
     <h4 id="remote-hosts">Remote hosts</h4>
     <p>A host that is not this machine runs its own daemon, and the dashboard reaches it

@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/trentkm/stormlight/internal/action"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -41,6 +42,8 @@ type Backend interface {
 	Interrupt(context.Context, string) error
 	ClearAttention(context.Context, string) error
 	SetMark(context.Context, string, agent.Mark) error
+	ClaimDashboardAction(context.Context, string, string, string) error
+	AcknowledgeDashboardAction(context.Context, string, string) error
 	Delete(context.Context, string) error
 	Rename(context.Context, string, string) error
 	RenameWorkspace(context.Context, workspace.Context, string) error
@@ -394,6 +397,12 @@ type Model struct {
 	// the same way. Only the event loop touches it: Bubble Tea renders on
 	// the goroutine it updates on.
 	frame *frame
+
+	// Dashboard actions originate inside managed agents, including remote
+	// ones, and are fulfilled by user-installed plugins on this machine.
+	// The dispatcher runs them one at a time; nil in clients that do not
+	// run local actions.
+	actions *action.Dispatcher
 }
 
 // frame is the dashboard as View last built it. builds counts how many
@@ -455,6 +464,13 @@ type interactionMsg struct {
 
 type actionMsg struct {
 	err error
+}
+
+type dashboardActionMsg struct {
+	agentID   string
+	requestID string
+	action    string
+	err       error
 }
 
 type attachMsg struct {
@@ -524,6 +540,9 @@ type Options struct {
 	// order they should appear — read from the user's SSH configuration.
 	// This machine is not among them; it has its own tab.
 	Hosts []HostChoice
+	// RunDashboardAction performs the desktop-local half of an agent's
+	// plugin request. It is nil in clients that do not run local actions.
+	RunDashboardAction DashboardActionRunner
 }
 
 // HostChoice is a machine the Add Workspace modal can offer: the name
@@ -587,6 +606,9 @@ func NewModelWithOptions(backend Backend, options Options) Model {
 		checkHost:          options.CheckHost,
 		hostInput:          newLineInput("user@host"),
 		frame:              &frame{},
+	}
+	if options.RunDashboardAction != nil {
+		model.actions = action.NewDispatcher(backend, options.RunDashboardAction)
 	}
 	for index, info := range model.providers {
 		if info.ID == options.DefaultProvider {
@@ -738,6 +760,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmds []tea.Cmd
+		if command := m.nextDashboardActionCmd(msg.agents); command != nil {
+			cmds = append(cmds, command)
+		}
 		// Reconcile the terminal herd against the roster on every refresh:
 		// new agents get sessions, deleted agents lose them, and when
 		// nothing changed this is a cheap map diff.
@@ -751,6 +776,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadInteractionCmd())
 		}
 		return m, tea.Batch(cmds...)
+
+	case dashboardActionMsg:
+		if msg.err != nil {
+			m.raise(msg.err)
+			diagnostic.Logger().Error("dashboard action failed",
+				"agent_id", msg.agentID,
+				"request_id", msg.requestID,
+				"action", msg.action,
+				"error", msg.err,
+			)
+		}
+		return m, m.refreshCmd()
 
 	case catalogMsg:
 		m.catalogLoaded = true

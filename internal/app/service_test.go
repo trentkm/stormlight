@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/history"
@@ -175,6 +176,44 @@ func TestUpdateRecordsSessionHistory(t *testing.T) {
 	}
 	if len(past) != 1 || past[0].SessionID != records[0].SessionID {
 		t.Fatalf("past = %#v", past)
+	}
+}
+
+func TestClaimDashboardActionNamesTheDashboardAndTheMoment(t *testing.T) {
+	current := &recordingRuntime{}
+	service := serviceWithRuntime(t, current)
+	before := time.Now()
+	if err := service.ClaimDashboardAction(
+		context.Background(),
+		"agent-one",
+		"request-one",
+		"laptop:4242:abcd",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.updates) != 1 || current.updates[0].ClaimDashboardAction == nil {
+		t.Fatalf("updates = %#v", current.updates)
+	}
+	claim := current.updates[0].ClaimDashboardAction
+	if claim.RequestID != "request-one" || claim.By != "laptop:4242:abcd" ||
+		claim.At.Before(before) || claim.At.After(time.Now()) {
+		t.Fatalf("claim = %#v", claim)
+	}
+}
+
+func TestAcknowledgeDashboardActionUsesTheRequestID(t *testing.T) {
+	current := &recordingRuntime{}
+	service := serviceWithRuntime(t, current)
+	if err := service.AcknowledgeDashboardAction(
+		context.Background(),
+		"agent-one",
+		"request-one",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.updates) != 1 ||
+		current.updates[0].ClearDashboardAction != "request-one" {
+		t.Fatalf("updates = %#v", current.updates)
 	}
 }
 

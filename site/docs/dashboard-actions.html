@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f2f6fa">
+<title>Dashboard actions · Stormlight</title>
+<meta name="description" content="The executable protocol for carrying opaque requests from managed agents to trusted plugins beside the local dashboard.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@300..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body>
+<div class="storm"></div>
+<div class="grain"></div>
+
+<header class="wrap nav">
+  <a class="wordmark" href="../">STORMLIGHT<span class="spark"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973"/><path d="m13 12-3 5h4l-3 5"/></svg></span></a>
+  <nav class="nav-links">
+    <a href="../#design">design</a>
+    <a href="../#windrunner">windrunner</a>
+    <a href="./">docs</a>
+    <a href="https://github.com/trentkm/stormlight">github</a>
+  </nav>
+</header>
+
+<div class="docwrap">
+<aside class="side">
+  <p class="side-title">Documentation</p>
+  <ul>
+    <li><a href="./">Overview</a></li>
+    <li><a href="architecture.html">Architecture</a></li>
+    <li><a href="workspace-resolvers.html">Workspace resolvers</a></li>
+    <li class="current"><a href="dashboard-actions.html">Dashboard actions</a><ul class="sections">
+    <li><a href="#installation">Installation</a></li>
+    <li><a href="#requesting">Requesting an action</a></li>
+    <li><a href="#handling">Handling an action</a></li>
+    <li><a href="#security">Security model</a></li>
+    </ul></li>
+    <li><a href="configuration.html">Configuration</a></li>
+  </ul>
+</aside>
+<main class="doc">
+  <h1 class="doc-title">Dashboard actions</h1>
+  <p class="doc-lede">A managed agent can ask the user's local dashboard to run a trusted
+  executable. Stormlight transports opaque JSON between two plugin phases; the plugin owns
+  every domain-specific decision.</p>
+
+  <article>
+    <p>This boundary is deliberately narrow. Stormlight does not inspect repository
+    layouts, classify paths, choose desktop applications, or translate a remote path into
+    an application-specific URL.</p>
+
+    <h2 id="installation">Installation</h2>
+    <p>An action is an executable named for the action under:</p>
+<pre><code>~/.config/stormlight/actions/&lt;name&gt;</code></pre>
+    <p><code>$XDG_CONFIG_HOME</code> replaces <code>~/.config</code> when set.
+    <code>$STORMLIGHT_ACTIONS_DIR</code> overrides the complete actions directory.</p>
+    <p>Names are at most 64 ASCII characters. The first character must be a lowercase
+    letter or digit; the rest may also contain <code>.</code>, <code>-</code>, and
+    <code>_</code>. Stormlight resolves exactly that filename and requires it to be
+    executable. A request cannot provide an arbitrary command path.</p>
+    <p>For a local agent, one executable handles both phases. For an agent on another
+    machine, install the action under the same name on both machines:
+    <code>prepare</code> runs where the agent and its files live, while
+    <code>handle</code> runs where the dashboard and the user's desktop live. The
+    executables may differ by platform as long as they implement the same payload contract.
+    Actions are trusted user-installed programs, and both phases inherit the environment of
+    the Stormlight process that invokes them.</p>
+
+    <h2 id="requesting">Requesting an action</h2>
+    <p>From a managed agent:</p>
+<pre><code>stormlight action &lt;name&gt; [args...]</code></pre>
+    <p><code>STORMLIGHT_ID</code> selects the managed agent. Outside its process
+    environment, pass <code>--id &lt;agent-id&gt;</code>.</p>
+    <p>Stormlight invokes:</p>
+<pre><code>&lt;action&gt; prepare [args...]</code></pre>
+    <p>The process working directory is the caller's current directory. It must write one
+    JSON value to standard output. That value is opaque to Stormlight and may be any JSON
+    type. Empty output, invalid JSON, and payloads larger than 256 KiB fail the request.
+    Diagnostics belong on standard error.</p>
+    <p>Closing standard output is answering: a plugin still running a second after it has
+    closed its output is stopped, and its answer stands. A helper it left behind holding
+    its output is cut off the same way once the plugin exits.</p>
+    <p>On success, Stormlight appends the action name, payload, and a fresh request id to
+    the managed agent's queue, which lives in the agent's metadata document. No files or
+    executables cross the daemon boundary. An agent may have at most 8 requests waiting; a
+    ninth is refused with an error that says so, because a queue that only grows means no
+    dashboard is running to drain it.</p>
+
+    <h2 id="handling">Handling an action</h2>
+    <p>The local dashboard notices the pending request and invokes:</p>
+<pre><code>&lt;action&gt; handle</code></pre>
+    <p>The process working directory is the actions directory. Standard input is one JSON
+    object:</p>
+<pre><code>{
+  "protocol": 1,
+  "action": "review-changes",
+  "request": "3f9c2a7d1b6e4c08",
+  "host": "devbox",
+  "agent": {
+    "id": "7dcb5b78",
+    "name": "review the payment change",
+    "cwd": "/srv/work/payment"
+  },
+  "payload": {
+    "paths": ["/srv/work/payment"]
+  }
+}</code></pre>
+    <p><code>host</code> is omitted for a local agent. <code>request</code> is the request's
+    id, the key for a handler that must recognise a request it has already run.
+    <code>agent.cwd</code> and every path inside the payload remain in the agent machine's
+    namespace; Stormlight never rewrites them. The payload is exactly the JSON value
+    emitted by <code>prepare</code>.</p>
+    <p>Exit status zero reports success. A nonzero exit reports standard error, or standard
+    output when standard error is empty, in the dashboard. The handler has 30 seconds to
+    finish. Successful standard output is ignored.</p>
+    <p>A handler often starts something that outlives it &mdash; an editor, a browser
+    &mdash; and what it starts inherits its output pipes. Stormlight reads those for one
+    second after the handler exits and then closes them; it does not wait for the editor
+    to quit. A program that needs its output read should not be left behind holding the
+    handler's pipes.</p>
+    <p>Both kinds of dashboard run actions: the terminal dashboard, and
+    <code>stormlight serve</code>, whether or not a browser is connected to it.</p>
+    <p>Each dashboard handles one action at a time. Before running a request it claims it
+    &mdash; a conditional write on the agent's document, refused if any other writer has
+    moved the document since it was read, and rebuilt on the current state until it lands
+    &mdash; so of two dashboards reaching for the same request exactly one runs it.
+    Requests are handled in the order the agent made them, and a request another dashboard
+    holds blocks the ones behind it rather than being skipped. After the handler returns,
+    whether it succeeded or failed, the dashboard retires the exact request id; the ones
+    queued since stay.</p>
+    <p>A claim stands for five minutes, longer than the longest a live dashboard can spend
+    running and retiring one request. A dashboard that dies mid-run leaves its claim
+    behind, and once it is that old another dashboard takes the request over and runs it
+    again. The same happens to a dashboard that ran the handler but could not retire the
+    request &mdash; retiring is tried three times, so this takes a daemon that stays
+    unreachable through all of them. Those are the paths to a repeated handler: a
+    dashboard lost, not ordinary concurrency. Actions whose effects must not repeat even
+    then should remember the <code>request</code> id they were handed.</p>
+    <p>Claims are stamped with the claiming dashboard's clock and compared on whichever
+    dashboard reads them. Two machines watching one remote host whose clocks disagree by
+    more than the five-minute claim can both run a request; keep dashboards on synchronised
+    time.</p>
+
+    <h2 id="security">Security model</h2>
+    <p>The managed agent controls the action name, arguments to its local
+    <code>prepare</code> phase, and the resulting payload. The dashboard will run only the
+    matching executable already installed in its own actions directory. Installing an
+    action grants managed agents the capability represented by that executable; do not
+    install actions you do not trust.</p>
+    <p>Stormlight validates the name and JSON envelope, caps the transported payload,
+    bounds both phases (60 seconds for <code>prepare</code>, 30 for <code>handle</code>),
+    and claims and retires the request. The plugin remains responsible for validating its
+    payload and safely invoking every external tool it controls &mdash; and its payload is
+    written by whatever runs beside the agent, so a plugin must treat it as untrusted
+    input, including when the agent is on another machine.</p>
+  </article>
+
+  <nav class="doc-pager"><a href="workspace-resolvers.html">← Workspace resolvers</a><a href="configuration.html">Configuration →</a></nav>
+</main>
+</div>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>stormlight · pre-1.0, moving fast</span>
+    <span>
+      <a href="https://github.com/trentkm/stormlight">stormlight</a> ·
+      <a href="https://github.com/trentkm/windrunner">windrunner</a> ·
+      <a href="./">docs</a>
+    </span>
+  </div>
+</footer>
+<script src="../assets/docs.js"></script>
+</body>
+</html>

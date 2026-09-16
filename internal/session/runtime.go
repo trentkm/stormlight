@@ -139,6 +139,18 @@ type Update struct {
 	Activity  agent.Activity
 	Attention agent.Attention
 	Summary   string
+	// DashboardAction queues a request for a dashboard to run a
+	// user-installed action plugin. It is refused with
+	// agent.ErrDashboardActionsFull when the agent's queue is at its limit.
+	DashboardAction *agent.DashboardActionRequest
+	// ClaimDashboardAction takes one queued request for the dashboard
+	// named in it. It is refused with agent.ErrDashboardActionGone when no
+	// such request is queued and agent.ErrDashboardActionHeld when another
+	// live dashboard holds it; a stale claim is taken over.
+	ClaimDashboardAction *agent.DashboardActionClaim
+	// ClearDashboardAction retires the request with this id. Naming the id
+	// matters: the agent may have queued more since, and those stay.
+	ClearDashboardAction string
 	// SessionID records the provider's own conversation id when an event
 	// carries it; empty means "leave as is".
 	SessionID string

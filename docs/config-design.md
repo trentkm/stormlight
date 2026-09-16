@@ -43,6 +43,7 @@ to document:
 ~/.config/stormlight/
   config.toml     # user configuration (this proposal)
   resolvers/      # executable workspace resolvers (existing)
+  actions/        # executable dashboard actions
 ~/.local/state/stormlight/
   workspaces.json # workspace catalog (existing)
   sessions.jsonl  # session history log (existing)

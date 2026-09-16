@@ -2535,6 +2535,23 @@ func (stubBackend) SetMark(context.Context, string, agent.Mark) error {
 	return nil
 }
 
+func (stubBackend) ClaimDashboardAction(
+	context.Context,
+	string,
+	string,
+	string,
+) error {
+	return nil
+}
+
+func (stubBackend) AcknowledgeDashboardAction(
+	context.Context,
+	string,
+	string,
+) error {
+	return nil
+}
+
 func (stubBackend) RenameWorkspace(context.Context, workspace.Context, string) error {
 	return nil
 }

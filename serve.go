@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/trentkm/stormlight/internal/action"
 	"github.com/trentkm/stormlight/internal/api"
 	"github.com/trentkm/stormlight/internal/config"
 	"github.com/trentkm/stormlight/internal/diagnostic"
@@ -46,7 +47,12 @@ func newServeCommand(cfg config.Config) *cobra.Command {
 					return err
 				}
 			}
-			server, err := api.New(service, token, webClient())
+			// This process is a dashboard on the user's machine as much
+			// as the TUI is, so agents' action requests run here too —
+			// through the same dispatcher, with the same claim rules, so
+			// a TUI open beside it does not run the same request twice.
+			actions := action.NewDispatcher(service, action.NewRegistry().Handle)
+			server, err := api.New(service, token, webClient(), api.WithActions(actions))
 			if err != nil {
 				return err
 			}

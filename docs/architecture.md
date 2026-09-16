@@ -151,8 +151,8 @@ The daemon never learns what an agent is; that is the library's boundary.
 Agent identity and state ride in the session's opaque metadata as one JSON
 document under the `stormlight_agent` key — the serialized `agent.Agent`:
 id, provider, task, name, workspace context, permission mode, activity,
-attention, mark, session id, and transcript path. Two rules keep the
-document honest:
+attention, mark, session id, transcript path, and any pending desktop request.
+Two rules keep the document honest:
 
 - Liveness and exit are the daemon's facts. Listing decodes the document
   and then overwrites process state from the session itself — `Alive`,
@@ -180,6 +180,31 @@ bracketed paste so they arrive as one message, slash commands typed
 verbatim (providers ignore pasted slash commands), then a beat later the
 Enter that submits. Nothing is ever interpolated into a shell command
 string.
+
+Dashboard actions use that same metadata seam in the other direction.
+`stormlight action <name>` invokes the named plugin's `prepare` phase beside
+the managed agent, then queues its opaque JSON output with the action name
+and a request id on the agent's document. A dashboard on the user's machine
+— the TUI or `stormlight serve` — claims the request at the head of the
+queue, invokes the matching installed plugin's `handle` phase with that
+payload and a small agent context, then retires the exact request id.
+
+The document has more than one writer — hooks stamping state, the agent
+queueing a request, a dashboard claiming and retiring it — so every write to
+it is conditional: it names the daemon's revision of the document it was
+derived from, and the daemon refuses it, handing back the current document
+to rebuild on, if anything moved the document in between. That is what
+makes a claim a claim: two dashboards reaching for one request cannot both
+have it. It is also why a hook firing under a dashboard cannot silently
+undo either's write.
+
+Stormlight owns only this mailbox. It does not classify paths, inspect
+repositories, rewrite remote locations, or know which desktop application the
+plugin controls. A request can select only an executable already installed by
+the user under `~/.config/stormlight/actions`; it cannot supply a command path.
+The two phases may have different platform-specific implementations under the
+same action name. Their public contract is documented in
+[dashboard actions](dashboard-actions.md).
 
 #### Remote hosts
 

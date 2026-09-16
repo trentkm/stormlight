@@ -2,6 +2,8 @@ package agent
 
 import (
 	"cmp"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -150,6 +152,79 @@ func ParseMode(value string) (PermissionMode, error) {
 	return "", fmt.Errorf("invalid permission mode %q (ask, edits, or auto)", value)
 }
 
+// DashboardActionRequest asks the dashboard to run one user-installed action
+// plugin. Payload belongs entirely to that plugin; Stormlight only transports
+// it from the prepare phase beside the agent to the handle phase beside the
+// dashboard.
+//
+// Requests ride in the agent's metadata document because that document
+// already crosses the local/remote daemon seam, and they queue there in the
+// order the agent made them. A dashboard claims the request at the head of
+// the queue before running it — the claim is a conditional write on the
+// document, so two dashboards watching the same agent cannot both run one
+// — and retires it afterwards, whether the plugin succeeded or failed.
+type DashboardActionRequest struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Payload json.RawMessage `json:"payload"`
+	// ClaimedBy names the dashboard running this request; empty means
+	// nobody has taken it yet. ClaimedAt is when it did. A claim older
+	// than DashboardActionClaimTTL is a dashboard that died mid-run, and
+	// the request is up for taking again.
+	ClaimedBy string    `json:"claimed_by,omitempty"`
+	ClaimedAt time.Time `json:"claimed_at,omitzero"`
+}
+
+// Held reports whether a live dashboard is running this request at now: it
+// has been claimed, and the claim has not gone stale.
+func (r DashboardActionRequest) Held(now time.Time) bool {
+	return r.ClaimedBy != "" && now.Sub(r.ClaimedAt) < DashboardActionClaimTTL
+}
+
+// DashboardActionClaim is a dashboard taking one queued request for itself.
+// It lands only while the request is still queued and not held by another
+// live dashboard.
+type DashboardActionClaim struct {
+	RequestID string
+	By        string
+	At        time.Time
+}
+
+const (
+	// DashboardActionQueueLimit caps how many requests an agent may have
+	// waiting. The queue lives in a metadata document that every listing
+	// carries, and an agent piling up requests nobody is handling is
+	// better told so than allowed to grow it without bound.
+	DashboardActionQueueLimit = 8
+	// DashboardActionClaimTTL is how long a claim stands before another
+	// dashboard may assume its holder died. It must exceed the longest a
+	// live holder can spend on one request, or a slow run is mistaken for
+	// a dead dashboard and the request runs twice. That longest run is
+	// the claim's own write, the handler's deadline, and three attempts
+	// to retire, where every daemon call is bounded at ten seconds by the
+	// client, a conditional write may need a list and two writes, and a
+	// remote host the dashboard had lost may first need its SSH bridge
+	// dialled again, bounded at thirty — about four minutes altogether,
+	// with a remote daemon answering each call as slowly as it is
+	// allowed to. Five leaves a margin over even that.
+	DashboardActionClaimTTL = 5 * time.Minute
+)
+
+var (
+	// ErrDashboardActionsFull refuses a new request when the agent's
+	// queue is at DashboardActionQueueLimit.
+	ErrDashboardActionsFull = fmt.Errorf(
+		"the agent already has %d dashboard actions waiting; is a dashboard running?",
+		DashboardActionQueueLimit,
+	)
+	// ErrDashboardActionGone refuses a claim on a request that is no
+	// longer queued: another dashboard already ran and retired it.
+	ErrDashboardActionGone = errors.New("the dashboard action is no longer queued")
+	// ErrDashboardActionHeld refuses a claim on a request another live
+	// dashboard is running.
+	ErrDashboardActionHeld = errors.New("another dashboard is running the action")
+)
+
 type Agent struct {
 	// Host names the machine this agent is running on; empty is this one.
 	// It is never stored in the agent's document: the daemon that
@@ -192,6 +267,10 @@ type Agent struct {
 	// conversation (Claude Code session JSONL), reported by its hooks.
 	TranscriptPath string            `json:"transcript_path,omitempty"`
 	Workspace      workspace.Context `json:"workspace"`
+	// DashboardActions are this agent's plugin requests, oldest first. They
+	// are handled by a dashboard on the user's machine, never by the
+	// daemon beside the agent, and leave the queue when handled.
+	DashboardActions []DashboardActionRequest `json:"dashboard_actions,omitempty"`
 }
 
 // EffectiveMark is the mark the dashboard honors. A dead pane has an exit

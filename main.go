@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	actionplugin "github.com/trentkm/stormlight/internal/action"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/config"
@@ -120,6 +121,7 @@ func newRootCommand() *cobra.Command {
 		newMarkCommand(cfg),
 		newWorkspaceCommand(cfg),
 		newRemoteCommand(cfg),
+		newActionCommand(),
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
@@ -377,12 +379,22 @@ func writeOverlayMetadata(key, value string) error {
 	if err != nil {
 		return err
 	}
-	metadata := info.Metadata
-	if metadata == nil {
-		metadata = map[string]string{}
+	// The other end of this session may be writing its own keys into the
+	// same bag; a conditional write rebuilt on conflict keeps both. The
+	// other end writes rarely, so a handful of tries is plenty.
+	for attempt := range 8 {
+		metadata := make(map[string]string, len(info.Metadata)+1)
+		maps.Copy(metadata, info.Metadata)
+		metadata[key] = value
+		_, err := c.SetMetadataIf(sessionID, metadata, info.Revision)
+		var conflict *wrclient.Conflict
+		if !errors.As(err, &conflict) {
+			return err
+		}
+		info = conflict.Current
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
 	}
-	metadata[key] = value
-	return c.SetMetadata(sessionID, metadata)
+	return fmt.Errorf("the session's metadata kept changing; could not record %s", key)
 }
 
 // newHistoryCommand hands this machine's conversation log to a dashboard
@@ -526,6 +538,7 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 	if err != nil {
 		return err
 	}
+	actions := actionplugin.NewRegistry()
 	// The session history log accretes one line per provider event, and
 	// dashboard launch is the natural moment to fold it down: off every
 	// event path, once per run. Best-effort — a log that cannot compact
@@ -545,11 +558,12 @@ func runDashboard(command *cobra.Command, cfg config.Config, openPath string) er
 			QueuePrevious:  cfg.Keys.QueuePrevious,
 			Zoom:           cfg.Keys.Zoom,
 		},
-		DefaultProvider: agent.Provider(cfg.Defaults.Provider),
-		ExpandedRows:    cfg.UI.Rows == "expanded",
-		ModeForDir:      cfg.ModeForDir,
-		ProviderForDir:  cfg.ProviderForDir,
-		Columns:         ui.LoadColumnPrefs(),
+		DefaultProvider:    agent.Provider(cfg.Defaults.Provider),
+		ExpandedRows:       cfg.UI.Rows == "expanded",
+		ModeForDir:         cfg.ModeForDir,
+		ProviderForDir:     cfg.ProviderForDir,
+		Columns:            ui.LoadColumnPrefs(),
+		RunDashboardAction: actions.Handle,
 		// The machines to offer when adding a workspace: the ones the
 		// user's SSH configuration names, plus any they have configured
 		// here. Naming one is what makes it usable, so this list is

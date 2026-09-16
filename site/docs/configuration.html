@@ -36,6 +36,7 @@
     <li><a href="./">Overview</a></li>
     <li><a href="architecture.html">Architecture</a></li>
     <li><a href="workspace-resolvers.html">Workspace resolvers</a></li>
+    <li><a href="dashboard-actions.html">Dashboard actions</a></li>
     <li class="current"><a href="configuration.html">Configuration</a><ul class="sections">
     <li><a href="#purpose">What config is for</a></li>
     <li><a href="#principles">Principles</a></li>
@@ -88,6 +89,7 @@
 <pre><code>~/.config/stormlight/
   config.toml     <span class="c"># user configuration</span>
   resolvers/      <span class="c"># executable workspace resolvers</span>
+  actions/        <span class="c"># executable dashboard actions</span>
 ~/.local/state/stormlight/
   workspaces.json <span class="c"># workspace catalog</span>
   sessions.jsonl  <span class="c"># session history log</span></code></pre>
@@ -234,7 +236,7 @@ provider = <span class="s">"claude"</span>
     For now, overrides live in the user's own config file, keyed by path.</p>
   </article>
 
-  <nav class="doc-pager"><a href="workspace-resolvers.html">← Workspace resolvers</a><span></span></nav>
+  <nav class="doc-pager"><a href="dashboard-actions.html">← Dashboard actions</a><span></span></nav>
 </main>
 </div>
 
