@@ -98,6 +98,7 @@
 <pre><code>{
   "protocol": 1,
   "action": "review-changes",
+  "request": "3f9c2a7d1b6e4c08",
   "host": "devbox",
   "agent": {
     "id": "7dcb5b78",
@@ -108,9 +109,11 @@
     "paths": ["/srv/work/payment"]
   }
 }</code></pre>
-    <p><code>host</code> is omitted for a local agent. <code>agent.cwd</code> and every path
-    inside the payload remain in the agent machine's namespace; Stormlight never rewrites
-    them. The payload is exactly the JSON value emitted by <code>prepare</code>.</p>
+    <p><code>host</code> is omitted for a local agent. <code>request</code> is the request's
+    id, the key for a handler that must recognise a request it has already run.
+    <code>agent.cwd</code> and every path inside the payload remain in the agent machine's
+    namespace; Stormlight never rewrites them. The payload is exactly the JSON value
+    emitted by <code>prepare</code>.</p>
     <p>Exit status zero reports success. A nonzero exit reports standard error, or standard
     output when standard error is empty, in the dashboard. The handler has 30 seconds to
     finish. Successful standard output is ignored.</p>
@@ -131,9 +134,15 @@
     queued since stay.</p>
     <p>A claim stands for two minutes. A dashboard that dies mid-run leaves its claim
     behind, and once it is that old another dashboard takes the request over and runs it
-    again. That is the one path to a repeated handler: a dashboard crash, not ordinary
-    concurrency. Actions whose effects must not repeat even then should use the agent id
-    and their own payload identity to recognise a request they have seen.</p>
+    again. The same happens to a dashboard that ran the handler but could not retire the
+    request &mdash; retiring is tried three times over a few seconds, so this takes a
+    daemon that is unreachable for that long. Those are the paths to a repeated handler: a
+    dashboard lost, not ordinary concurrency. Actions whose effects must not repeat even
+    then should remember the <code>request</code> id they were handed.</p>
+    <p>Claims are stamped with the claiming dashboard's clock and compared on whichever
+    dashboard reads them. Two machines watching one remote host whose clocks disagree by
+    more than the two-minute claim can both run a request; keep dashboards on synchronised
+    time.</p>
 
     <h2 id="security">Security model</h2>
     <p>The managed agent controls the action name, arguments to its local

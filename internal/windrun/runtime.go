@@ -386,6 +386,17 @@ func (r *Runtime) sessionIDFor(id string) (string, error) {
 	return info.ID, nil
 }
 
+// Find reports the agent with this id, or the one agent whose id starts
+// with it.
+func (r *Runtime) Find(_ context.Context, id string) (agent.Agent, error) {
+	info, err := r.sessionFor(id)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	managedAgent, _ := decodeAgent(info)
+	return managedAgent, nil
+}
+
 // sessionFor finds the daemon session hosting an agent, by its full id or
 // an unambiguous prefix, as the daemon currently describes it.
 func (r *Runtime) sessionFor(id string) (wire.SessionInfo, error) {
@@ -574,6 +585,7 @@ func (r *Runtime) mutateAgent(ctx context.Context, id string, mutate func(*agent
 	if err != nil {
 		return err
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, mutateBudget)
 	defer cancel()
 	for attempt := 0; ; attempt++ {
@@ -601,6 +613,9 @@ func (r *Runtime) mutateAgent(ctx context.Context, id string, mutate func(*agent
 		info = conflict.Current
 		select {
 		case <-ctx.Done():
+			if err := caller.Err(); err != nil {
+				return fmt.Errorf("agent %q: update abandoned after %d attempts: %w", id, attempt+1, err)
+			}
 			return fmt.Errorf("agent %q: its document kept changing for %s (%d attempts) — something is hammering it",
 				id, mutateBudget, attempt+1)
 		case <-time.After(conflictBackoff(attempt)):

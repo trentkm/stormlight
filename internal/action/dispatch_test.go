@@ -17,6 +17,7 @@ import (
 type recordingStore struct {
 	mu       sync.Mutex
 	claimErr error
+	ackErr   error
 	claims   []string
 	acks     []string
 }
@@ -32,7 +33,7 @@ func (s *recordingStore) AcknowledgeDashboardAction(_ context.Context, agentID, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.acks = append(s.acks, agentID+"/"+requestID)
-	return nil
+	return s.ackErr
 }
 
 func request(id string) agent.DashboardActionRequest {
@@ -170,5 +171,26 @@ func TestDispatcherReportsAClaimThatCouldNotBeWritten(t *testing.T) {
 	err := dispatcher.Run(context.Background(), managedAgent, proposed)
 	if err == nil || !strings.Contains(err.Error(), "daemon unreachable") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDispatcherRetriesAnAcknowledgementThatFails(t *testing.T) {
+	store := &recordingStore{ackErr: errors.New("daemon away")}
+	dispatcher := NewDispatcher(store, func(context.Context, agent.Agent, agent.DashboardActionRequest) error {
+		return nil
+	})
+	dispatcher.retryPause = 0
+	roster := []agent.Agent{{ID: "agent-one", Name: "fixer", DashboardActions: []agent.DashboardActionRequest{request("r")}}}
+	managedAgent, proposed, _ := dispatcher.Next(roster)
+	// A caller that has already given up — a dashboard shutting down —
+	// does not take the acknowledgement with it.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := dispatcher.Run(ctx, managedAgent, proposed)
+	if err == nil || !strings.Contains(err.Error(), "retire dashboard action") || !strings.Contains(err.Error(), "daemon away") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.acks) != acknowledgeAttempts {
+		t.Fatalf("acknowledged %d times, want %d", len(store.acks), acknowledgeAttempts)
 	}
 }

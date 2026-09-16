@@ -77,6 +77,7 @@ JSON object:
 {
   "protocol": 1,
   "action": "review-changes",
+  "request": "3f9c2a7d1b6e4c08",
   "host": "devbox",
   "agent": {
     "id": "7dcb5b78",
@@ -89,9 +90,11 @@ JSON object:
 }
 ```
 
-`host` is omitted for a local agent. `agent.cwd` and every path inside the
-payload remain in the agent machine's namespace; Stormlight never rewrites
-them. The payload is exactly the JSON value emitted by `prepare`.
+`host` is omitted for a local agent. `request` is the request's id, the key
+for a handler that must recognise a request it has already run. `agent.cwd`
+and every path inside the payload remain in the agent machine's namespace;
+Stormlight never rewrites them. The payload is exactly the JSON value emitted
+by `prepare`.
 
 Exit status zero reports success. A nonzero exit reports standard error, or
 standard output when standard error is empty, in the dashboard. The handler
@@ -118,10 +121,17 @@ stay.
 
 A claim stands for two minutes. A dashboard that dies mid-run leaves its
 claim behind, and once it is that old another dashboard takes the request
-over and runs it again. That is the one path to a repeated handler: a
-dashboard crash, not ordinary concurrency. Actions whose effects must not
-repeat even then should use the agent id and their own payload identity to
-recognise a request they have seen.
+over and runs it again. The same happens to a dashboard that ran the handler
+but could not retire the request — retiring is tried three times over a few
+seconds, so this takes a daemon that is unreachable for that long. Those are
+the paths to a repeated handler: a dashboard lost, not ordinary concurrency.
+Actions whose effects must not repeat even then should remember the
+`request` id they were handed.
+
+Claims are stamped with the claiming dashboard's clock and compared on
+whichever dashboard reads them. Two machines watching one remote host whose
+clocks disagree by more than the two-minute claim can both run a request;
+keep dashboards on synchronised time.
 
 ## Security model
 

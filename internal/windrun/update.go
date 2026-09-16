@@ -52,7 +52,11 @@ func applyUpdate(managedAgent agent.Agent, update session.Update) (agent.Agent, 
 			return managedAgent, agent.ErrDashboardActionGone
 		}
 		queued := slices.Clone(managedAgent.DashboardActions)
-		if queued[index].Held(claim.At) && queued[index].ClaimedBy != claim.By {
+		// Held is held, by whoever holds it — this claimer included. A
+		// dashboard claims once per run; a second claim from the same
+		// one is a stale roster proposing a request it already ran, and
+		// letting it through is running the request twice.
+		if queued[index].Held(claim.At) {
 			return managedAgent, agent.ErrDashboardActionHeld
 		}
 		queued[index].ClaimedBy = claim.By

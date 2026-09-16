@@ -55,11 +55,15 @@ type AgentContext struct {
 
 // HandleInput is written to a plugin's stdin for its handle phase.
 type HandleInput struct {
-	Protocol int             `json:"protocol"`
-	Action   string          `json:"action"`
-	Host     string          `json:"host,omitempty"`
-	Agent    AgentContext    `json:"agent"`
-	Payload  json.RawMessage `json:"payload"`
+	Protocol int    `json:"protocol"`
+	Action   string `json:"action"`
+	// Request is the request's id: the key a handler with effects that
+	// must not repeat can remember, since a request can be run again
+	// after the dashboard running it dies.
+	Request string          `json:"request"`
+	Host    string          `json:"host,omitempty"`
+	Agent   AgentContext    `json:"agent"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 func NewRegistry() *Registry {
@@ -72,6 +76,14 @@ func NewRegistryAt(directory string) *Registry {
 
 // Prepare runs an action plugin on the agent's machine. Its stdout is the
 // opaque JSON payload that crosses to the dashboard.
+//
+// The payload is read on its own goroutine while the process is waited
+// on, because the two can end in either order. A plugin that prints
+// forever ends the read first, one byte past the limit, and is stopped
+// there. A plugin that exits but leaves a helper holding its stdout ends
+// the wait first; the read is given a moment for anything still buffered
+// and then the pipe is closed under the helper, which is what stops
+// everything the plugin left behind from stalling the agent.
 func (r *Registry) Prepare(
 	ctx context.Context,
 	name, directory string,
@@ -88,37 +100,74 @@ func (r *Registry) Prepare(
 	command.WaitDelay = pipeGrace
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
-	stdout, err := command.StdoutPipe()
+	// The pipe is ours rather than StdoutPipe's so that nothing closes
+	// its read end but this function: os/exec closes StdoutPipe as soon
+	// as the process exits, and a payload written just before that exit
+	// is still in the pipe when it does.
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("action plugin %q prepare: %w", name, err)
 	}
+	command.Stdout = writer
 	if err := command.Start(); err != nil {
+		reader.Close()
+		writer.Close()
 		return nil, pluginError(ctx, name, "prepare", err, nil, nil)
 	}
-	// The payload is bounded, so what is read of it is too: one byte past
-	// the limit is proof enough, and the plugin is stopped there rather
-	// than allowed to fill memory before a size check could reject it.
-	payload, readErr := io.ReadAll(io.LimitReader(stdout, maxPayloadBytes+1))
-	if len(payload) > maxPayloadBytes {
-		// Closing the pipe is what stops the plugin: its next write is a
-		// broken pipe. Cancelling only kills the plugin process itself,
-		// and whatever it started inherits the pipe and lives on.
-		_ = stdout.Close()
-		cancel()
-		_ = command.Wait()
-		return nil, fmt.Errorf(
-			"action plugin %q payload exceeds the maximum of %d bytes",
-			name,
-			maxPayloadBytes,
-		)
+	// The child holds the only copy that matters now; keeping this one
+	// would keep the read from ever seeing the end.
+	writer.Close()
+	defer reader.Close()
+
+	type readResult struct {
+		payload []byte
+		err     error
 	}
-	if err := command.Wait(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
-		return nil, pluginError(ctx, name, "prepare", err, stderr.Bytes(), nil)
+	readDone := make(chan readResult, 1)
+	go func() {
+		payload, err := io.ReadAll(io.LimitReader(reader, maxPayloadBytes+1))
+		readDone <- readResult{payload: payload, err: err}
+	}()
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- command.Wait() }()
+
+	var read readResult
+	var waitErr error
+	select {
+	case read = <-readDone:
+		if len(read.payload) > maxPayloadBytes {
+			// Closing the pipe is what stops the plugin: its next write
+			// is a broken pipe. Cancelling only kills the plugin process
+			// itself, and whatever it started inherits the pipe.
+			reader.Close()
+			cancel()
+			<-waitDone
+			return nil, fmt.Errorf(
+				"action plugin %q payload exceeds the maximum of %d bytes",
+				name,
+				maxPayloadBytes,
+			)
+		}
+		waitErr = <-waitDone
+	case waitErr = <-waitDone:
+		select {
+		case read = <-readDone:
+		case <-time.After(pipeGrace):
+			// The plugin is gone and something it left behind still
+			// holds its stdout. A read blocked here has drained
+			// everything the plugin wrote, so closing loses nothing of
+			// the plugin's; the helper's output was never the payload.
+			reader.Close()
+			read = <-readDone
+		}
 	}
-	if readErr != nil {
-		return nil, fmt.Errorf("action plugin %q prepare: read payload: %w", name, readErr)
+	if waitErr != nil && !errors.Is(waitErr, exec.ErrWaitDelay) {
+		return nil, pluginError(ctx, name, "prepare", waitErr, stderr.Bytes(), nil)
 	}
-	payload = bytes.TrimSpace(payload)
+	if read.err != nil && !errors.Is(read.err, os.ErrClosed) {
+		return nil, fmt.Errorf("action plugin %q prepare: read payload: %w", name, read.err)
+	}
+	payload := bytes.TrimSpace(read.payload)
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("action plugin %q emitted no JSON payload", name)
 	}
@@ -141,6 +190,7 @@ func (r *Registry) Handle(
 	input, err := json.Marshal(HandleInput{
 		Protocol: ProtocolVersion,
 		Action:   request.Name,
+		Request:  request.ID,
 		Host:     managedAgent.Host,
 		Agent: AgentContext{
 			ID:   managedAgent.ID,

@@ -32,6 +32,15 @@ func newActionCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get current directory: %w", err)
 			}
+			runtime, err := windrun.NewRuntime()
+			if err != nil {
+				return err
+			}
+			// Prepare can take a while; a mistyped id should fail before
+			// it, not after.
+			if _, err := runtime.Find(cmd.Context(), id); err != nil {
+				return err
+			}
 			name := args[0]
 			payload, err := actionplugin.NewRegistry().Prepare(
 				cmd.Context(),
@@ -43,10 +52,6 @@ func newActionCommand() *cobra.Command {
 				return err
 			}
 			requestID, err := dashboardActionRequestID()
-			if err != nil {
-				return err
-			}
-			runtime, err := windrun.NewRuntime()
 			if err != nil {
 				return err
 			}

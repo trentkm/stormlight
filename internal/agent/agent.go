@@ -172,7 +172,7 @@ type DashboardActionRequest struct {
 	// than DashboardActionClaimTTL is a dashboard that died mid-run, and
 	// the request is up for taking again.
 	ClaimedBy string    `json:"claimed_by,omitempty"`
-	ClaimedAt time.Time `json:"claimed_at,omitempty"`
+	ClaimedAt time.Time `json:"claimed_at,omitzero"`
 }
 
 // Held reports whether a live dashboard is running this request at now: it

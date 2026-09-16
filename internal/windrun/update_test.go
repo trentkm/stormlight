@@ -74,8 +74,10 @@ func TestApplyUpdateQueuesClaimsAndRetiresDashboardActions(t *testing.T) {
 		t.Fatal("the claim wrote through to the document it was derived from")
 	}
 
-	// While the claim is fresh it belongs to its holder; the holder may
-	// restate it, nobody else may take it.
+	// While the claim is fresh nobody may take it — not another
+	// dashboard, and not the holder again either: a dashboard claims once
+	// per run, so a second claim from it is a stale roster proposing a
+	// request it already ran.
 	if _, err := applyUpdate(claimed, session.Update{
 		ClaimDashboardAction: &agent.DashboardActionClaim{RequestID: "request-one", By: "web", At: now.Add(time.Minute)},
 	}); !errors.Is(err, agent.ErrDashboardActionHeld) {
@@ -83,8 +85,8 @@ func TestApplyUpdateQueuesClaimsAndRetiresDashboardActions(t *testing.T) {
 	}
 	if _, err := applyUpdate(claimed, session.Update{
 		ClaimDashboardAction: &agent.DashboardActionClaim{RequestID: "request-one", By: "tui", At: now.Add(time.Minute)},
-	}); err != nil {
-		t.Fatalf("the holder restating its claim: %v", err)
+	}); !errors.Is(err, agent.ErrDashboardActionHeld) {
+		t.Fatalf("the holder claiming again: %v", err)
 	}
 	// A claim past its TTL is a dashboard that died; the request is up
 	// for taking again.

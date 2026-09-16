@@ -50,6 +50,9 @@ type Dispatcher struct {
 	// it is running reads as held by it and not by some other process.
 	claimer string
 	now     func() time.Time
+	// retryPause spaces the acknowledgement's retries; a second per
+	// attempt, and zero in tests.
+	retryPause time.Duration
 
 	mu   sync.Mutex
 	busy bool
@@ -58,10 +61,11 @@ type Dispatcher struct {
 // NewDispatcher builds a dispatcher for one dashboard process.
 func NewDispatcher(store Store, handle Handler) *Dispatcher {
 	return &Dispatcher{
-		store:   store,
-		handle:  handle,
-		claimer: claimerName(),
-		now:     time.Now,
+		store:      store,
+		handle:     handle,
+		claimer:    claimerName(),
+		now:        time.Now,
+		retryPause: time.Second,
 	}
 }
 
@@ -135,9 +139,7 @@ func (d *Dispatcher) Run(ctx context.Context, managedAgent agent.Agent, request 
 	runErr := d.handle(runCtx, managedAgent, request)
 	cancelRun()
 
-	ackCtx, cancelAck := context.WithTimeout(ctx, acknowledgeTimeout)
-	ackErr := d.store.AcknowledgeDashboardAction(ackCtx, managedAgent.ID, request.ID)
-	cancelAck()
+	ackErr := d.retire(ctx, managedAgent.ID, request.ID)
 
 	if runErr != nil {
 		runErr = fmt.Errorf("run dashboard action %q for %s: %w", request.Name, managedAgent.Name, runErr)
@@ -146,4 +148,31 @@ func (d *Dispatcher) Run(ctx context.Context, managedAgent agent.Agent, request 
 		ackErr = fmt.Errorf("retire dashboard action %q for %s: %w", request.Name, managedAgent.Name, ackErr)
 	}
 	return errors.Join(runErr, ackErr)
+}
+
+// acknowledgeAttempts is how many times retiring a request is tried
+// before the failure is reported. A request that ran and was not retired
+// keeps its claim, and once that claim goes stale another dashboard runs
+// it again — so the ack is worth more than one try, and the tries are
+// spaced for a daemon that was briefly away rather than one that is gone.
+const acknowledgeAttempts = 3
+
+// retire acknowledges the request, outliving the caller's cancellation:
+// a dashboard shutting down mid-run has still run the handler, and
+// leaving the claim behind would have the request run again elsewhere.
+func (d *Dispatcher) retire(ctx context.Context, agentID, requestID string) error {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	for attempt := range acknowledgeAttempts {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * d.retryPause)
+		}
+		ackCtx, cancel := context.WithTimeout(ctx, acknowledgeTimeout)
+		err = d.store.AcknowledgeDashboardAction(ackCtx, agentID, requestID)
+		cancel()
+		if err == nil {
+			return nil
+		}
+	}
+	return err
 }

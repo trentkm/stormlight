@@ -203,3 +203,26 @@ func TestPrepareStopsAPluginThatWillNotStopTalking(t *testing.T) {
 		t.Fatalf("stopping the plugin took %s; it should end at the limit, not the deadline", elapsed)
 	}
 }
+
+func TestPrepareDoesNotWaitForAHelperThePluginLeftBehind(t *testing.T) {
+	plugins := t.TempDir()
+	// The plugin answers and exits; a helper it started keeps its stdout
+	// open for far longer than anyone should wait.
+	writePlugin(t, plugins, "leaves-a-helper", "#!/bin/sh\nsleep 30 &\nprintf '{\"answer\":42}\n'\n")
+	started := time.Now()
+	payload, err := NewRegistryAt(plugins).Prepare(
+		context.Background(),
+		"leaves-a-helper",
+		t.TempDir(),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != `{"answer":42}` {
+		t.Fatalf("payload = %s", payload)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the payload took %s to come back; it should not wait on the helper", elapsed)
+	}
+}
