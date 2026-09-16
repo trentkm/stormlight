@@ -80,10 +80,12 @@ func NewRegistryAt(directory string) *Registry {
 // The payload is read on its own goroutine while the process is waited
 // on, because the two can end in either order. A plugin that prints
 // forever ends the read first, one byte past the limit, and is stopped
-// there. A plugin that exits but leaves a helper holding its stdout ends
-// the wait first; the read is given a moment for anything still buffered
-// and then the pipe is closed under the helper, which is what stops
-// everything the plugin left behind from stalling the agent.
+// there; one that closes its stdout and lingers has answered, and is
+// stopped a moment later. A plugin that exits but leaves a helper
+// holding its stdout ends the wait first; the read is given a moment for
+// anything still buffered and then the pipe is closed under the helper,
+// which is what stops everything the plugin left behind from stalling
+// the agent.
 func (r *Registry) Prepare(
 	ctx context.Context,
 	name, directory string,
@@ -148,7 +150,15 @@ func (r *Registry) Prepare(
 				maxPayloadBytes,
 			)
 		}
-		waitErr = <-waitDone
+		// The plugin closed its stdout: it has said everything it will.
+		// One that is still running a moment later is doing something
+		// that is not answering, and its answer does not wait on it.
+		select {
+		case waitErr = <-waitDone:
+		case <-time.After(pipeGrace):
+			cancel()
+			<-waitDone
+		}
 	case waitErr = <-waitDone:
 		select {
 		case read = <-readDone:

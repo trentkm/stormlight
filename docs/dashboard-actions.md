@@ -56,6 +56,10 @@ and may be an object, array, string, number, boolean, or `null`. Empty output,
 invalid JSON, and payloads larger than 256 KiB fail the request. Diagnostics
 belong on standard error.
 
+Closing standard output is answering: a plugin still running a second after
+it has closed its output is stopped, and its answer stands. A helper it left
+behind holding its output is cut off the same way once the plugin exits.
+
 On success, Stormlight appends the action name, payload, and a fresh request
 id to the managed agent's queue, which lives in the agent's metadata document.
 No files or executables cross the daemon boundary. An agent may have at most
@@ -119,18 +123,19 @@ than being skipped. After the handler returns, whether it succeeded or
 failed, the dashboard retires the exact request id; the ones queued since
 stay.
 
-A claim stands for two minutes. A dashboard that dies mid-run leaves its
-claim behind, and once it is that old another dashboard takes the request
-over and runs it again. The same happens to a dashboard that ran the handler
-but could not retire the request — retiring is tried three times over a few
-seconds, so this takes a daemon that is unreachable for that long. Those are
+A claim stands for five minutes, longer than the longest a live dashboard
+can spend running and retiring one request. A dashboard that dies mid-run
+leaves its claim behind, and once it is that old another dashboard takes the
+request over and runs it again. The same happens to a dashboard that ran the
+handler but could not retire the request — retiring is tried three times, so
+this takes a daemon that stays unreachable through all of them. Those are
 the paths to a repeated handler: a dashboard lost, not ordinary concurrency.
 Actions whose effects must not repeat even then should remember the
 `request` id they were handed.
 
 Claims are stamped with the claiming dashboard's clock and compared on
 whichever dashboard reads them. Two machines watching one remote host whose
-clocks disagree by more than the two-minute claim can both run a request;
+clocks disagree by more than the five-minute claim can both run a request;
 keep dashboards on synchronised time.
 
 ## Security model

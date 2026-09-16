@@ -29,9 +29,14 @@ func (s *recordingStore) ClaimDashboardAction(_ context.Context, agentID, reques
 	return s.claimErr
 }
 
-func (s *recordingStore) AcknowledgeDashboardAction(_ context.Context, agentID, requestID string) error {
+func (s *recordingStore) AcknowledgeDashboardAction(ctx context.Context, agentID, requestID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A real store's daemon call is refused under a finished context;
+	// so is this one, which is what pins the ack outliving the caller.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.acks = append(s.acks, agentID+"/"+requestID)
 	return s.ackErr
 }
@@ -192,5 +197,8 @@ func TestDispatcherRetriesAnAcknowledgementThatFails(t *testing.T) {
 	}
 	if len(store.acks) != acknowledgeAttempts {
 		t.Fatalf("acknowledged %d times, want %d", len(store.acks), acknowledgeAttempts)
+	}
+	if strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Fatalf("the caller's cancellation reached the store: %v", err)
 	}
 }

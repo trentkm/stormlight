@@ -226,3 +226,25 @@ func TestPrepareDoesNotWaitForAHelperThePluginLeftBehind(t *testing.T) {
 		t.Fatalf("the payload took %s to come back; it should not wait on the helper", elapsed)
 	}
 }
+
+func TestPrepareTakesTheAnswerOfAPluginThatLingers(t *testing.T) {
+	plugins := t.TempDir()
+	// The plugin answers, closes its stdout, and then hangs around.
+	writePlugin(t, plugins, "lingers", "#!/bin/sh\nprintf '{\"answer\":7}'\nexec >/dev/null\nsleep 30\n")
+	started := time.Now()
+	payload, err := NewRegistryAt(plugins).Prepare(
+		context.Background(),
+		"lingers",
+		t.TempDir(),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != `{"answer":7}` {
+		t.Fatalf("payload = %s", payload)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the answer took %s; it should not wait on the lingering plugin", elapsed)
+	}
+}

@@ -197,10 +197,15 @@ const (
 	// better told so than allowed to grow it without bound.
 	DashboardActionQueueLimit = 8
 	// DashboardActionClaimTTL is how long a claim stands before another
-	// dashboard may assume its holder died. It exceeds the handler's own
-	// deadline plus the acknowledgement's by a margin, so a slow run is
-	// never mistaken for a dead dashboard.
-	DashboardActionClaimTTL = 2 * time.Minute
+	// dashboard may assume its holder died. It must exceed the longest a
+	// live holder can spend on one request, or a slow run is mistaken for
+	// a dead dashboard and the request runs twice. That longest run is
+	// the claim's own write, the handler's deadline, and three attempts
+	// to retire, where every daemon call is bounded at ten seconds by the
+	// client and a conditional write may need a list and two writes —
+	// under three minutes altogether, with a remote daemon answering
+	// each call as slowly as it is allowed to. Five leaves a margin.
+	DashboardActionClaimTTL = 5 * time.Minute
 )
 
 var (
