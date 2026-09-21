@@ -93,6 +93,10 @@ func (s *Server) dispatchAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The browser selects the agent from this response and then waits
+	// for a roster that has it; make that the next one rather than the
+	// next tick's.
+	s.events.nudge()
 	writeJSON(w, http.StatusCreated, agentView{Agent: dispatched, Host: dispatched.Host})
 }
 

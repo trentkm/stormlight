@@ -1146,7 +1146,7 @@ func TestProviderSelectorDispatchesHighlightedProvider(t *testing.T) {
 		t.Fatal("dispatch command was not created")
 	}
 	result := cmd()
-	if action, ok := result.(actionMsg); !ok || action.err != nil {
+	if launched, ok := result.(launchedMsg); !ok || launched.err != nil {
 		t.Fatalf("unexpected dispatch result: %#v", result)
 	}
 	if backend.request.Provider != agent.ProviderCodex {
@@ -1288,7 +1288,7 @@ func TestNewAgentUsesSelectedWorkspaceWithoutDirectoryStep(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("dispatch command was not created")
 	}
-	if result := cmd(); result.(actionMsg).err != nil {
+	if result := cmd(); result.(launchedMsg).err != nil {
 		t.Fatalf("dispatch failed: %#v", result)
 	}
 	if backend.request.Cwd != executionRoot {

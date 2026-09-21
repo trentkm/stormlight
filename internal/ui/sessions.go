@@ -119,8 +119,8 @@ func (m Model) resumeSelectedHistory() (tea.Model, tea.Cmd) {
 			ctx, cancel := context.WithTimeout(
 				context.Background(), resumeTimeout)
 			defer cancel()
-			_, err := backend.Resume(ctx, record)
-			return actionMsg{err: err}
+			resumed, err := backend.Resume(ctx, record)
+			return launchedMsg{agent: resumed, err: err}
 		},
 		m.refreshCmd(),
 	)

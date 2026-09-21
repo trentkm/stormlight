@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from "../lib/api";
-  import { act, fleet, selected, workspaceList } from "../lib/state.svelte";
+  import { act, fleet, selectLaunched, selected, workspaceList } from "../lib/state.svelte";
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -61,7 +61,7 @@
         name: name.trim(),
         mode,
       });
-      fleet.selectedID = agent.id;
+      selectLaunched(agent);
       onclose();
     });
     busy = false;

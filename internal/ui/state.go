@@ -100,6 +100,29 @@ func (m *Model) rebuildGroups(preferredWorkspaceID, preferredAgentID string) {
 	}
 }
 
+// takeArrival hands back the launched agent the first time a roster
+// carries it, and forgets the launch once it no longer applies: the
+// user selected something else in the meantime, or the roster has gone
+// long enough without the agent that the launch evidently did not take.
+// A roster that simply does not have it yet leaves the arrival standing
+// for the next one.
+func (m *Model) takeArrival(agents []agent.Agent) (agent.Agent, bool) {
+	if m.arrival.agentID == "" {
+		return agent.Agent{}, false
+	}
+	if m.selectedAgentID() != m.arrival.from || time.Now().After(m.arrival.until) {
+		m.arrival = arrivalFocus{}
+		return agent.Agent{}, false
+	}
+	for _, managedAgent := range agents {
+		if managedAgent.ID == m.arrival.agentID {
+			m.arrival = arrivalFocus{}
+			return managedAgent, true
+		}
+	}
+	return agent.Agent{}, false
+}
+
 // applySort orders groups and their agents by the user-chosen mode. The
 // backend delivers agents attention-first; the UI re-sorts so nothing
 // rearranges unless the user asked for it.
