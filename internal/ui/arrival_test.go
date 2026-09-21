@@ -13,6 +13,7 @@ import (
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/app"
 	"github.com/trentkm/stormlight/internal/history"
+	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
 
@@ -53,7 +54,7 @@ func TestLaunchedAgentTakesTheCursorWhenTheRosterHasIt(t *testing.T) {
 	model := arrivalFixture(t)
 	launched := arrivalAgent("a3", arrivalBeta)
 
-	next, _ := model.Update(launchedMsg{agent: launched})
+	next, _ := model.Update(launchedMsg{agent: launched, from: "a1"})
 	model = next.(Model)
 	if got := model.selectedAgentID(); got != "a1" {
 		t.Fatalf("selection moved before the roster had the agent: %q", got)
@@ -79,7 +80,7 @@ func TestLaunchedAgentTakesTheCursorWhenTheRosterHasIt(t *testing.T) {
 func TestLaunchedAgentOutlastsARosterWithoutIt(t *testing.T) {
 	model := arrivalFixture(t)
 	launched := arrivalAgent("a3", arrivalBeta)
-	next, _ := model.Update(launchedMsg{agent: launched})
+	next, _ := model.Update(launchedMsg{agent: launched, from: "a1"})
 	model = next.(Model)
 
 	// A refresh that was already in flight when the launch answered
@@ -103,7 +104,7 @@ func TestLaunchedAgentOutlastsARosterWithoutIt(t *testing.T) {
 func TestLaunchedAgentDoesNotPullBackACursorThatMoved(t *testing.T) {
 	model := arrivalFixture(t)
 	launched := arrivalAgent("a3", arrivalBeta)
-	next, _ := model.Update(launchedMsg{agent: launched})
+	next, _ := model.Update(launchedMsg{agent: launched, from: "a1"})
 	model = next.(Model)
 
 	// The user went looking at a2 while the launch was still landing.
@@ -126,10 +127,75 @@ func TestLaunchedAgentDoesNotPullBackACursorThatMoved(t *testing.T) {
 	}
 }
 
+func TestLaunchedAgentFollowsACursorDisplacedByADeletion(t *testing.T) {
+	model := arrivalFixture(t)
+	launched := arrivalAgent("a3", arrivalBeta)
+	next, _ := model.Update(launchedMsg{agent: launched, from: "a1"})
+	model = next.(Model)
+
+	// a1 was killed just before the launch; a roster without it lands
+	// first and the cursor is left on alpha's now-empty group by nobody's
+	// choice.
+	next, _ = model.Update(dashboardMsg{agents: []agent.Agent{
+		arrivalAgent("a2", arrivalBeta),
+	}})
+	model = next.(Model)
+	if got := model.selectedAgentID(); got != "" {
+		t.Fatalf("fixture: cursor after a1 vanished on %q, want nothing", got)
+	}
+
+	next, _ = model.Update(dashboardMsg{agents: []agent.Agent{
+		arrivalAgent("a2", arrivalBeta),
+		launched,
+	}})
+	model = next.(Model)
+	if got := model.selectedAgentID(); got != "a3" {
+		t.Fatalf("a displaced cursor was read as a moved one; selected %q, want a3", got)
+	}
+}
+
+func TestLaunchedAgentDoesNotFollowACursorMovedDuringTheLaunch(t *testing.T) {
+	model := arrivalFixture(t)
+	launched := arrivalAgent("a3", arrivalBeta)
+
+	// The launch was asked for with a1 selected and took a while; the
+	// user went to a2 before the backend answered. The answer carries the
+	// selection it was asked from, not the one it found on arrival.
+	model.rebuildGroups(arrivalBeta.ID, "a2")
+	next, _ := model.Update(launchedMsg{agent: launched, from: "a1"})
+	model = next.(Model)
+
+	next, _ = model.Update(dashboardMsg{agents: []agent.Agent{
+		arrivalAgent("a1", arrivalAlpha),
+		arrivalAgent("a2", arrivalBeta),
+		launched,
+	}})
+	model = next.(Model)
+	if got := model.selectedAgentID(); got != "a2" {
+		t.Fatalf("a cursor moved during the launch was pulled to %q", got)
+	}
+}
+
+func TestSubmitCarriesTheSelectionTheLaunchStartedFrom(t *testing.T) {
+	model := arrivalFixture(t)
+	model.backend = launchBackend{}
+	model.providers = []provider.Info{{ID: "claude", Label: "Claude", Available: true}}
+	model.cwdInput.SetValue(t.TempDir())
+	model.taskInput.SetValue("do the thing")
+	_, cmd := model.submitDispatch()
+	if cmd == nil {
+		t.Fatal("submit produced no command")
+	}
+	launched, ok := cmd().(launchedMsg)
+	if !ok || launched.from != "a1" {
+		t.Fatalf("submit answered %+v, want from=a1", launched)
+	}
+}
+
 func TestLaunchedAgentIsForgottenAfterThePatienceRunsOut(t *testing.T) {
 	model := arrivalFixture(t)
 	launched := arrivalAgent("a3", arrivalBeta)
-	next, _ := model.Update(launchedMsg{agent: launched})
+	next, _ := model.Update(launchedMsg{agent: launched, from: "a1"})
 	model = next.(Model)
 	model.arrival.until = time.Now().Add(-time.Second)
 
@@ -174,18 +240,19 @@ func (launchBackend) Resume(_ context.Context, record history.Record) (agent.Age
 }
 
 func TestDispatchCommandReportsTheLaunchedAgent(t *testing.T) {
-	msg := dispatchCmd(launchBackend{}, app.DispatchRequest{Name: "fresh"})()
+	msg := dispatchCmd(launchBackend{}, app.DispatchRequest{Name: "fresh"}, "a1")()
 	launched, ok := msg.(launchedMsg)
 	if !ok {
 		t.Fatalf("dispatch answered %T, want launchedMsg", msg)
 	}
-	if launched.err != nil || launched.agent.ID != "dispatched" {
+	if launched.err != nil || launched.agent.ID != "dispatched" || launched.from != "a1" {
 		t.Fatalf("dispatch answered %+v", launched)
 	}
 }
 
 func TestResumeReportsTheLaunchedAgent(t *testing.T) {
-	model := NewModel(launchBackend{})
+	model := arrivalFixture(t)
+	model.backend = launchBackend{}
 	model.historyRecords = []history.Record{{SessionID: "s1", Name: "old"}}
 	_, cmd := model.resumeSelectedHistory()
 	if cmd == nil {
@@ -197,7 +264,7 @@ func TestResumeReportsTheLaunchedAgent(t *testing.T) {
 	for _, msg := range messagesOf(cmd) {
 		if launched, ok := msg.(launchedMsg); ok {
 			found = true
-			if launched.err != nil || launched.agent.ID != "resumed" {
+			if launched.err != nil || launched.agent.ID != "resumed" || launched.from != "a1" {
 				t.Fatalf("resume answered %+v", launched)
 			}
 		}

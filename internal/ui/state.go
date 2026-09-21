@@ -106,21 +106,39 @@ func (m *Model) rebuildGroups(preferredWorkspaceID, preferredAgentID string) {
 // long enough without the agent that the launch evidently did not take.
 // A roster that simply does not have it yet leaves the arrival standing
 // for the next one.
+//
+// "Selected something else" is a selection resting on an agent other
+// than the one the launch started from, while that one is still listed.
+// A cursor on a different agent because its own left the roster — the
+// agent under it was killed just before the launch, say — was displaced,
+// not moved, and the newcomer is still what the user asked to look at.
 func (m *Model) takeArrival(agents []agent.Agent) (agent.Agent, bool) {
 	if m.arrival.agentID == "" {
 		return agent.Agent{}, false
 	}
-	if m.selectedAgentID() != m.arrival.from || time.Now().After(m.arrival.until) {
+	if time.Now().After(m.arrival.until) {
 		m.arrival = arrivalFocus{}
 		return agent.Agent{}, false
 	}
-	for _, managedAgent := range agents {
-		if managedAgent.ID == m.arrival.agentID {
-			m.arrival = arrivalFocus{}
-			return managedAgent, true
+	var launched *agent.Agent
+	fromListed := false
+	for index := range agents {
+		switch agents[index].ID {
+		case m.arrival.agentID:
+			launched = &agents[index]
+		case m.arrival.from:
+			fromListed = true
 		}
 	}
-	return agent.Agent{}, false
+	if fromListed && m.selectedAgentID() != m.arrival.from {
+		m.arrival = arrivalFocus{}
+		return agent.Agent{}, false
+	}
+	if launched == nil {
+		return agent.Agent{}, false
+	}
+	m.arrival = arrivalFocus{}
+	return *launched, true
 }
 
 // applySort orders groups and their agents by the user-chosen mode. The

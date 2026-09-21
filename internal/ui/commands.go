@@ -140,7 +140,10 @@ func attachCmd(backend Backend, id, name string) tea.Cmd {
 	}
 }
 
-func dispatchCmd(backend Backend, request app.DispatchRequest) tea.Cmd {
+// dispatchCmd starts an agent. from is the selection at the moment of
+// asking; the answer carries it so the cursor's move to the newcomer can
+// tell a launch the user waited for from one they walked away from.
+func dispatchCmd(backend Backend, request app.DispatchRequest, from string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -152,6 +155,6 @@ func dispatchCmd(backend Backend, request app.DispatchRequest) tea.Cmd {
 			)
 			return launchedMsg{err: err}
 		}
-		return launchedMsg{agent: launched}
+		return launchedMsg{agent: launched, from: from}
 	}
 }

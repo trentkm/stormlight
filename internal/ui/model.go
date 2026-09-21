@@ -474,7 +474,12 @@ type actionMsg struct {
 // somewhere down the roster waiting to be found.
 type launchedMsg struct {
 	agent agent.Agent
-	err   error
+	// from is what was selected when the launch was asked for, carried
+	// through the command because a launch can take seconds — a remote
+	// one especially — and a cursor moved during the wait must not be
+	// mistaken for the one the launch started from.
+	from string
+	err  error
 }
 
 // arrivalFocus names an agent this dashboard launched and has not yet
@@ -485,8 +490,10 @@ type launchedMsg struct {
 type arrivalFocus struct {
 	agentID string
 	// from is what was selected when the launch was asked for. A
-	// different selection by the time the newcomer appears means the
-	// user has moved on, and the newcomer does not pull them back.
+	// selection resting somewhere else by the time the newcomer appears
+	// means the user has moved on, and the newcomer does not pull them
+	// back — unless from itself has left the roster, in which case the
+	// cursor was displaced rather than moved.
 	from  string
 	until time.Time
 }
@@ -956,7 +963,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.arrival = arrivalFocus{
 			agentID: msg.agent.ID,
-			from:    m.selectedAgentID(),
+			from:    msg.from,
 			until:   time.Now().Add(arrivalPatience),
 		}
 		return m, m.refreshCmd()
