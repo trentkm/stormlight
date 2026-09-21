@@ -114,13 +114,14 @@ func (m Model) resumeSelectedHistory() (tea.Model, tea.Cmd) {
 	record := visible[min(m.historyCursor, len(visible)-1)]
 	m.mode = modeNormal
 	backend := m.backend
+	from := m.selectedAgentID()
 	return m, tea.Batch(
 		func() tea.Msg {
 			ctx, cancel := context.WithTimeout(
 				context.Background(), resumeTimeout)
 			defer cancel()
-			_, err := backend.Resume(ctx, record)
-			return actionMsg{err: err}
+			resumed, err := backend.Resume(ctx, record)
+			return launchedMsg{agent: resumed, from: from, err: err}
 		},
 		m.refreshCmd(),
 	)

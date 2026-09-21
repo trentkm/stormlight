@@ -262,6 +262,7 @@ type Model struct {
 	dispatchHost    string
 	workspaceCursor int
 	agentCursor     int
+	arrival         arrivalFocus
 	activePane      pane
 	rowsExpanded    bool
 	interaction     viewport.Model
@@ -465,6 +466,42 @@ type interactionMsg struct {
 type actionMsg struct {
 	err error
 }
+
+// launchedMsg is the answer to a dispatch or a resume: the agent the
+// backend started, or why it could not. The agent matters because the
+// cursor is going to it — a launch that only said "done" left the
+// selection on whatever was under it before, and the new session sat
+// somewhere down the roster waiting to be found.
+type launchedMsg struct {
+	agent agent.Agent
+	// from is what was selected when the launch was asked for, carried
+	// through the command because a launch can take seconds — a remote
+	// one especially — and a cursor moved during the wait must not be
+	// mistaken for the one the launch started from.
+	from string
+	err  error
+}
+
+// arrivalFocus names an agent this dashboard launched and has not yet
+// seen in a roster. The backend answers a dispatch before the listing
+// includes the newcomer — a remote machine's, in particular, can lag a
+// refresh or two — so the intent to select it is held until the roster
+// carries it rather than aimed at an id the groups cannot find yet.
+type arrivalFocus struct {
+	agentID string
+	// from is what was selected when the launch was asked for. A
+	// selection resting somewhere else by the time the newcomer appears
+	// means the user has moved on, and the newcomer does not pull them
+	// back — unless from itself has left the roster, in which case the
+	// cursor was displaced rather than moved.
+	from  string
+	until time.Time
+}
+
+// arrivalPatience bounds how long a launched agent is waited for. Past
+// it, a listing that still lacks the agent is a launch that did not
+// take, and the cursor stays where the user left it.
+const arrivalPatience = 10 * time.Second
 
 type dashboardActionMsg struct {
 	agentID   string
@@ -740,6 +777,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.roots != nil {
 				m.workspaceRoots = msg.roots
 			}
+			if arrived, ok := m.takeArrival(msg.agents); ok {
+				// The cursor lands on the newcomer the moment the roster
+				// has it; the interaction pane follows through the same
+				// paths a keypress would take — the transcript reload
+				// below sees the selection change, and the terminal herd's
+				// reconcile re-arms the visible terminal once its session
+				// exists.
+				workspaceID = effectiveWorkspace(arrived).ID
+				agentID = arrived.ID
+			}
 			m.rebuildGroups(workspaceID, agentID)
 			m.initialWorkspaceID = ""
 			if m.mode == modeCompose {
@@ -905,6 +952,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.raise(msg.err)
 			diagnostic.Logger().Error("dashboard action failed", "error", msg.err)
+		}
+		return m, m.refreshCmd()
+
+	case launchedMsg:
+		if msg.err != nil {
+			m.raise(msg.err)
+			diagnostic.Logger().Error("dashboard launch failed", "error", msg.err)
+			return m, m.refreshCmd()
+		}
+		m.arrival = arrivalFocus{
+			agentID: msg.agent.ID,
+			from:    msg.from,
+			until:   time.Now().Add(arrivalPatience),
 		}
 		return m, m.refreshCmd()
 

@@ -1549,7 +1549,7 @@ func (m Model) submitDispatch() (tea.Model, tea.Cmd) {
 	m.blurForm()
 	m.taskInput.SetValue("")
 	m.nameInput.SetValue("")
-	return m, dispatchCmd(m.backend, request)
+	return m, dispatchCmd(m.backend, request, m.selectedAgentID())
 }
 
 func (m Model) selectedDirectory() (directoryChoice, bool) {

@@ -177,14 +177,24 @@ func (h *hub) subscribe() (<-chan []byte, func()) {
 	h.mu.Unlock()
 	// Ask for a fresh roster either way: the poll skips itself while
 	// nobody is listening, so what was cached may be old.
-	select {
-	case h.wake <- struct{}{}:
-	default:
-	}
+	h.nudge()
 	return client, func() {
 		h.mu.Lock()
 		delete(h.clients, client)
 		h.mu.Unlock()
+	}
+}
+
+// nudge asks the poller for a roster now. A client that just changed the
+// fleet — dispatched into it — is about to look for the change, and the
+// tick is most of a second away; the nudge is what lets the answer to
+// the request and the roster that shows it arrive together. The slot is
+// one deep and a full slot means a wake is already owed, so this never
+// blocks.
+func (h *hub) nudge() {
+	select {
+	case h.wake <- struct{}{}:
+	default:
 	}
 }
 

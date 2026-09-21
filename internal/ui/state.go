@@ -100,6 +100,47 @@ func (m *Model) rebuildGroups(preferredWorkspaceID, preferredAgentID string) {
 	}
 }
 
+// takeArrival hands back the launched agent the first time a roster
+// carries it, and forgets the launch once it no longer applies: the
+// user selected something else in the meantime, or the roster has gone
+// long enough without the agent that the launch evidently did not take.
+// A roster that simply does not have it yet leaves the arrival standing
+// for the next one.
+//
+// "Selected something else" is a selection resting on an agent other
+// than the one the launch started from, while that one is still listed.
+// A cursor on a different agent because its own left the roster — the
+// agent under it was killed just before the launch, say — was displaced,
+// not moved, and the newcomer is still what the user asked to look at.
+func (m *Model) takeArrival(agents []agent.Agent) (agent.Agent, bool) {
+	if m.arrival.agentID == "" {
+		return agent.Agent{}, false
+	}
+	if time.Now().After(m.arrival.until) {
+		m.arrival = arrivalFocus{}
+		return agent.Agent{}, false
+	}
+	var launched *agent.Agent
+	fromListed := false
+	for index := range agents {
+		switch agents[index].ID {
+		case m.arrival.agentID:
+			launched = &agents[index]
+		case m.arrival.from:
+			fromListed = true
+		}
+	}
+	if fromListed && m.selectedAgentID() != m.arrival.from {
+		m.arrival = arrivalFocus{}
+		return agent.Agent{}, false
+	}
+	if launched == nil {
+		return agent.Agent{}, false
+	}
+	m.arrival = arrivalFocus{}
+	return *launched, true
+}
+
 // applySort orders groups and their agents by the user-chosen mode. The
 // backend delivers agents attention-first; the UI re-sorts so nothing
 // rearranges unless the user asked for it.
