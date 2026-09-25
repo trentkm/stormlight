@@ -126,8 +126,9 @@ func (m Mark) Label() string {
 type PermissionMode string
 
 const (
-	// ModeAsk keeps the provider's cautious default: consequential actions
-	// request approval (bridged into the dashboard where supported).
+	// ModeAsk is the cautious mode: edits and anything beyond reading
+	// request approval, answered in the agent's own terminal. It is the
+	// provider's most restrictive launch, which is not always its default.
 	ModeAsk PermissionMode = "ask"
 	// ModeEdits applies workspace file edits without asking and still asks
 	// for shell, network, and anything outside the workspace.

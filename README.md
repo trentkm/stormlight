@@ -506,6 +506,14 @@ config only holds preferences about Stormlight's own behavior.
 
 First-class providers (Claude, Codex) keep in-tree adapters that integrate
 with their extension surfaces — hooks, notifications, permission bridging.
+A `[providers.codex]` or `[providers.claude]` block tunes that adapter
+rather than replacing it: `binary` points it at a different executable,
+`label` renames it, and `extra_args` append after Stormlight's own flags.
+The hooks and the per-mode flags stay, so `args` and `mode_args` on a
+built-in are ignored with a warning. Whether `extra_args` can repeat a
+flag is the CLI's call: Codex refuses a flag given twice, while Claude
+takes the last one, so a repeated `--permission-mode` there overrides the
+mode Stormlight chose.
 Any other agent CLI can be declared in config:
 
 ```toml

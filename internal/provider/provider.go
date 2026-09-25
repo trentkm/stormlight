@@ -201,8 +201,10 @@ func NewRegistry() *Registry {
 	return NewRegistryWithSpecs(nil)
 }
 
-func NewRegistryWithSpecs(specs []Spec) *Registry {
-	adapters := []Adapter{
+// builtinAdapters are the providers Stormlight ships. A Spec naming one of
+// them customizes it; anything else declares a new provider.
+func builtinAdapters() []Adapter {
+	return []Adapter{
 		commandAdapter{
 			id:         agent.ProviderCodex,
 			label:      "Codex",
@@ -221,6 +223,22 @@ func NewRegistryWithSpecs(specs []Spec) *Registry {
 			sessionFor: claudeSessionID,
 		},
 	}
+}
+
+// IsBuiltin reports whether id names an adapter Stormlight ships, which a
+// Spec can tune but never replace. Config consults it to say so when a
+// block carries keys only a declared provider honors.
+func IsBuiltin(id agent.Provider) bool {
+	for _, adapter := range builtinAdapters() {
+		if adapter.ID() == id {
+			return true
+		}
+	}
+	return false
+}
+
+func NewRegistryWithSpecs(specs []Spec) *Registry {
+	adapters := builtinAdapters()
 
 	r := &Registry{
 		adapters: make(map[agent.Provider]Adapter, len(adapters)+len(specs)),
@@ -526,12 +544,26 @@ func codexLifecycleArgs(mode agent.PermissionMode) ([]string, error) {
 
 // codexModeArgs maps Stormlight permission modes onto Codex's approval and
 // sandbox axes.
+//
+// Codex's approval flag is down to `on-request` and `never`: 0.154 retired
+// `untrusted` (openai/codex#39630) and rejects it outright, on the command
+// line and in config alike, so the two prompting modes cannot differ on
+// that axis any more. They differ on the sandbox instead. `ask` runs
+// read-only — Codex's own "read only" preset — where every edit, every
+// write, and any network access is an escalation the model has to request.
+// That is narrower than `untrusted` was: a command that only reads runs
+// inside the sandbox without a prompt, where before anything off Codex's
+// safe-list asked. No surviving CLI value prompts on every command, so
+// read-only is the most cautious launch Codex still offers. `edits` widens
+// the sandbox to the workspace, so edits land and only network and anything
+// outside it still ask. Every value here is accepted by Codex releases
+// before and after the retirement.
 func codexModeArgs(mode agent.PermissionMode) []string {
 	switch mode {
 	case agent.ModeAsk:
 		return []string{
-			"--ask-for-approval", "untrusted",
-			"--sandbox", "workspace-write",
+			"--ask-for-approval", "on-request",
+			"--sandbox", "read-only",
 		}
 	case agent.ModeAuto:
 		return []string{
