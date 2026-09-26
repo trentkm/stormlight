@@ -46,6 +46,7 @@ const template = `# Stormlight configuration.
 # Built-in provider tweaks. extra_args append after Stormlight's own flags.
 # binary, label, and extra_args tune a built-in provider; args and mode_args
 # are ignored for one, since its hooks and mode flags are the adapter.
+# stormlight config providers shows the command each mode actually runs.
 # [providers.claude]
 # binary     = "claude"
 # extra_args = []

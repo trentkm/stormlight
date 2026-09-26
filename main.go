@@ -125,7 +125,7 @@ func newRootCommand() *cobra.Command {
 		newEventCommand(cfg),
 		newProviderEventCommand(cfg),
 		newLogsCommand(&logFile),
-		newConfigCommand(cfg),
+		newConfigCommand(cfg, configWarnings, configErr),
 		newWindrunnerDaemonCommand(),
 		newWindrunnerAttachCommand(),
 		newWindrunnerBridgeCommand(),
@@ -487,20 +487,32 @@ func providerSpecs(cfg config.Config) []provider.Spec {
 	return specs
 }
 
-func newConfigCommand(cfg config.Config) *cobra.Command {
+// newConfigCommand shows the configuration as Stormlight sees it. The load
+// error and warnings come along because this is the command someone runs
+// to find out why their config is not taking effect: a file the loader
+// rejected leaves cfg at its defaults, and printing those defaults as if
+// they were the file's doing is the one thing this command must not do.
+func newConfigCommand(cfg config.Config, warnings []string, loadErr error) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "config",
 		Short: "Show the effective configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			writeConfigNotes(cmd.ErrOrStderr(), warnings, loadErr)
 			fmt.Fprintln(cmd.OutOrStdout(), "# "+config.Path())
 			rendered, err := cfg.EffectiveTOML()
 			if err != nil {
 				return err
 			}
 			fmt.Fprint(cmd.OutOrStdout(), rendered)
+			// The providers are not in the TOML: a built-in has no block
+			// unless the user wrote one, and a block shows what was
+			// tuned rather than what runs. Point at the command that does.
+			fmt.Fprintln(cmd.OutOrStdout())
+			fmt.Fprintln(cmd.OutOrStdout(), "# Providers and the commands they run: stormlight config providers")
 			return nil
 		},
 	}
+	command.AddCommand(newConfigProvidersCommand(cfg, warnings, loadErr))
 	var force bool
 	initCommand := &cobra.Command{
 		Use:   "init",
@@ -517,6 +529,120 @@ func newConfigCommand(cfg config.Config) *cobra.Command {
 	initCommand.Flags().BoolVar(&force, "force", false, "overwrite an existing config file")
 	command.AddCommand(initCommand)
 	return command
+}
+
+// newConfigProvidersCommand shows what each provider actually runs. The
+// effective TOML cannot: a built-in provider has no block there unless the
+// user wrote one, and the block shows the tuning, not the command. When a
+// provider CLI retires a flag — as Codex did with `untrusted` (#237) —
+// this is where the argv that stopped working can be read.
+func newConfigProvidersCommand(cfg config.Config, warnings []string, loadErr error) *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "providers",
+		Short: "Show what each provider runs, per permission mode",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			writeConfigNotes(cmd.ErrOrStderr(), warnings, loadErr)
+			descriptions := provider.NewRegistryWithSpecs(providerSpecs(cfg)).Describe()
+			if asJSON {
+				encoder := json.NewEncoder(cmd.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(descriptions)
+			}
+			writeProviders(cmd.OutOrStdout(), descriptions)
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
+	return command
+}
+
+// writeConfigNotes says, on the diagnostic stream, what the loader had to
+// say about the file — so the output that follows is read for what it is.
+// A rejected file means built-in defaults; a warning means one setting was
+// dropped. Stderr keeps stdout parseable whether it carries TOML or JSON.
+func writeConfigNotes(out io.Writer, warnings []string, loadErr error) {
+	if loadErr != nil {
+		fmt.Fprintf(out, "warning: %s could not be loaded, showing built-in defaults: %v\n", config.Path(), loadErr)
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(out, "warning: %s\n", warning)
+	}
+}
+
+// writeProviders renders each provider as a heading and one command line
+// per mode, shell-quoted and continued across lines with a flag and its
+// value kept together. The quoting is faithful rather than pretty: what is
+// printed is what the shell would have to be given to run the same thing,
+// so a mode's lines can be pasted to reproduce a launch by hand.
+func writeProviders(out io.Writer, descriptions []provider.Description) {
+	for i, description := range descriptions {
+		if i > 0 {
+			fmt.Fprintln(out)
+		}
+		origin := "declared in config"
+		if description.Builtin {
+			origin = "built-in"
+		}
+		where := "not installed or not on PATH"
+		if description.Available {
+			where = description.Path
+		}
+		fmt.Fprintf(out, "%s  %s  %s  %s\n", description.ID, description.Label, origin, where)
+		for _, preview := range description.Modes {
+			fmt.Fprintf(out, "  %s\n", preview.Mode)
+			if preview.Error != "" {
+				fmt.Fprintf(out, "    error: %s\n", preview.Error)
+				continue
+			}
+			fmt.Fprintf(out, "    %s", shellQuote(description.Binary))
+			for _, line := range argLines(preview.Args) {
+				fmt.Fprintf(out, " \\\n      %s", line)
+			}
+			fmt.Fprintln(out)
+		}
+	}
+}
+
+// argLines groups an argv for display: a flag followed by something that
+// is not a flag shares its line, so `--sandbox read-only` reads as the
+// pair it is. The final argument never joins a flag — it is the task, or
+// the positional that stands for it, and a boolean flag ahead of it would
+// otherwise read as if the task were its value. Grouping changes nothing
+// about the argv, only where the continuation breaks fall.
+func argLines(args []string) []string {
+	lines := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		line := shellQuote(args[i])
+		if strings.HasPrefix(args[i], "-") && i+2 < len(args) &&
+			!strings.HasPrefix(args[i+1], "-") {
+			i++
+			line += " " + shellQuote(args[i])
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// shellQuote spells one argument so a shell hands it over unchanged. A
+// bare word stays bare; anything else is single-quoted, with embedded
+// single quotes closed, escaped, and reopened. Bare is stricter at the
+// first character than after it: a leading `=` or `~` expands in zsh,
+// which is where a macOS user pastes, so a word may contain `=` and `%`
+// but not begin with them.
+func shellQuote(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	for i, r := range arg {
+		word := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			strings.ContainsRune("/._-", r)
+		if !word && (i == 0 || !strings.ContainsRune("@%+=:,", r)) {
+			return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+		}
+	}
+	return arg
 }
 
 // openWorkspacePath validates the optional root-command argument early, so

@@ -482,3 +482,80 @@ func TestProvidersDeclareWhetherTheyCanResume(t *testing.T) {
 		t.Error("resuming with no session id reported success")
 	}
 }
+
+// TestDescribeShowsTheCommandLineWithoutTheBinary: the point of asking is
+// to read what would run, and a provider that is missing here — or whose
+// CLI has retired a flag — has a command line worth reading all the same.
+func TestDescribeShowsTheCommandLineWithoutTheBinary(t *testing.T) {
+	registry := NewRegistryWithSpecs([]Spec{
+		{
+			ID:        agent.ProviderCodex,
+			Binary:    "stormlight-test-no-such-codex",
+			ExtraArgs: []string{"--model", "o4"},
+		},
+		{
+			ID:     agent.Provider("echoer"),
+			Binary: "stormlight-test-no-such-echoer",
+			Args:   []string{"--message", "{task}", "--trailing"},
+			ModeArgs: map[agent.PermissionMode][]string{
+				agent.ModeAuto: {"--yes-always"},
+			},
+		},
+	})
+	descriptions := registry.Describe()
+	byID := map[agent.Provider]Description{}
+	for _, d := range descriptions {
+		byID[d.ID] = d
+	}
+
+	codex := byID[agent.ProviderCodex]
+	if !codex.Builtin || codex.Available || codex.Path != "" {
+		t.Fatalf("a missing built-in is still described: %+v", codex)
+	}
+	if len(codex.Modes) != len(agent.Modes()) {
+		t.Fatalf("every mode is reported: %+v", codex.Modes)
+	}
+	ask := codex.Modes[0]
+	if ask.Mode != agent.ModeAsk || ask.Error != "" {
+		t.Fatalf("modes come least permissive first: %+v", ask)
+	}
+	if !slices.Contains(ask.Args, "read-only") {
+		t.Fatalf("ask shows the real flags: %#v", ask.Args)
+	}
+	// extra_args land where a launch puts them: after Stormlight's own
+	// flags, before the task — and the task is a placeholder, not a prompt.
+	n := len(ask.Args)
+	if n < 3 || ask.Args[n-1] != TaskPlaceholder ||
+		ask.Args[n-3] != "--model" || ask.Args[n-2] != "o4" {
+		t.Fatalf("extra args and placeholder misplaced: %#v", ask.Args)
+	}
+
+	echoer := byID[agent.Provider("echoer")]
+	if echoer.Builtin || echoer.Label != "echoer" {
+		t.Fatalf("a declared provider is described as one: %+v", echoer)
+	}
+	auto := echoer.Modes[2]
+	want := []string{"--yes-always", "--message", TaskPlaceholder, "--trailing"}
+	if !slices.Equal(auto.Args, want) {
+		t.Fatalf("declared provider preview = %#v, want %#v", auto.Args, want)
+	}
+}
+
+// TestInfosAndDescribeAgreeOnAvailability: the dashboard's picker and
+// `config providers` answer the same question, and one lookup serves both.
+func TestInfosAndDescribeAgreeOnAvailability(t *testing.T) {
+	registry := NewRegistryWithSpecs([]Spec{{
+		ID:     agent.ProviderCodex,
+		Binary: "stormlight-test-no-such-codex",
+	}})
+	infos := registry.Infos()
+	descriptions := registry.Describe()
+	for i := range infos {
+		if infos[i].Available != descriptions[i].Available || infos[i].Path != descriptions[i].Path {
+			t.Fatalf("%s: info %+v disagrees with description %+v", infos[i].ID, infos[i], descriptions[i])
+		}
+	}
+	if infos[0].Available || infos[0].Path != "" {
+		t.Fatalf("a missing binary is unavailable: %+v", infos[0])
+	}
+}

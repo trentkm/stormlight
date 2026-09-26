@@ -209,7 +209,12 @@ providers to ask about. The dashboard's own reachability check skips it.
   broken config falls back to defaults with a visible warning rather than
   refusing to start — the dashboard is also how you'd notice the problem.
 - `stormlight config` subcommand: prints the effective merged config and the
-  file path; `stormlight config init` writes a fully commented template.
+  file path; `stormlight config init` writes a fully commented template;
+  `stormlight config providers` prints what each provider runs per
+  permission mode, shell-quoted, one continuation line per flag with its
+  value or per positional (`--json` for the structured form). The effective TOML cannot show this — a built-in
+  provider has no block there unless the user wrote one, and the block shows
+  the tuning rather than the command.
 
 ## Project-local config (deliberately deferred)
 

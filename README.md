@@ -485,8 +485,9 @@ defaults; precedence is always flags > environment > config file > built-in
 defaults.
 
 ```bash
-stormlight config init   # write a fully commented template
-stormlight config        # print the effective merged configuration
+stormlight config init        # write a fully commented template
+stormlight config             # print the effective merged configuration
+stormlight config providers   # what each provider runs, per permission mode
 ```
 
 ```toml
@@ -513,7 +514,9 @@ The hooks and the per-mode flags stay, so `args` and `mode_args` on a
 built-in are ignored with a warning. Whether `extra_args` can repeat a
 flag is the CLI's call: Codex refuses a flag given twice, while Claude
 takes the last one, so a repeated `--permission-mode` there overrides the
-mode Stormlight chose.
+mode Stormlight chose. `stormlight config providers` prints the exact
+command line each mode produces, with your `extra_args` where they land,
+so what a provider is actually given is never a matter of reading source.
 Any other agent CLI can be declared in config:
 
 ```toml
