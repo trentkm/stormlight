@@ -16,6 +16,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/provider"
 )
 
 type Config struct {
@@ -214,11 +215,28 @@ func (c Config) normalize(path string) (Config, []string, error) {
 			c.Workspaces[root] = override
 		}
 	}
-	for name, provider := range c.Providers {
-		for mode := range provider.ModeArgs {
+	for name, entry := range c.Providers {
+		// A block named for a built-in provider tunes that adapter — its
+		// binary, label, and extra_args — and never replaces it: the
+		// lifecycle hooks and the per-mode flags are what make the
+		// adapter one, so a launch template cannot swap them out. Say so
+		// rather than let the keys sit there looking honored.
+		if provider.IsBuiltin(agent.Provider(name)) {
+			if len(entry.Args) != 0 {
+				warn("providers.%s.args: ignored for the built-in %s provider; use extra_args to append flags", name, name)
+				entry.Args = nil
+			}
+			if len(entry.ModeArgs) != 0 {
+				warn("providers.%s.mode_args: ignored for the built-in %s provider; its permission modes are fixed", name, name)
+				entry.ModeArgs = nil
+			}
+			c.Providers[name] = entry
+			continue
+		}
+		for mode := range entry.ModeArgs {
 			if _, err := agent.ParseMode(mode); err != nil {
 				warn("providers.%s.mode_args: %v", name, err)
-				delete(provider.ModeArgs, mode)
+				delete(entry.ModeArgs, mode)
 			}
 		}
 	}

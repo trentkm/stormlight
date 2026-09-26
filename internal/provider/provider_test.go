@@ -107,8 +107,8 @@ func TestPermissionModeMapsToProviderFlags(t *testing.T) {
 			mode:   agent.ModeAsk,
 			claude: nil,
 			codex: []string{
-				"--ask-for-approval", "untrusted",
-				"--sandbox", "workspace-write",
+				"--ask-for-approval", "on-request",
+				"--sandbox", "read-only",
 			},
 		},
 		{

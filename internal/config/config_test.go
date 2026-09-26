@@ -281,3 +281,52 @@ shell = "fish"
 		t.Fatal("a bad shell should not remove the host")
 	}
 }
+
+// TestABuiltinProviderBlockTunesButNeverReplaces: [providers.codex] may
+// point at a different binary and append flags, but args and mode_args are
+// the shape of a *declared* provider. On a built-in they are ignored — the
+// hooks and mode flags are the adapter — and ignoring them silently is how
+// someone concludes their override "doesn't work".
+func TestABuiltinProviderBlockTunesButNeverReplaces(t *testing.T) {
+	path := writeConfig(t, `
+[providers.codex]
+binary     = "/opt/codex/bin/codex"
+extra_args = ["--model", "o4"]
+args       = ["exec", "{task}"]
+[providers.codex.mode_args]
+ask = ["--ask-for-approval", "on-request"]
+
+[providers.aider]
+args = ["--message", "{task}"]
+[providers.aider.mode_args]
+auto = ["--yes-always"]
+`)
+	cfg, warnings, err := loadFrom(path)
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	codex := cfg.Providers["codex"]
+	if codex.Binary != "/opt/codex/bin/codex" || len(codex.ExtraArgs) != 2 {
+		t.Fatalf("the tunable keys should survive: %+v", codex)
+	}
+	if codex.Args != nil || codex.ModeArgs != nil {
+		t.Fatalf("args and mode_args on a built-in should be dropped: %+v", codex)
+	}
+	var saidArgs, saidModes bool
+	for _, warning := range warnings {
+		if strings.Contains(warning, "providers.codex.args") {
+			saidArgs = true
+		}
+		if strings.Contains(warning, "providers.codex.mode_args") {
+			saidModes = true
+		}
+	}
+	if !saidArgs || !saidModes {
+		t.Fatalf("dropping them should say so: %q", warnings)
+	}
+	// A declared provider keeps both: they are its whole definition.
+	aider := cfg.Providers["aider"]
+	if len(aider.Args) != 2 || len(aider.ModeArgs["auto"]) != 1 {
+		t.Fatalf("a declared provider lost its launch template: %+v", aider)
+	}
+}

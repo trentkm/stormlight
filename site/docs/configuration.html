@@ -124,7 +124,10 @@ mode     = <span class="s">"auto"</span>
 provider = <span class="s">"claude"</span>
 
 <span class="c"># Provider adapter tweaks. extra_args append after Stormlight's own</span>
-<span class="c"># flags, so they can refine but not remove lifecycle hooks.</span>
+<span class="c"># flags, so they can refine but not remove lifecycle hooks. A block</span>
+<span class="c"># named for a built-in provider tunes it — binary, label, extra_args —</span>
+<span class="c"># and never replaces it: args and mode_args here are ignored with a</span>
+<span class="c"># warning.</span>
 <span class="k">[providers.codex]</span>
 <span class="c"># binary     = "codex"</span>
 <span class="c"># extra_args = ["--model", "o4"]</span>
