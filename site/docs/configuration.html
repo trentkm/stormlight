@@ -227,7 +227,12 @@ provider = <span class="s">"claude"</span>
       broken config falls back to defaults with a visible warning rather than refusing to
       start — the dashboard is also how you'd notice the problem.</li>
       <li><code>stormlight config</code> prints the effective merged config and the file
-      path; <code>stormlight config init</code> writes a fully commented template.</li>
+      path; <code>stormlight config init</code> writes a fully commented template;
+      <code>stormlight config providers</code> prints what each provider runs per
+      permission mode, shell-quoted, one continuation line per flag with its value or per
+      positional (<code>--json</code> for the structured form). The effective TOML cannot show this — a built-in provider has no
+      block there unless the user wrote one, and the block shows the tuning rather than
+      the command.</li>
     </ul>
 
     <h2 id="project-local">Project-local config (deliberately deferred)</h2>

@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/trentkm/stormlight/internal/agent"
+	"github.com/trentkm/stormlight/internal/config"
+	"github.com/trentkm/stormlight/internal/provider"
 	"github.com/trentkm/stormlight/internal/remote"
 	"github.com/trentkm/stormlight/internal/ui"
 	"github.com/trentkm/stormlight/internal/workspace"
@@ -468,5 +472,123 @@ func TestTheFarewellCarriesTheSameMark(t *testing.T) {
 	if strings.Index(line, ui.StormGlyph) >
 		strings.Index(line, "Journey") {
 		t.Errorf("the mark follows the words: %q", line)
+	}
+}
+
+// TestConfigProvidersShowsWhatRuns: a built-in provider has no block in
+// the effective TOML, so this is the only place its real argv is visible.
+func TestConfigProvidersShowsWhatRuns(t *testing.T) {
+	cfg := config.Config{Providers: map[string]config.Provider{
+		"codex": {ExtraArgs: []string{"--model", "o4"}},
+	}}
+
+	command := newConfigCommand(cfg, nil, nil)
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetArgs([]string{"providers", "--json"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var descriptions []provider.Description
+	if err := json.Unmarshal(out.Bytes(), &descriptions); err != nil {
+		t.Fatalf("--json must answer with a JSON array: %v (%q)", err, out.String())
+	}
+	if len(descriptions) < 2 || descriptions[0].ID != agent.ProviderCodex {
+		t.Fatalf("built-ins lead, in registration order: %+v", descriptions)
+	}
+	if args := descriptions[0].Modes[0].Args; !slices.Contains(args, "o4") {
+		t.Fatalf("the user's extra_args are part of what runs: %#v", args)
+	}
+
+	command = newConfigCommand(cfg, nil, nil)
+	out.Reset()
+	command.SetOut(&out)
+	command.SetArgs([]string{"providers"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"codex  Codex  built-in",
+		"\n  ask\n",
+		"--sandbox read-only \\\n",
+		"--model o4 \\\n      '{task}'",
+		"'{task}'",
+		"claude  Claude  built-in",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("text output lacks %q:\n%s", want, text)
+		}
+	}
+
+	// The root output points here, since the providers are not in it.
+	command = newConfigCommand(cfg, nil, nil)
+	out.Reset()
+	command.SetOut(&out)
+	command.SetArgs(nil)
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "stormlight config providers") {
+		t.Fatalf("stormlight config should say where the providers are:\n%s", out.String())
+	}
+}
+
+func TestShellQuoteKeepsBareWordsAndEscapesTheRest(t *testing.T) {
+	cases := map[string]string{
+		"--sandbox":      "--sandbox",
+		"read-only":      "read-only",
+		"/opt/bin/codex": "/opt/bin/codex",
+		"":               "''",
+		"{task}":         "'{task}'",
+		"a b":            "'a b'",
+		`notify = ["x"]`: `'notify = ["x"]'`,
+		"it's":           `'it'\''s'`,
+		"$HOME":          "'$HOME'",
+		"=foo":           "'=foo'",
+		"~user":          "'~user'",
+		"a=b":            "a=b",
+	}
+	for in, want := range cases {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestArgLinesKeepAFlagWithItsValue(t *testing.T) {
+	got := argLines([]string{"-c", "a = 1", "--flag", "--sandbox", "read-only", "o4", "{task}"})
+	want := []string{"-c 'a = 1'", "--flag", "--sandbox read-only", "o4", "'{task}'"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("argLines = %#v, want %#v", got, want)
+	}
+	// A boolean flag ahead of the task must not read as if the task were
+	// its value: the final argument stands alone.
+	got = argLines([]string{"--full-auto", "{task}"})
+	want = []string{"--full-auto", "'{task}'"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("argLines = %#v, want %#v", got, want)
+	}
+}
+
+// TestConfigCommandsReportARejectedFile: the command someone runs to find
+// out why their config is not taking effect must not print defaults as if
+// the file produced them.
+func TestConfigCommandsReportARejectedFile(t *testing.T) {
+	for _, args := range [][]string{nil, {"providers"}, {"providers", "--json"}} {
+		command := newConfigCommand(config.Config{}, []string{"ui.rows: dropped"}, errors.New("toml: line 3: bad"))
+		var out, errs bytes.Buffer
+		command.SetOut(&out)
+		command.SetErr(&errs)
+		command.SetArgs(args)
+		if err := command.Execute(); err != nil {
+			t.Fatalf("Execute(%v): %v", args, err)
+		}
+		if !strings.Contains(errs.String(), "toml: line 3: bad") || !strings.Contains(errs.String(), "ui.rows: dropped") {
+			t.Fatalf("%v: stderr should carry the load error and warnings:\n%s", args, errs.String())
+		}
+		if strings.Contains(out.String(), "warning:") {
+			t.Fatalf("%v: stdout stays parseable:\n%s", args, out.String())
+		}
 	}
 }

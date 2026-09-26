@@ -50,6 +50,15 @@ type Adapter interface {
 	// and the adapter is the party that knows how its own transcripts are
 	// named. An empty result means the path names nothing resumable.
 	SessionFromTranscript(transcriptPath string) string
+	// Preview is the argument list a dispatch in mode would run, with
+	// TaskPlaceholder standing where the task goes and the user's
+	// extra_args in the position they land. It is the launch without the
+	// lookup: a provider that is not installed here still has a command
+	// line worth reading, which is the whole reason to ask for one. A
+	// dispatch that carries a name adds the provider's naming flags just
+	// ahead of the task; the preview is the nameless launch and leaves
+	// them out.
+	Preview(mode agent.PermissionMode) ([]string, error)
 }
 
 type commandAdapter struct {
@@ -119,6 +128,14 @@ func (a commandAdapter) ResumeNamed(
 		return Launch{}, fmt.Errorf("%s cannot resume a conversation", a.label)
 	}
 	return a.launch(a.resumeFor, sessionID, name, mode)
+}
+
+func (a commandAdapter) Preview(mode agent.PermissionMode) ([]string, error) {
+	args, err := a.argsFor(TaskPlaceholder, mode)
+	if err != nil {
+		return nil, err
+	}
+	return a.withExtra(args), nil
 }
 
 func (a commandAdapter) SessionFromTranscript(transcriptPath string) string {
@@ -411,16 +428,80 @@ func (r *Registry) Label(id agent.Provider) string {
 	return string(id)
 }
 
+// Description is one provider as `stormlight config providers` reports it:
+// what it is, where it runs from on this machine, and exactly what it runs
+// in each permission mode. When a provider CLI changes its flags, this is
+// what shows the argv that broke — without reading the adapter's source.
+type Description struct {
+	ID        agent.Provider `json:"id"`
+	Label     string         `json:"label"`
+	Builtin   bool           `json:"builtin"`
+	Binary    string         `json:"binary"`
+	Path      string         `json:"path,omitempty"`
+	Available bool           `json:"available"`
+	Modes     []ModePreview  `json:"modes"`
+}
+
+// ModePreview is the command line one permission mode produces, with
+// TaskPlaceholder where the task goes.
+type ModePreview struct {
+	Mode agent.PermissionMode `json:"mode"`
+	Args []string             `json:"args"`
+	// Error is set when the adapter could not build the mode's arguments,
+	// which is a fact about the provider worth reporting in its place.
+	Error string `json:"error,omitempty"`
+}
+
+// Describe reports every registered provider in registration order.
+func (r *Registry) Describe() []Description {
+	descriptions := make([]Description, 0, len(r.order))
+	for _, id := range r.order {
+		adapter := r.adapters[id]
+		description := Description{
+			ID:      id,
+			Label:   adapter.Label(),
+			Builtin: IsBuiltin(id),
+			Binary:  adapter.Binary(),
+		}
+		description.Path, description.Available = locate(adapter)
+		for _, mode := range agent.Modes() {
+			preview := ModePreview{Mode: mode}
+			args, err := adapter.Preview(mode)
+			if err != nil {
+				preview.Error = err.Error()
+				// An empty list rather than nothing, so the JSON shape
+				// holds for a consumer that iterates it.
+				args = []string{}
+			}
+			preview.Args = args
+			description.Modes = append(description.Modes, preview)
+		}
+		descriptions = append(descriptions, description)
+	}
+	return descriptions
+}
+
+// locate answers where a provider's binary is on this machine, which is
+// the one fact "available" means. Infos and Describe both report it, and
+// they have to agree.
+func locate(adapter Adapter) (path string, available bool) {
+	path, err := exec.LookPath(adapter.Binary())
+	if err != nil {
+		return "", false
+	}
+	return path, true
+}
+
 func (r *Registry) Infos() []Info {
 	infos := make([]Info, 0, len(r.order))
 	for _, id := range r.order {
 		adapter := r.adapters[id]
-		launch, err := adapter.Resolve("availability check", agent.DefaultMode)
+		path, available := locate(adapter)
 		infos = append(infos, Info{
 			ID:        id,
 			Label:     adapter.Label(),
-			Available: err == nil,
-			Path:      launch.Path,
+			Available: available,
+			Path:      path,
 		})
 	}
 	return infos

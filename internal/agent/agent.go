@@ -137,6 +137,13 @@ const (
 	ModeAuto PermissionMode = "auto"
 )
 
+// Modes lists every permission mode, least to most permissive — the order
+// the New Agent form cycles through them and the order anything that
+// reports per mode should use.
+func Modes() []PermissionMode {
+	return []PermissionMode{ModeAsk, ModeEdits, ModeAuto}
+}
+
 // DefaultMode is used when a dispatch does not specify a permission mode.
 // Auto is the recommended way to run Stormlight agents: prompts are
 // answered in the agent's own terminal, so a mode that rarely prompts is

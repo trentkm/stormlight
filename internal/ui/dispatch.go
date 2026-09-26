@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -731,15 +732,12 @@ func (m *Model) syncTaskComposerSize() {
 	}
 }
 
+// nextDispatchMode cycles in the order agent.Modes gives, so the form and
+// everything else that lists modes agree on it.
 func nextDispatchMode(mode agent.PermissionMode) agent.PermissionMode {
-	switch mode {
-	case agent.ModeAsk:
-		return agent.ModeEdits
-	case agent.ModeEdits:
-		return agent.ModeAuto
-	default:
-		return agent.ModeAsk
-	}
+	modes := agent.Modes()
+	next := slices.Index(modes, mode) + 1
+	return modes[next%len(modes)]
 }
 
 func modeSummary(mode agent.PermissionMode) (string, string) {
