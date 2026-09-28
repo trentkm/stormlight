@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trentkm/stormlight/internal/agent"
 )
 
 // interactionContentTop is the screen row where the transcript viewport
@@ -63,7 +64,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		if widget.MouseReporting() {
+		if widget.MouseReporting() && !m.selectedAgentOwnsScrollback() {
 			// The hosted program asked for the mouse: the wheel is its —
 			// Claude Code scrolls its own transcript this way — so the
 			// event forwards as SGR mouse instead of moving the replica.
@@ -91,6 +92,17 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	m.moveSelectionIn(paneInteraction, direction*3)
 	return m, nil
+}
+
+// selectedAgentOwnsScrollback reports whether the selected agent's history
+// lives in the replica's scrollback rather than inside the program. Codex
+// runs with --no-alt-screen, so its transcript scrolls off the top of the
+// main screen into the replica; it may still enable mouse tracking for
+// clicks, but a wheel forwarded to it would scroll nothing, so the wheel
+// stays Stormlight's.
+func (m Model) selectedAgentOwnsScrollback() bool {
+	selected, ok := m.selectedAgent()
+	return ok && selected.Provider == agent.ProviderCodex
 }
 
 // gridCellAt maps screen coordinates to a cell of the terminal grid,

@@ -306,3 +306,38 @@ func TestTerminalInputKeepsItsOrder(t *testing.T) {
 		t.Fatalf("the agent received %q, want %q", got, typed)
 	}
 }
+
+// TestCodexWheelScrollsTheReplica keeps the wheel Stormlight's over Codex.
+// Codex runs with --no-alt-screen, so its history is the replica's
+// scrollback, and it turns on mouse tracking for clicks all the same. A
+// tick forwarded to it as SGR mouse would scroll nothing; the replica has
+// to move instead.
+func TestCodexWheelScrollsTheReplica(t *testing.T) {
+	transport := newWheelTransport(scrollbackSeed(200))
+	model, widget := wheelModelFixture(t, transport)
+	model.agents[0].Provider = agent.ProviderCodex
+	model.rebuildGroups(model.agents[0].Workspace.ID, "wheel-1")
+
+	transport.output <- pty.Message{Bytes: []byte("\x1b[?1000h\x1b[?1006h")}
+	deadline := time.Now().Add(2 * time.Second)
+	for !widget.MouseReporting() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !widget.MouseReporting() {
+		t.Fatal("the terminal never noticed the mouse-tracking mode")
+	}
+
+	updated, flush := model.Update(wheelUp())
+	model = updated.(Model)
+	if flush == nil {
+		t.Fatal("a wheel tick over Codex scheduled no scroll")
+	}
+	updated, _ = model.Update(flush())
+	model = updated.(Model)
+	if widget.Scrolled() == 0 {
+		t.Fatal("the wheel over Codex left the replica where it started")
+	}
+	if got := transport.delivered(); strings.Contains(got, "\x1b[<") {
+		t.Fatalf("the wheel was forwarded to Codex as mouse input: %q", got)
+	}
+}
