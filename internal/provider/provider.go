@@ -619,7 +619,10 @@ func codexLifecycleArgs(mode agent.PermissionMode) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"-c", notify, "-c", hooks}
+	// --no-alt-screen keeps Codex on the main screen. In the alternate
+	// screen its history lives only inside Codex, so the terminal Stormlight
+	// hosts has no scrollback and the wheel has nothing to move through.
+	args := []string{"-c", notify, "-c", hooks, "--no-alt-screen"}
 	return append(args, codexModeArgs(mode)...), nil
 }
 

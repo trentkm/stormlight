@@ -33,8 +33,8 @@ func TestCodexArgsConfigureLifecycleHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(args) != 9 || args[0] != "-c" || args[2] != "-c" ||
-		args[len(args)-1] != "do work" {
+	if len(args) != 10 || args[0] != "-c" || args[2] != "-c" ||
+		args[4] != "--no-alt-screen" || args[len(args)-1] != "do work" {
 		t.Fatalf("unexpected args: %#v", args)
 	}
 	// Codex holds injected hooks at "installed, not active" until a human
@@ -143,8 +143,8 @@ func TestPermissionModeMapsToProviderFlags(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Two -c overrides precede the mode flags: notify, then hooks.
-		wantCodex := append(slices.Clone(codex[:4]), c.codex...)
+		// Two -c overrides and --no-alt-screen precede the mode flags.
+		wantCodex := append(slices.Clone(codex[:5]), c.codex...)
 		wantCodex = append(wantCodex, "do work")
 		if !slices.Equal(codex, wantCodex) {
 			t.Fatalf("codex %s args = %#v, want %#v", c.mode, codex, wantCodex)
@@ -318,7 +318,8 @@ func TestResumeArgsReopenSessionWithLifecycleWiring(t *testing.T) {
 		t.Fatalf("codex resume args = %#v", codex)
 	}
 	if codex[1] != "-c" || codex[3] != "-c" ||
-		!slices.Contains(codex, "--ask-for-approval") {
+		!slices.Contains(codex, "--ask-for-approval") ||
+		!slices.Contains(codex, "--no-alt-screen") {
 		t.Fatalf("codex lifecycle wiring lost: %#v", codex)
 	}
 }
