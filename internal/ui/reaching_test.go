@@ -189,8 +189,10 @@ func TestTheDotsKeepMovingWhileAMachineIsBeingReached(t *testing.T) {
 		t.Fatal("the tick must keep running while a machine is being reached")
 	}
 
-	// And stop once nothing is outstanding.
-	settled, _ := model.Update(dashboardMsg{})
+	// And stop once nothing is outstanding. An idle agent is selected so
+	// the terminal pane shows its transcript: an empty pane would be the
+	// night sky, which keeps the tick for itself.
+	settled, _ := model.Update(dashboardMsg{agents: []agent.Agent{{ID: "idle"}}})
 	model = settled.(Model)
 	settled, _ = model.Update(catalogMsg{})
 	model = settled.(Model)

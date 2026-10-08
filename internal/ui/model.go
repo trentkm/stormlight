@@ -743,7 +743,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shimmerTickMsg:
-		if !m.anyAgentsActive() && !m.machineState.running && !m.stillReaching() {
+		if !m.anyAgentsActive() && !m.machineState.running && !m.stillReaching() && !m.skyAnimating() {
 			m.shimmerRunning = false
 			m.shimmerPhase = 0
 			return m, nil
@@ -814,7 +814,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// new agents get sessions, deleted agents lose them, and when
 		// nothing changed this is a cheap map diff.
 		cmds = append(cmds, m.ensurePTYCmd())
-		if (m.anyAgentsActive() || m.stillReaching()) && !m.shimmerRunning {
+		if (m.anyAgentsActive() || m.stillReaching() || m.skyAnimating()) && !m.shimmerRunning {
 			m.shimmerRunning = true
 			cmds = append(cmds, shimmerTickCmd())
 		}
@@ -881,7 +881,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ptyEnsuredMsg:
 		// Fresh sessions may include the selected agent's; listen to it.
-		return m, m.armPTYWait()
+		// Any still opening is drawn as the sky, which needs the tick.
+		cmds := []tea.Cmd{m.armPTYWait()}
+		if m.skyAnimating() {
+			cmds = append(cmds, m.startShimmer())
+		}
+		return m, tea.Batch(cmds...)
 
 	case pty.FrameMsg:
 		return m.handlePTYFrame(msg)
