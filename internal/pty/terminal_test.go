@@ -705,10 +705,12 @@ func plain(terminal Model) string {
 }
 
 // The blink a resize used to show, replayed from a captured Codex
-// session (#245): the daemon's clear-and-repaint, then Codex's clear
-// outside any synchronized update, then its redraw inside one. The clear
-// is never painted; the redraw is painted once it is whole.
-func TestAResizeNeverPaintsTheClearBeforeTheRedraw(t *testing.T) {
+// session (#245): the daemon's clear-and-reflow, Codex's partial
+// synchronized update of its bottom rows, its clear outside any
+// synchronized update, then its whole redraw inside one across several
+// messages. Nothing before the whole redraw is painted; it is painted
+// once it is whole.
+func TestAResizePaintsOnlyTheWholeRedraw(t *testing.T) {
 	transport := newFakeTransport("hello")
 	terminal := New(transport, NewGate(), 80, 24)
 	defer terminal.Close()
@@ -718,38 +720,60 @@ func TestAResizeNeverPaintsTheClearBeforeTheRedraw(t *testing.T) {
 
 	_, assert := terminal.SetSize(60, 20)
 	assert()
-
-	// The daemon answers with a clear and a repaint in one message.
-	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2JREPAINT")}
-	fence(transport)
-	if view := plain(terminal); !strings.Contains(view, "REPAINT") {
-		t.Fatalf("the daemon's repaint was not painted:\n%s", view)
+	// The local reflow is not painted.
+	if view := plain(terminal); !strings.Contains(view, "hello") {
+		t.Fatalf("the emulator's own reflow was painted:\n%s", view)
 	}
 
-	// Codex clears outside any synchronized update.
-	transport.output <- Message{Bytes: []byte("\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")}
-	fence(transport)
-	if view := plain(terminal); !strings.Contains(view, "REPAINT") {
-		t.Fatalf("the clear was painted as a blank frame:\n%s", view)
+	steps := []struct{ name, bytes, mustNot string }{
+		{"the daemon's reflow", "\x1b[0m\x1b[r\x1b[H\x1b[2JREFLOW", "REFLOW"},
+		{"the partial update", "\x1b[?2026h\x1b[18;1H\x1b[JPARTIAL\x1b[?2026l", "PARTIAL"},
+		{"the clear", "\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H", ""},
+		{"the redraw's first message", "\x1b[?2026h\x1b[1;20r\x1b[1;1HRE", "RE"},
+		{"the redraw's second message", "DRAW", "DRAW"},
 	}
-	if _, _, visible := terminal.Cursor(); visible {
-		t.Fatal("a cursor was shown on a held frame")
-	}
-
-	// Then redraws inside one, across several messages.
-	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[HRE")}
-	transport.output <- Message{Bytes: []byte("DRAW")}
-	fence(transport)
-	if view := plain(terminal); strings.Contains(view, "DRAW") || !strings.Contains(view, "REPAINT") {
-		t.Fatalf("a half-drawn screen was painted:\n%s", view)
+	for _, step := range steps {
+		transport.output <- Message{Bytes: []byte(step.bytes)}
+		fence(transport)
+		view := plain(terminal)
+		if !strings.Contains(view, "hello") || (step.mustNot != "" && strings.Contains(view, step.mustNot)) {
+			t.Fatalf("after %s the held frame was let go:\n%s", step.name, view)
+		}
+		if _, _, visible := terminal.Cursor(); visible {
+			t.Fatalf("after %s a cursor was shown on a held frame", step.name)
+		}
 	}
 	transport.output <- Message{Bytes: []byte("\x1b[?2026l")}
 	fence(transport)
-	if view := plain(terminal); !strings.Contains(view, "REDRAW") || strings.Contains(view, "REPAINT") {
+	if view := plain(terminal); !strings.Contains(view, "REDRAW") || strings.Contains(view, "hello") {
 		t.Fatalf("the finished redraw was not painted:\n%s", view)
 	}
 	if _, _, visible := terminal.Cursor(); !visible {
 		t.Fatal("the cursor stayed hidden on a painted screen")
+	}
+}
+
+// Claude Code's shape of the same thing: the daemon's reflow, then one
+// synchronized update that clears and redraws, across messages.
+func TestAResizePaintsClaudeCodesRedrawWhole(t *testing.T) {
+	transport := newFakeTransport("hello")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	transport.output <- Message{Bytes: []byte("\x1b[0m\x1b[r\x1b[H\x1b[2JREFLOW")}
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[?25l\x1b[2J\x1b[HCLAUDE ")}
+	transport.output <- Message{Bytes: []byte("REDREW")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hello") {
+		t.Fatalf("something before the whole redraw was painted:\n%s", view)
+	}
+	transport.output <- Message{Bytes: []byte("\x1b[?2026l")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "CLAUDE REDREW") {
+		t.Fatalf("the finished redraw was not painted:\n%s", view)
 	}
 }
 
@@ -796,9 +820,9 @@ func TestAStalledSynchronizedUpdateIsReleased(t *testing.T) {
 	}
 }
 
-// Outside the window after a resize, a blank screen is what the program
-// meant, and it is painted.
-func TestABlankScreenIsPaintedOnceTheResizeWindowPasses(t *testing.T) {
+// A program that redraws without synchronized updates is painted once
+// the window passes: a stale frame, briefly, rather than its reflow.
+func TestAPlainRedrawIsPaintedOnceTheResizeWindowPasses(t *testing.T) {
 	previous := resizeHold
 	resizeHold = 150 * time.Millisecond
 	t.Cleanup(func() { resizeHold = previous })
@@ -812,16 +836,16 @@ func TestABlankScreenIsPaintedOnceTheResizeWindowPasses(t *testing.T) {
 
 	_, assert := terminal.SetSize(60, 20)
 	assert()
-	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2J")}
+	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2JPLAIN")}
 	fence(transport)
 	if view := plain(terminal); !strings.Contains(view, "hi") {
-		t.Fatalf("a clear inside the window was painted:\n%s", view)
+		t.Fatalf("a plain repaint inside the window was painted:\n%s", view)
 	}
 	deadline := time.Now().Add(time.Second)
-	for strings.Contains(plain(terminal), "hi") && time.Now().Before(deadline) {
+	for !strings.Contains(plain(terminal), "PLAIN") && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
-	if view := plain(terminal); strings.Contains(view, "hi") {
+	if view := plain(terminal); !strings.Contains(view, "PLAIN") {
 		t.Fatalf("the window never closed; the stale frame is still up:\n%s", view)
 	}
 }

@@ -2,6 +2,7 @@
 package pty
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -133,9 +134,14 @@ type state struct {
 	// open synchronized update, or a blank one in the window after a
 	// resize. heldShowing says the last View answered with it. See View.
 	held        []string
+	heldCursor  int
 	heldShowing bool
-	holdUntil   time.Time
 	holdTimer   *time.Timer
+	// awaitingRedraw is the window after a resize: the held frame stands
+	// in until a synchronized update redraws the whole screen, or the
+	// window expires. blockRedraws marks the open block as one that did.
+	awaitingRedraw bool
+	blockRedraws   bool
 	// heldFit caches held fitted to the box, since a render pass asks
 	// for it as often as it likes while a block is open.
 	heldFit                  string
@@ -291,7 +297,7 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	s.mu.Lock()
 	boxRows := s.rows
 	s.mu.Unlock()
-	heldLines := linesOf(replacement, boxRows)
+	heldLines, heldCursor := linesOf(replacement, boxRows)
 
 	s.mu.Lock()
 	if s.closed {
@@ -309,7 +315,7 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 		// ever correct it, because the box size never changed.
 		cols, rows = s.termCols, s.termRows
 		replacement.Resize(cols, rows)
-		heldLines = linesOf(replacement, s.rows)
+		heldLines, heldCursor = linesOf(replacement, s.rows)
 	}
 	previous := s.emu
 	s.emu = replacement
@@ -324,7 +330,7 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	if s.syncing {
 		s.setSyncing(false)
 	}
-	s.setHeld(heldLines)
+	s.setHeld(heldLines, heldCursor)
 	s.mu.Unlock()
 
 	// The old emulator's drain goroutine only ends when its pipe does,
@@ -400,14 +406,34 @@ func (s *state) pump(model Model) {
 		sync := s.observeModes(chunk)
 		s.mu.Lock()
 		s.emu.Write(chunk)
+		opened := sync != nil && *sync
+		closed := sync != nil && !*sync
+		if s.awaitingRedraw && (s.syncing || opened || closed) {
+			// Part of a synchronized update: does it redraw the screen?
+			if opened {
+				s.blockRedraws = redrawsScreen(chunk)
+			} else if redrawsScreen(chunk) {
+				s.blockRedraws = true
+			}
+		}
 		if sync != nil {
 			s.setSyncing(*sync)
+		}
+		if closed {
+			if s.awaitingRedraw && s.blockRedraws {
+				// The whole screen, redrawn for the new size: the wait
+				// after the resize is over.
+				s.awaitingRedraw = false
+			}
+			s.blockRedraws = false
 			// The screen at a close is whole, and the frame to hold
 			// from here. Taken now rather than at the next render
 			// pass, which a program redrawing fast enough opens the
 			// next block before; only for a terminal on screen, whose
-			// held frame is the only one anything paints.
-			if !*sync && s.visible.Load() && s.scroll == 0 {
+			// held frame is the only one anything paints — and not
+			// while a resize is still waiting for its redraw, when the
+			// frame to hold is the one from before it.
+			if !s.awaitingRedraw && s.visible.Load() && s.scroll == 0 {
 				s.setHeld(linesOf(s.emu, s.rows))
 			}
 		}
@@ -514,41 +540,71 @@ func (m Model) Write(data []byte) error {
 
 func (m Model) ID() int64 { return m.id }
 
-// What a resize does to the screen, measured on a Codex session
-// (#245): the daemon answers the resize at once with a clear and a full
-// repaint in one message; Codex follows with a small synchronized
-// update; then, some 80ms later, Codex clears the screen and scrollback
-// *outside* any synchronized update and redraws inside one, spread over
-// several messages. Painted as the messages arrive, that is a blank
-// frame and then a half-drawn one before the finished screen — the
-// blink every resize showed. Two rules remove it, both in View:
+// What a resize does to the screen, measured on Codex and Claude Code
+// sessions (#245). The daemon answers the resize at once with a clear
+// and a reflow of the old screen at the new width, unsynchronized.
+// Codex follows with a small synchronized update of its bottom rows;
+// then, some 80ms later, clears the screen and scrollback outside any
+// synchronized update and redraws the whole screen inside one, spread
+// over several messages. Claude Code redraws some 35ms after the
+// notice, clearing and redrawing inside one block. The local emulator
+// reflows too, the moment it is resized. Painted as they arrive, that
+// is a reflow, a reflow with a corrected bottom, a blank, and a
+// half-drawn screen before the finished one — and the reflows are the
+// subtle glitch: a transcript's boxes drawn with erase-to-end-of-line
+// at one width do not survive another. Two rules remove all of it,
+// both in View:
 //
 //   - A screen inside an open synchronized update is not painted. The
 //     program said so; xterm.js honors it and the emulator here does
 //     not, so the widget does. syncWatchdog releases a block that never
 //     closes.
-//   - For resizeHold after any resize, a blank screen is not painted
-//     either, because in that window a blank screen is a clear whose
-//     redraw is on its way. Outside the window a blank screen is what
-//     the program meant.
+//   - After a resize, nothing is painted until a synchronized update
+//     that redrew the whole screen closes — one that cleared it or
+//     went back to its first row, which the partial at the bottom and
+//     the unsynchronized reflows never do — or until resizeHold passes,
+//     for a program that redraws some other way.
 //
 // In both cases the last frame painted whole stands in, fitted to the
 // box, with the cursor hidden — it belongs to a screen that is not the
 // one on show.
 var (
-	resizeHold   = 600 * time.Millisecond
+	resizeHold   = 400 * time.Millisecond
 	syncWatchdog = time.Second
 )
+
+// redrawsScreen reports a chunk that clears the screen or returns to
+// its first row: inside a synchronized update, the mark of a whole
+// redraw rather than a partial one.
+func redrawsScreen(chunk []byte) bool {
+	for _, mark := range redrawMarks {
+		if bytes.Contains(chunk, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+var redrawMarks = [][]byte{
+	[]byte("\x1b[2J"), []byte("\x1b[3J"),
+	[]byte("\x1b[H"), []byte("\x1b[1;1H"), []byte("\x1b[;1H"), []byte("\x1b[1;H"),
+}
 
 // openHold starts the window after a resize in which a blank screen is
 // not painted. Called with mu held.
 func (s *state) openHold() {
-	s.holdUntil = time.Now().Add(resizeHold)
+	s.awaitingRedraw = true
+	s.blockRedraws = false
 	if s.holdTimer != nil {
 		s.holdTimer.Stop()
 	}
 	// When the window closes, whatever is on the screen is painted.
-	s.holdTimer = time.AfterFunc(resizeHold, s.repaint)
+	s.holdTimer = time.AfterFunc(resizeHold, func() {
+		s.mu.Lock()
+		s.awaitingRedraw = false
+		s.mu.Unlock()
+		s.repaint()
+	})
 }
 
 // setSyncing follows a synchronized update opening or closing in the
@@ -607,21 +663,40 @@ func (s *state) showHeld() string {
 	return s.view
 }
 
-// heldView is the last frame painted whole, fitted to the current box.
+// heldView is the last frame painted whole, fitted to the current box
+// the way the screen is: around where its cursor was, if the box has
+// fewer rows than the frame.
 func (s *state) heldView() string {
 	if s.heldFitValid && s.heldFitCols == s.cols && s.heldFitRows == s.rows {
 		return s.heldFit
 	}
 	lines := append([]string(nil), s.held...)
+	lines, _ = clipAround(lines, s.heldCursor, s.rows)
 	s.heldFit = fit(lines, s.cols, s.rows)
 	s.heldFitCols, s.heldFitRows, s.heldFitValid = s.cols, s.rows, true
 	return s.heldFit
 }
 
-// setHeld records a frame painted whole. Called with mu held.
-func (s *state) setHeld(lines []string) {
+// setHeld records a frame painted whole, and the row its cursor was
+// on. Called with mu held.
+func (s *state) setHeld(lines []string, cursor int) {
 	s.held = append(s.held[:0], lines...)
+	s.heldCursor = cursor
 	s.heldFitValid = false
+}
+
+// clipAround keeps rows of a screen: the bottom ones, unless the cursor
+// sits above them, in which case the rows around the cursor. It returns
+// the cursor's row within what it kept.
+func clipAround(lines []string, cursor, rows int) ([]string, int) {
+	if len(lines) <= rows {
+		return lines, cursor
+	}
+	bottom := len(lines)
+	if cursor < bottom-rows {
+		bottom = max(cursor+1, rows)
+	}
+	return lines[bottom-rows : bottom], cursor - (bottom - rows)
 }
 
 // screenLines is the screen as View would paint it, before fitting:
@@ -629,7 +704,8 @@ func (s *state) setHeld(lines []string) {
 // scrollback window when scrolled. Called with mu held.
 func (s *state) screenLines() []string {
 	if s.scroll == 0 || s.emu.IsAltScreen() {
-		return linesOf(s.emu, s.rows)
+		lines, _ := linesOf(s.emu, s.rows)
+		return lines
 	}
 	var lines []string
 	back := s.emu.Scrollback()
@@ -647,19 +723,11 @@ func (s *state) screenLines() []string {
 	return lines
 }
 
-// linesOf is an emulator's live screen clipped to rows: the bottom of
-// it, unless the cursor sits above that, in which case the rows around
-// the cursor.
-func linesOf(emu *vt.Emulator, rows int) []string {
+// linesOf is an emulator's live screen clipped to rows, around the
+// cursor, and the cursor's row within it.
+func linesOf(emu *vt.Emulator, rows int) ([]string, int) {
 	lines := strings.Split(repairVTHyperlinks(emu.Render()), "\n")
-	if len(lines) > rows {
-		bottom := len(lines)
-		if cursor := emu.CursorPosition().Y; cursor < bottom-rows {
-			bottom = max(cursor+1, rows)
-		}
-		lines = lines[bottom-rows : bottom]
-	}
-	return lines
+	return clipAround(lines, emu.CursorPosition().Y, rows)
 }
 
 // decide numbers a new size decision: whatever was pending — a settle's
@@ -673,16 +741,6 @@ func (s *state) decide() uint64 {
 		s.settleTimer = nil
 	}
 	return s.resizeSeq
-}
-
-// blank reports a screen with nothing on it.
-func blank(lines []string) bool {
-	for _, line := range lines {
-		if strings.TrimSpace(ansi.Strip(line)) != "" {
-			return false
-		}
-	}
-	return true
 }
 
 // SetSize is the deliberate resize: a zoom toggled, an attach returned.
@@ -975,14 +1033,18 @@ func (m Model) View() string {
 	// and a wheel that moved nothing reads as a wheel ignored. See the
 	// frame hold above SetSize.
 	live := s.scroll == 0 || s.emu.IsAltScreen()
-	if live && s.syncing && s.held != nil {
+	if live && s.held != nil && (s.syncing || s.awaitingRedraw) {
 		return s.showHeld()
 	}
-	lines := s.screenLines()
-	if live && s.held != nil && time.Now().Before(s.holdUntil) && blank(lines) {
-		return s.showHeld()
+	var lines []string
+	var cursor int
+	if live {
+		lines, cursor = linesOf(s.emu, s.rows)
+	} else {
+		lines = s.screenLines()
+		cursor = len(lines) - 1
 	}
-	s.setHeld(lines)
+	s.setHeld(lines, cursor)
 	s.heldShowing = false
 	s.view = fit(lines, s.cols, s.rows)
 	s.viewDirty = false
