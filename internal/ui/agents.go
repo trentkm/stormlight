@@ -160,36 +160,30 @@ func renderAgentCard(
 		inner,
 	)
 
+	// On the path the title is in full ink; off it, muted like the rest
+	// of the card. The state's own colors — urgent amber, the working
+	// glow — outrank either, as they do on the compact row; a delete
+	// confirmation outranks everything.
 	border := cardBorderFor(selected, focused, danger)
-	if !focused && !danger {
-		renderedTitle := titleStyle().Render(title)
-		detailStyle := mutedStyle()
-		switch rowEmphasisFor(managedAgent) {
-		case emphasisUrgent:
-			attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
-			renderedTitle = attentionStyle.Render(title)
-			detailStyle = attentionStyle
-		case emphasisWorking:
-			renderedTitle = shimmerText(title, shimmerPhase, nil)
-		}
-		top := statusStyle.Render(symbol) + " " + renderedTitle +
-			strings.Repeat(" ", gap) + detailStyle.Render(age)
-		return renderCard(top, detailStyle.Render(detail), width, border, nil)
+	titleInk := mutedStyle()
+	if selected || focused {
+		titleInk = titleStyle().Bold(true)
 	}
-
-	theme := rowThemeFor(danger)
-	base := lipgloss.NewStyle().Foreground(theme.text).Background(theme.background)
-	renderedTitle := base.Copy().Bold(true).Render(title)
-	switch rowEmphasisFor(managedAgent) {
-	case emphasisUrgent:
-		renderedTitle = base.Copy().Foreground(colorWaiting()).Bold(true).Render(title)
-	case emphasisWorking:
-		renderedTitle = shimmerText(title, shimmerPhase, theme.background)
+	detailStyle := mutedStyle()
+	renderedTitle := titleInk.Render(title)
+	switch {
+	case danger:
+		renderedTitle = lipgloss.NewStyle().Foreground(colorFailed()).Bold(true).Render(title)
+	case rowEmphasisFor(managedAgent) == emphasisUrgent:
+		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
+		renderedTitle = attentionStyle.Render(title)
+		detailStyle = attentionStyle
+	case rowEmphasisFor(managedAgent) == emphasisWorking:
+		renderedTitle = shimmerText(title, shimmerPhase, nil)
 	}
-	top := statusStyle.Copy().Background(theme.background).Render(symbol) +
-		base.Render(" ") + renderedTitle +
-		base.Render(strings.Repeat(" ", gap)+age)
-	return renderCard(top, base.Render(detail), width, border, theme.background)
+	top := statusStyle.Render(symbol) + " " + renderedTitle +
+		strings.Repeat(" ", gap) + detailStyle.Render(age)
+	return renderCard(top, detailStyle.Render(detail), width, border)
 }
 
 // agentPath is where an agent is: the component it was dispatched into,

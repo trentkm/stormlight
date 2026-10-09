@@ -721,7 +721,8 @@ func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
 	}
 	step, size := 1, 1
 	if expanded {
-		step, size = 3, 2
+		// The whole card stays lit, border included.
+		step, size = cardRows, cardRows
 	}
 	return undimmedRows{start: (cursor - start) * step, count: size}
 }

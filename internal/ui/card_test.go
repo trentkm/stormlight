@@ -12,7 +12,7 @@ import (
 
 func TestACardIsAFrameAtThePanesWidth(t *testing.T) {
 	for _, width := range []int{12, 30, 52} {
-		card := ansi.Strip(renderCard("title", "detail", width, colorBorder(), nil))
+		card := ansi.Strip(renderCard("title", "detail", width, colorBorder()))
 		lines := strings.Split(card, "\n")
 		if len(lines) != cardRows {
 			t.Fatalf("width %d: %d lines, want %d:\n%s", width, len(lines), cardRows, card)
@@ -31,7 +31,7 @@ func TestACardIsAFrameAtThePanesWidth(t *testing.T) {
 }
 
 func TestACardCutsALineThatOverflows(t *testing.T) {
-	card := ansi.Strip(renderCard(strings.Repeat("x", 40), "d", 20, colorBorder(), nil))
+	card := ansi.Strip(renderCard(strings.Repeat("x", 40), "d", 20, colorBorder()))
 	for index, line := range strings.Split(card, "\n") {
 		if got := lipgloss.Width(line); got != 20 {
 			t.Fatalf("line %d is %d wide, want 20: %q", index, got, line)
@@ -109,5 +109,38 @@ func TestAWorkspaceCardNamesItsMachineAndPath(t *testing.T) {
 	}
 	if strings.Contains(card, "git") {
 		t.Fatalf("the kind is back on the card:\n%s", card)
+	}
+}
+
+// Both cards on the path are lit the same: the chosen workspace and the
+// chosen agent in it, whichever pane the cursor is in. Nothing else is,
+// and nothing is filled.
+func TestThePathsCardsAreLitAndNothingIsFilled(t *testing.T) {
+	if cardBorderFor(true, false, false) != colorBand() || cardBorderFor(false, true, false) != colorBand() {
+		t.Fatal("a card on the path is not lit")
+	}
+	if cardBorderFor(false, false, false) != colorBorder() {
+		t.Fatal("a card off the path is lit")
+	}
+	if cardBorderFor(true, true, true) != colorFailed() {
+		t.Fatal("a card awaiting delete confirmation is not red")
+	}
+	lit := renderAgentCard(agent.Agent{ID: "a", Provider: agent.ProviderCodex, Name: "hello", Cwd: "/x"},
+		true, true, 40, false, -1)
+	for _, line := range strings.Split(lit, "\n") {
+		if strings.Contains(line, "[48;") {
+			t.Fatalf("a background fill inside a card: %q", line)
+		}
+	}
+}
+
+// The dimming of the pane the cursor has left keeps the whole selected
+// card lit, border included.
+func TestTheDimmingKeepsTheWholeCard(t *testing.T) {
+	model := NewModel(stubBackend{})
+	model.rowsExpanded = true
+	rows := model.selectedRowRange(3, 1, 20)
+	if rows.start != cardRows || rows.count != cardRows {
+		t.Fatalf("undimmed rows = %+v, want the second card's four rows", rows)
 	}
 }

@@ -314,36 +314,29 @@ func (m Model) renderWorkspaceCard(
 	detail := workspaceDetail(group.context, inner)
 	tier := attentionTierOf(stats)
 
+	// On the path the name is in full ink; off it, muted like the rest
+	// of the card. Attention and the working glow outrank either, as on
+	// the compact row; a delete confirmation outranks everything.
 	border := cardBorderFor(selected, focused, danger)
-	if !focused && !danger {
-		renderedName := titleStyle().Render(name)
-		switch {
-		case tier == tierUrgent:
-			renderedName = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true).Render(name)
-		case stats.Working > 0:
-			renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
-		}
-		styledSuffix := chipsStyled(chips)
-		if mark != "" {
-			styledSuffix = mutedStyle().Render(mark) + styledSuffix
-		}
-		top := renderedName + strings.Repeat(" ", gap) + styledSuffix
-		return renderCard(top, mutedStyle().Render(detail), width, border, nil)
+	nameInk := mutedStyle()
+	if selected || focused {
+		nameInk = titleStyle().Bold(true)
 	}
-
-	theme := rowThemeFor(danger)
-	base := lipgloss.NewStyle().Foreground(theme.text).Background(theme.background)
-	renderedName := base.Copy().Bold(true).Render(name)
+	renderedName := nameInk.Render(name)
 	switch {
+	case danger:
+		renderedName = lipgloss.NewStyle().Foreground(colorFailed()).Bold(true).Render(name)
 	case tier == tierUrgent:
-		renderedName = base.Copy().Foreground(colorWaiting()).Bold(true).Render(name)
+		renderedName = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true).Render(name)
 	case stats.Working > 0:
-		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), theme.background)
+		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
 	}
-	// The chips sit on the selection surface in its own ink, as they do
-	// on the compact cursor row.
-	top := renderedName + base.Render(strings.Repeat(" ", gap)+suffix)
-	return renderCard(top, base.Render(detail), width, border, theme.background)
+	styledSuffix := chipsStyled(chips)
+	if mark != "" {
+		styledSuffix = mutedStyle().Render(mark) + styledSuffix
+	}
+	top := renderedName + strings.Repeat(" ", gap) + styledSuffix
+	return renderCard(top, mutedStyle().Render(detail), width, border)
 }
 
 // A countChip is one tier of a workspace's population, told in the glyph the

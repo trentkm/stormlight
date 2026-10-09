@@ -5,11 +5,15 @@ package ui
 // A compact row is one line, and the panes are lists of them. Expanded,
 // each row is a card — its title line and one line of detail, inside a
 // thin rounded border — stacked with the borders as their separation.
-// The border carries the selection: silver on the row the cursor is on,
-// dimmer silver on a selection remembered in a pane the cursor has
-// left, the quiet border color otherwise, and the danger color on a
-// row awaiting its delete confirmation. The cursor row keeps the filled
-// background inside its border, as it has in the compact list.
+// The border carries the selection, and nothing else does: the two
+// cards on the path, the chosen workspace and the chosen agent in it,
+// are framed in the strip's bright silver with their titles in full
+// ink, every other card sits in the quiet border color with its title
+// muted, and a row awaiting its delete confirmation is framed in red.
+// No card is filled. The compact list paints its cursor row's
+// background, and that fill inside a frame read as a smear rather than
+// a cursor; the band at the top of the panes already says which side
+// of the seam the keyboard is on.
 //
 // The detail line is the path. Resolver kinds, checkout labels, and
 // component names used to share it, and none of them said anything the
@@ -34,37 +38,31 @@ func cardInnerWidth(width int) int {
 	return max(1, width-cardInset)
 }
 
-// cardBorderFor is the border's color for a row's selection state.
+// cardBorderFor is the border's color for a row's selection state: on
+// the path — the cursor row, or the selection remembered in the pane
+// the cursor has left — it is lit.
 func cardBorderFor(selected, focused, danger bool) color.Color {
 	switch {
 	case danger:
 		return colorFailed()
-	case focused:
+	case selected || focused:
 		return colorBand()
-	case selected:
-		return colorBandMuted()
 	}
 	return colorBorder()
 }
 
 // renderCard frames two lines, already rendered at the card's inner
-// width, in a thin rounded border. background, when set, fills the
-// padding beside the lines so a filled row reads as one surface edge to
-// edge inside the frame; the lines themselves carry their own.
-func renderCard(top, bottom string, width int, border, background color.Color) string {
+// width, in a thin rounded border.
+func renderCard(top, bottom string, width int, border color.Color) string {
 	inner := cardInnerWidth(width)
 	edge := lipgloss.NewStyle().Foreground(border)
-	pad := lipgloss.NewStyle()
-	if background != nil {
-		pad = pad.Background(background)
-	}
 	rule := strings.Repeat("─", inner+2)
 	line := func(content string) string {
 		content = ansi.Truncate(content, inner, "")
 		if short := inner - lipgloss.Width(content); short > 0 {
-			content += pad.Render(strings.Repeat(" ", short))
+			content += strings.Repeat(" ", short)
 		}
-		return edge.Render("│") + pad.Render(" ") + content + pad.Render(" ") + edge.Render("│")
+		return edge.Render("│ ") + content + edge.Render(" │")
 	}
 	return strings.Join([]string{
 		edge.Render("╭" + rule + "╮"),
