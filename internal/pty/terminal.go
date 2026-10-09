@@ -128,6 +128,18 @@ type state struct {
 	// have not followed yet: settleTimer is running. See Settle.
 	settling    bool
 	settleTimer *time.Timer
+	// The frame hold. held is the last frame painted whole, kept so it
+	// can stand in for one that must not be painted: a screen inside an
+	// open synchronized update, or a blank one in the window after a
+	// resize. heldShowing says the last View answered with it. See View.
+	held        []string
+	heldShowing bool
+	holdUntil   time.Time
+	holdTimer   *time.Timer
+	// syncing is an open synchronized update (DEC 2026): the program has
+	// said the screen is mid-change and not to be shown until it closes.
+	syncing   bool
+	syncTimer *time.Timer
 	// assertFailing marks a run of failed assertions, so a terminal
 	// that refuses every one — a session whose process has exited is
 	// the usual way — is reported once rather than at the reconcile's
@@ -322,6 +334,7 @@ func (m Model) setTerminalSize(cols, rows int) {
 		s.termCols, s.termRows = cols, rows
 		s.sizeGeneration++
 		s.viewDirty = true
+		s.openHold()
 	}
 	s.mu.Unlock()
 	if s.visible.Load() {
@@ -401,6 +414,8 @@ func (s *state) observeModes(chunk []byte) {
 			switch mode {
 			case "1000", "1002", "1003":
 				s.mouseReporting.Store(set)
+			case "2026":
+				s.setSyncing(set)
 			}
 		}
 	}
@@ -442,6 +457,91 @@ func (m Model) Write(data []byte) error {
 
 func (m Model) ID() int64 { return m.id }
 
+// What a resize does to the screen, measured on a Codex session
+// (#245): the daemon answers the resize at once with a clear and a full
+// repaint in one message; Codex follows with a small synchronized
+// update; then, some 80ms later, Codex clears the screen and scrollback
+// *outside* any synchronized update and redraws inside one, spread over
+// several messages. Painted as the messages arrive, that is a blank
+// frame and then a half-drawn one before the finished screen — the
+// blink every resize showed. Two rules remove it, both in View:
+//
+//   - A screen inside an open synchronized update is not painted. The
+//     program said so; xterm.js honors it and the emulator here does
+//     not, so the widget does. syncWatchdog releases a block that never
+//     closes.
+//   - For resizeHold after any resize, a blank screen is not painted
+//     either, because in that window a blank screen is a clear whose
+//     redraw is on its way. Outside the window a blank screen is what
+//     the program meant.
+//
+// In both cases the last frame painted whole stands in, fitted to the
+// box, with the cursor hidden — it belongs to a screen that is not the
+// one on show.
+var (
+	resizeHold   = 600 * time.Millisecond
+	syncWatchdog = time.Second
+)
+
+// openHold starts the window after a resize in which a blank screen is
+// not painted. Called with mu held.
+func (s *state) openHold() {
+	s.holdUntil = time.Now().Add(resizeHold)
+	if s.holdTimer != nil {
+		s.holdTimer.Stop()
+	}
+	// When the window closes, whatever is on the screen is painted.
+	s.holdTimer = time.AfterFunc(resizeHold, s.repaint)
+}
+
+// setSyncing follows a synchronized update opening or closing in the
+// stream. An open block that outlives syncWatchdog is treated as closed,
+// so a program that forgets the close cannot freeze the pane.
+func (s *state) setSyncing(open bool) {
+	s.mu.Lock()
+	s.syncing = open
+	if s.syncTimer != nil {
+		s.syncTimer.Stop()
+		s.syncTimer = nil
+	}
+	if open {
+		s.syncTimer = time.AfterFunc(syncWatchdog, func() {
+			s.mu.Lock()
+			s.syncing = false
+			s.mu.Unlock()
+			s.repaint()
+		})
+	}
+	s.mu.Unlock()
+}
+
+// repaint marks the view stale and asks for a render pass, for timers
+// that change what View would answer without any bytes arriving.
+func (s *state) repaint() {
+	s.mu.Lock()
+	s.viewDirty = true
+	s.mu.Unlock()
+	if s.visible.Load() {
+		s.gate.Notify()
+	}
+}
+
+// heldView is the last frame painted whole, fitted to the current box.
+func (s *state) heldView() string {
+	lines := append([]string(nil), s.held...)
+	return fit(lines, s.cols, s.rows)
+}
+
+// blank reports a screen with nothing on it.
+func blank(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(ansi.Strip(line)) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // SetSize is the deliberate resize: a zoom toggled, an attach returned.
 // It asserts the new size on both the replica and the hosted terminal at
 // once — as opposed to setTerminalSize, which follows a move someone
@@ -455,6 +555,7 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 		s.cols, s.rows, s.termCols, s.termRows = cols, rows, cols, rows
 		s.sizeGeneration++
 		s.viewDirty = true
+		s.openHold()
 	}
 	s.resizeSeq++
 	seq := s.resizeSeq
@@ -541,6 +642,7 @@ func (s *state) settle(seq uint64, cols, rows int) {
 		s.termCols, s.termRows = cols, rows
 		s.sizeGeneration++
 		s.viewDirty = true
+		s.openHold()
 	}
 	landed := cols == s.assertedCols && rows == s.assertedRows
 	s.mu.Unlock()
@@ -716,6 +818,12 @@ func (m Model) View() string {
 	if !s.viewDirty {
 		return s.view
 	}
+	// Mid-update, the last whole frame stands in; the view stays dirty
+	// so the close repaints. See the frame hold above SetSize.
+	if s.syncing && s.held != nil {
+		s.heldShowing = true
+		return s.heldView()
+	}
 	var lines []string
 	if s.scroll == 0 || s.emu.IsAltScreen() {
 		lines = strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
@@ -740,6 +848,12 @@ func (m Model) View() string {
 			}
 		}
 	}
+	if s.held != nil && time.Now().Before(s.holdUntil) && blank(lines) {
+		s.heldShowing = true
+		return s.heldView()
+	}
+	s.held = append(s.held[:0], lines...)
+	s.heldShowing = false
 	s.view = fit(lines, s.cols, s.rows)
 	s.viewDirty = false
 	return s.view
@@ -794,7 +908,8 @@ func (m Model) Cursor() (int, int, bool) {
 	s := m.state
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.scroll != 0 {
+	if s.scroll != 0 || s.heldShowing {
+		// A held frame is not the screen the cursor is on.
 		return 0, 0, false
 	}
 	cursor := s.emu.CursorPosition()

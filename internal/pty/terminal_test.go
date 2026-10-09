@@ -681,3 +681,137 @@ func TestAGestureThatEndsWhereItBeganAssertsNothing(t *testing.T) {
 		t.Fatal("still settling after the wait")
 	}
 }
+
+// fence proves the pump has finished the chunk before it: the output
+// channel is unbuffered, so a send returns once the previous one was
+// taken and processed.
+func fence(transport *fakeTransport) {
+	transport.output <- Message{Bytes: nil}
+	transport.output <- Message{Bytes: nil}
+}
+
+func plain(terminal Model) string {
+	return ansi.Strip(terminal.View())
+}
+
+// The blink a resize used to show, replayed from a captured Codex
+// session (#245): the daemon's clear-and-repaint, then Codex's clear
+// outside any synchronized update, then its redraw inside one. The clear
+// is never painted; the redraw is painted once it is whole.
+func TestAResizeNeverPaintsTheClearBeforeTheRedraw(t *testing.T) {
+	transport := newFakeTransport("hello")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	if !strings.Contains(plain(terminal), "hello") {
+		t.Fatal("seed not painted")
+	}
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+
+	// The daemon answers with a clear and a repaint in one message.
+	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2JREPAINT")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "REPAINT") {
+		t.Fatalf("the daemon's repaint was not painted:\n%s", view)
+	}
+
+	// Codex clears outside any synchronized update.
+	transport.output <- Message{Bytes: []byte("\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "REPAINT") {
+		t.Fatalf("the clear was painted as a blank frame:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); visible {
+		t.Fatal("a cursor was shown on a held frame")
+	}
+
+	// Then redraws inside one, across several messages.
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[HRE")}
+	transport.output <- Message{Bytes: []byte("DRAW")}
+	fence(transport)
+	if view := plain(terminal); strings.Contains(view, "DRAW") || !strings.Contains(view, "REPAINT") {
+		t.Fatalf("a half-drawn screen was painted:\n%s", view)
+	}
+	transport.output <- Message{Bytes: []byte("\x1b[?2026l")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "REDRAW") || strings.Contains(view, "REPAINT") {
+		t.Fatalf("the finished redraw was not painted:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); !visible {
+		t.Fatal("the cursor stayed hidden on a painted screen")
+	}
+}
+
+// Synchronized updates are honored whether or not a resize is involved:
+// the screen inside one is painted when it closes, not as it arrives.
+func TestASynchronizedUpdateIsPaintedWholeOrNotAtAll(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("an open synchronized update was painted:\n%s", view)
+	}
+	transport.output <- Message{Bytes: []byte("IAL\x1b[?2026l")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "PARTIAL") {
+		t.Fatalf("the closed update was not painted:\n%s", view)
+	}
+}
+
+// A program that opens a synchronized update and never closes it cannot
+// freeze the pane: the watchdog paints what is there.
+func TestAStalledSynchronizedUpdateIsReleased(t *testing.T) {
+	previous := syncWatchdog
+	syncWatchdog = 20 * time.Millisecond
+	t.Cleanup(func() { syncWatchdog = previous })
+
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HSTUCK")}
+	fence(transport)
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(plain(terminal), "STUCK") && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if view := plain(terminal); !strings.Contains(view, "STUCK") {
+		t.Fatalf("the stalled update was never released:\n%s", view)
+	}
+}
+
+// Outside the window after a resize, a blank screen is what the program
+// meant, and it is painted.
+func TestABlankScreenIsPaintedOnceTheResizeWindowPasses(t *testing.T) {
+	previous := resizeHold
+	resizeHold = 150 * time.Millisecond
+	t.Cleanup(func() { resizeHold = previous })
+
+	// The seed sits on the last row: a held frame is fitted to the box
+	// the way the screen is, bottom first, and the pane is shrinking.
+	transport := newFakeTransport(strings.Repeat("\r\n", 23) + "hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2J")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("a clear inside the window was painted:\n%s", view)
+	}
+	deadline := time.Now().Add(time.Second)
+	for strings.Contains(plain(terminal), "hi") && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if view := plain(terminal); strings.Contains(view, "hi") {
+		t.Fatalf("the window never closed; the stale frame is still up:\n%s", view)
+	}
+}
