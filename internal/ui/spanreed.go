@@ -15,14 +15,15 @@ import (
 )
 
 // renderEmptyPortal is the Spanreed with nothing to show — not an error,
-// an invitation, centered where the terminal would be.
+// an invitation, under the night sky where the terminal would be. The
+// sky drifts on the shimmer tick, which skyAnimating keeps alive for it;
+// see sky.go.
 func (m Model) renderEmptyPortal(width, height int) string {
 	invitation := "No agents yet — press n to dispatch one"
 	if len(m.catalogWorkspaces) == 0 {
 		invitation = "Add a workspace to begin — press n in Workspaces"
 	}
-	return lipgloss.Place(width, max(1, height), lipgloss.Center, lipgloss.Center,
-		mutedStyle().Render(truncate(invitation, width)))
+	return renderSky(width, height, invitation, m.shimmerPhaseOrRest(), paceIdle)
 }
 
 // renderInteractionHeading is the Spanreed masthead both views share: the

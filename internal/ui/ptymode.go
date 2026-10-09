@@ -116,6 +116,30 @@ func (m Model) ptyGridDimensions() (int, int) {
 	return max(1, interactionWidth-3), gridHeight
 }
 
+// skyAnimating is whether the terminal pane is drawing the sky — nothing
+// selected, or a terminal still opening — which animates without any
+// agent working, so the shimmer tick has to be told to stay up for it.
+func (m Model) skyAnimating() bool {
+	if _, ok := m.selectedAgent(); !ok {
+		return m.ready
+	}
+	return m.ptyStarting()
+}
+
+// ptyStarting is whether the terminal pane is showing the selected agent's
+// terminal being opened rather than the terminal itself.
+func (m Model) ptyStarting() bool {
+	if !m.ptyEnabled || m.ptyManager == nil {
+		return false
+	}
+	managedAgent, ok := m.selectedAgent()
+	if !ok {
+		return false
+	}
+	_, open := m.ptyManager.Widget(managedAgent.ID)
+	return !open
+}
+
 // selectedPTY is the widget behind the terminal pane right now; ok is false
 // while the selected agent's terminal is still opening (or nothing is
 // selected).
@@ -224,16 +248,24 @@ func (m *Model) togglePTY() tea.Cmd {
 	}
 	m.ptyEnabled = true
 	m.activePane = paneInteraction
-	return m.armPTYWait()
+	return tea.Batch(m.armPTYWait(), m.startShimmer())
 }
 
 // renderPTYInteraction is renderInteraction's live-terminal branch. The
 // window bar is mounted as the pane's title row (see renderDashboardBody),
 // while the dashboard's footer carries the terminal controls.
 func (m Model) renderPTYInteraction(managedAgent agent.Agent, _, _ int) string {
-	grid := mutedStyle().Render("Starting terminal...")
+	var grid string
 	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok {
 		grid = widget.View()
+	} else {
+		// The terminal is opening: the sky moves with purpose while it
+		// does. It rides the shimmer tick, which skyAnimating keeps
+		// alive for as long as this is drawn.
+		gridWidth, gridHeight := m.ptyGridDimensions()
+		grid = renderSky(gridWidth, gridHeight,
+			startingCaption(string(managedAgent.Provider)),
+			m.shimmerPhaseOrRest(), paceStarting)
 	}
 	if m.ptySelecting && m.ptySelDragged {
 		start, end := m.selectionSpan()
