@@ -57,23 +57,6 @@ func (c Context) OnHost(host string) Context {
 	return c
 }
 
-// Tail is the lineage segment that follows the workspace name: a
-// resolver-supplied component, or the worktree directory when the agent runs
-// outside the main checkout. It is empty when neither says anything the
-// workspace name does not already say. The dashboard's workspace subtitle and
-// other surfaces read it too, so the rule lives here
-// rather than in either renderer.
-func (c Context) Tail() string {
-	tail := c.ComponentName
-	if tail == "" && c.ExecutionRoot != "" && c.ExecutionRoot != c.Root {
-		tail = pathName(c.ExecutionRoot)
-	}
-	if tail == c.Name {
-		return ""
-	}
-	return tail
-}
-
 func (c Context) IsComplete() bool {
 	return c.ID != "" &&
 		c.Kind != "" &&

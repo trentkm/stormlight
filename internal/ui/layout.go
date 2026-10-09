@@ -303,8 +303,10 @@ func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
 		return 0, 0, false
 	}
 
-	expanded := m.expandedRows()
 	listHeight := contentHeight - 2
+	// The same fallback the renderers make: a list too short for one
+	// card holds compact rows.
+	expanded := m.expandedRows() && listHeight >= cardRows
 	workspaceCapacity := listRowCapacity(listHeight, expanded)
 	workspaceStart, workspaceEnd := visibleRange(
 		len(m.groups),
@@ -324,14 +326,16 @@ func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
 		return 0, 0, false
 	}
 
-	rowStep := 1
+	rowStep, titleOffset := 1, 0
 	if expanded {
-		rowStep = 3
+		// A card is four rows, and the connector meets its title line,
+		// one row inside the border.
+		rowStep, titleOffset = cardRows, 1
 	}
 	// Two rows of chrome above the first list row: the header band and the
 	// blank row the inset opens with.
-	workspaceRow := 2 + (m.workspaceCursor-workspaceStart)*rowStep
-	agentRow := 2 + (m.agentCursor-agentStart)*rowStep
+	workspaceRow := 2 + (m.workspaceCursor-workspaceStart)*rowStep + titleOffset
+	agentRow := 2 + (m.agentCursor-agentStart)*rowStep + titleOffset
 	return workspaceRow, agentRow, true
 }
 
@@ -711,7 +715,7 @@ type paneDimming struct {
 // selectedRowRange is the body-line range a list's selected entry occupies,
 // or a zero range when the selection is scrolled out of view.
 func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
-	expanded := m.expandedRows()
+	expanded := m.expandedRows() && listHeight >= cardRows
 	capacity := listRowCapacity(listHeight, expanded)
 	start, end := visibleRange(total, cursor, capacity)
 	if cursor < start || cursor >= end {
@@ -719,7 +723,8 @@ func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
 	}
 	step, size := 1, 1
 	if expanded {
-		step, size = 3, 2
+		// The whole card stays lit, border included.
+		step, size = cardRows, cardRows
 	}
 	return undimmedRows{start: (cursor - start) * step, count: size}
 }

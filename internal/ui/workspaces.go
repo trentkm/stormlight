@@ -11,7 +11,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 	"github.com/trentkm/stormlight/internal/workspace"
 )
@@ -161,6 +160,11 @@ func (m Model) renderWorkspaces(width, height int) string {
 		height = max(1, height-1)
 	}
 
+	// A list too short for one card shows compact rows instead; m is a
+	// copy, so the rest of this render sees the same answer.
+	if height < cardRows {
+		m.rowsExpanded = false
+	}
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
 	start, end := visibleRange(len(m.groups), m.workspaceCursor, capacity)
@@ -175,11 +179,8 @@ func (m Model) renderWorkspaces(width, height int) string {
 			deleting && index == m.workspaceCursor,
 		))
 	}
-	separator := "\n"
-	if expanded {
-		separator = "\n\n"
-	}
-	list := strings.Join(rows, separator)
+	// Cards carry their own separation in their borders.
+	list := strings.Join(rows, "\n")
 	if note != "" {
 		list += "\n" + note
 	}
@@ -193,6 +194,9 @@ func (m Model) renderWorkspaceRow(
 	width int,
 	danger bool,
 ) string {
+	if m.expandedRows() {
+		return m.renderWorkspaceCard(group, selected, focused, width, danger)
+	}
 	stats := agent.Count(group.agents)
 	contentWidth := max(1, width-1)
 	// What the name actually asks for, floored so a long one still yields
@@ -246,11 +250,6 @@ func (m Model) renderWorkspaceRow(
 			lipgloss.Width(name)-
 			lipgloss.Width(suffix),
 	)
-	// Subtitle indents to sit under the name, reading as detail of the
-	// title rather than a second row of equal weight. One space here: the
-	// selected row's marker column supplies the other, and the quiet path
-	// adds its own, so the subtitle never shifts with selection.
-	bottomContent := " " + workspaceDetail(group.context, max(1, contentWidth-2))
 	tier := attentionTierOf(stats)
 	if focused || danger {
 		return renderSelectedWorkspaceRow(
@@ -258,10 +257,8 @@ func (m Model) renderWorkspaceRow(
 			name,
 			gap,
 			suffix,
-			bottomContent,
 			width,
 			focused,
-			m.expandedRows(),
 			stats.Working > 0,
 			tier,
 			m.shimmerPhaseOrRest(),
@@ -285,15 +282,61 @@ func (m Model) renderWorkspaceRow(
 	if mark != "" {
 		styledSuffix = mutedStyle().Render(mark) + styledSuffix
 	}
-	top := gutter +
+	return gutter +
 		renderedName +
 		strings.Repeat(" ", gap) +
 		styledSuffix
-	bottom := mutedStyle().Render(" " + bottomContent)
-	if !m.expandedRows() {
-		return top
+}
+
+// renderWorkspaceCard is the expanded row: the name and its counts on
+// one line, the machine and the path on the next, framed. See card.go.
+func (m Model) renderWorkspaceCard(
+	group workspaceGroup,
+	selected bool,
+	focused bool,
+	width int,
+	danger bool,
+) string {
+	stats := agent.Count(group.agents)
+	inner := cardInnerWidth(width)
+	displayName := group.label
+	if displayName == "" {
+		displayName = group.context.Name
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	nameNeed := min(lipgloss.Width(displayName), min(10, max(1, inner/2)))
+	mark := ""
+	if group.context.Host != "" {
+		mark = remoteGlyph + " "
+	}
+	chips := fitCountChips(
+		workspaceCountChips(stats, len(group.agents)),
+		max(1, inner-lipgloss.Width(mark)-1),
+		nameNeed,
+	)
+	suffix := mark + chipsPlain(chips)
+	name := truncate(displayName, max(1, inner-lipgloss.Width(suffix)-1))
+	gap := max(1, inner-lipgloss.Width(name)-lipgloss.Width(suffix))
+	detail := workspaceDetail(group.context, inner)
+	tier := attentionTierOf(stats)
+
+	// The grade says where the cursor is; attention and the working glow
+	// outrank it, as on the compact row, and a delete confirmation
+	// outranks everything.
+	frame, nameInk := cardGrade(selected, focused, danger)
+	renderedName := nameInk.Render(name)
+	switch {
+	case danger:
+	case tier == tierUrgent:
+		renderedName = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true).Render(name)
+	case stats.Working > 0:
+		renderedName = shimmerText(name, m.shimmerPhaseOrRest(), nil)
+	}
+	styledSuffix := chipsStyled(chips)
+	if mark != "" {
+		styledSuffix = mutedStyle().Render(mark) + styledSuffix
+	}
+	top := renderedName + strings.Repeat(" ", gap) + styledSuffix
+	return renderCard(top, mutedStyle().Render(detail), width, frame)
 }
 
 // A countChip is one tier of a workspace's population, told in the glyph the
@@ -379,10 +422,8 @@ func renderSelectedWorkspaceRow(
 	name string,
 	gap int,
 	suffix string,
-	bottom string,
 	width int,
 	focused bool,
-	expanded bool,
 	active bool,
 	tier attentionTier,
 	shimmerPhase int,
@@ -390,16 +431,7 @@ func renderSelectedWorkspaceRow(
 ) string {
 	top := lead + name + strings.Repeat(" ", gap) + suffix
 	if width < 3 || lipgloss.Width(top) > max(0, width-2) {
-		if focused {
-			if !expanded {
-				return theme.selectableRow(top, width, true)
-			}
-			return theme.focusedRow(top, bottom, width)
-		}
-		if !expanded {
-			return theme.selectableRow(top, width, false)
-		}
-		return theme.contextRow(top, bottom, width)
+		return theme.selectableRow(top, width, focused)
 	}
 
 	marker := "▏"
@@ -438,22 +470,13 @@ func renderSelectedWorkspaceRow(
 		0,
 		contentWidth-lipgloss.Width(lead)-lipgloss.Width(name),
 	)
-	topLine := markerStyle.Render(marker) +
+	return markerStyle.Render(marker) +
 		baseStyle.Render(lead) +
 		renderedName +
 		baseStyle.Copy().
 			Width(tailWidth).
 			MaxWidth(tailWidth).
 			Render(strings.Repeat(" ", gap)+suffix)
-	if !expanded {
-		return topLine
-	}
-	bottomLine := markerStyle.Render(marker) +
-		baseStyle.Copy().
-			Width(contentWidth).
-			MaxWidth(contentWidth).
-			Render(ansi.Truncate(bottom, contentWidth, ""))
-	return lipgloss.JoinVertical(lipgloss.Left, topLine, bottomLine)
 }
 
 // remoteGlyph marks a workspace that lives on another machine: Nerd Font
@@ -490,63 +513,17 @@ func renderSelectedWorkspaceRow(
 // StormGlyph for the measurements.
 const remoteGlyph = "\U000f059d"
 
-// workspaceDetail is the expanded row's subtitle: quiet middot-joined
-// tokens — resolver kind, home-relative root, and the component when it
-// adds information — indented under the name rather than justified across
-// the row.
+// workspaceDetail is a workspace card's second line: the machine, when
+// it is not this one, and the path. The machine comes first — two
+// checkouts at the same path on different machines are otherwise the
+// same row twice — and the path is shortened when it must be, so its
+// name survives; see shortenPath.
 func workspaceDetail(value workspace.Context, width int) string {
-	width = max(1, width)
-	kind := strings.ToLower(strings.TrimSpace(value.Kind))
-	path := shortPath(strings.TrimSpace(value.Root))
-	// The path's tail usually duplicates the workspace name; only the
-	// parent carries information. Renamed or oddly-rooted workspaces keep
-	// the full path.
-	if path != "" && filepath.Base(path) == value.Name {
-		path = filepath.Dir(path)
+	var tokens []string
+	if value.Host != "" {
+		tokens = append(tokens, value.Host)
 	}
-	join := func(pathToken string) string {
-		parts := []string{}
-		// The machine comes first: it is the most significant thing about
-		// a workspace that is not on this one, and two checkouts at the
-		// same path on different machines are otherwise the same row
-		// twice.
-		if value.Host != "" {
-			parts = append(parts, value.Host)
-		}
-		if kind != "" {
-			parts = append(parts, kind)
-		}
-		if pathToken != "" {
-			parts = append(parts, pathToken)
-		}
-		if tail := value.Tail(); tail != "" {
-			parts = append(parts, tail)
-		}
-		return strings.Join(parts, " · ")
-	}
-	detail := join(path)
-	if lipgloss.Width(detail) > width && path != "" {
-		// The path yields first: fish-style abbreviation, then the tail.
-		path = abbreviatePath(path)
-		detail = join(path)
-	}
-	if lipgloss.Width(detail) > width && path != "" {
-		overhead := lipgloss.Width(detail) - lipgloss.Width(path)
-		detail = join(truncatePathTail(path, max(1, width-overhead)))
-	}
-	return ansi.Truncate(detail, width, "…")
-}
-
-// abbreviatePath shortens every segment but the last to its first rune,
-// fish-prompt style: /Volumes/repos/alpha-service → /V/r/alpha-service.
-func abbreviatePath(path string) string {
-	segments := strings.Split(path, "/")
-	for index := 0; index < len(segments)-1; index++ {
-		if runes := []rune(segments[index]); len(runes) > 1 && segments[index] != "~" {
-			segments[index] = string(runes[:1])
-		}
-	}
-	return strings.Join(segments, "/")
+	return cardDetail(tokens, shortPath(strings.TrimSpace(value.Root)), max(1, width))
 }
 
 func (m Model) beginAddWorkspace() (tea.Model, tea.Cmd) {

@@ -24,6 +24,7 @@ import (
 // already painted correctly.
 func colorAccent() color.Color       { return theme.Color(theme.Accent) }
 func colorText() color.Color         { return theme.Color(theme.Text) }
+func colorTextSoft() color.Color     { return theme.Color(theme.TextSoft) }
 func colorMuted() color.Color        { return theme.Color(theme.Muted) }
 func colorWorking() color.Color      { return theme.Color(theme.Working) }
 func colorWaiting() color.Color      { return theme.Color(theme.Waiting) }
@@ -36,6 +37,7 @@ func colorDangerBg() color.Color     { return theme.Color(theme.DangerBg) }
 func colorPortalInk() color.Color    { return theme.Color(theme.PortalInk) }
 func colorBand() color.Color         { return theme.Color(theme.Band) }
 func colorBandMuted() color.Color    { return theme.Color(theme.BandMuted) }
+func colorBandSoft() color.Color     { return theme.Color(theme.BandSoft) }
 func colorBandDim() color.Color      { return theme.Color(theme.BandDim) }
 func colorAccentDim() color.Color    { return theme.Color(theme.AccentDim) }
 
