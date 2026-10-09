@@ -318,11 +318,7 @@ func (m Model) renderWorkspaceCard(
 	// of the card. Attention and the working glow outrank either, as on
 	// the compact row; a delete confirmation outranks everything.
 	border := cardBorderFor(selected, focused, danger)
-	nameInk := mutedStyle()
-	if selected || focused {
-		nameInk = titleStyle().Bold(true)
-	}
-	renderedName := nameInk.Render(name)
+	renderedName := cardTitleInk(selected, focused).Render(name)
 	switch {
 	case danger:
 		renderedName = lipgloss.NewStyle().Foreground(colorFailed()).Bold(true).Render(name)

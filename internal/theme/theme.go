@@ -27,8 +27,12 @@ var (
 	// Accent is the one entry that does not vary: it is the wordmark's
 	// blue, chosen to sit legibly on either background, and it stays a
 	// Pair only so every palette entry resolves the same way.
-	Accent       = Pair{Light: "#62AEEF", Dark: "#62AEEF"}
-	Text         = Pair{Light: "#24323A", Dark: "#D7DEE5"}
+	Accent = Pair{Light: "#62AEEF", Dark: "#62AEEF"}
+	Text   = Pair{Light: "#24323A", Dark: "#D7DEE5"}
+	// TextSoft is Text barely receded, a third of the way to Muted: the
+	// title of the card on the selection path that the cursor is not
+	// on, a shade behind the cursor's card the way its border is.
+	TextSoft     = Pair{Light: "#3F4D56", Dark: "#B4BDC5"}
 	Muted        = Pair{Light: "#70808A", Dark: "#74818B"}
 	Working      = Pair{Light: "#26799D", Dark: "#61AFEF"}
 	Waiting      = Pair{Light: "#A86600", Dark: "#E5C07B"}

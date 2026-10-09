@@ -8,8 +8,9 @@ package ui
 // The border carries the selection, and nothing else does: the two
 // cards on the path, the chosen workspace and the chosen agent in it,
 // are framed in the strip's bright silver with their titles in full
-// ink — the cursor's card a shade brighter than the other, so the eye
-// finds the cursor without the other falling out of the path — every
+// ink — the cursor's card a shade brighter than the other, border and
+// title both, so the eye finds the cursor without the other falling out
+// of the path — every
 // other card sits in the quiet border color with its title muted, and
 // a row awaiting its delete confirmation is framed in red.
 // No card is filled. The compact list paints its cursor row's
@@ -38,6 +39,19 @@ const cardInset = 4
 // cardInnerWidth is the room a card's lines have at a pane width.
 func cardInnerWidth(width int) int {
 	return max(1, width-cardInset)
+}
+
+// cardTitleInk is the title's style for a row's selection state, graded
+// the way the border is: full ink on the cursor's row, a shade behind on
+// the path's other card, muted off the path.
+func cardTitleInk(selected, focused bool) lipgloss.Style {
+	switch {
+	case focused:
+		return titleStyle().Bold(true)
+	case selected:
+		return lipgloss.NewStyle().Foreground(colorTextSoft()).Bold(true)
+	}
+	return mutedStyle()
 }
 
 // cardBorderFor is the border's color for a row's selection state: on

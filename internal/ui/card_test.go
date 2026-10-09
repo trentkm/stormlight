@@ -135,6 +135,13 @@ func TestThePathsCardsAreLitAndNothingIsFilled(t *testing.T) {
 	if cardBorderFor(true, false, false) == cardBorderFor(false, true, false) {
 		t.Fatal("the cursor's card is not told apart from the other on the path")
 	}
+	// The title is graded the same way as the border.
+	cursor := cardTitleInk(false, true).Render("t")
+	other := cardTitleInk(true, false).Render("t")
+	quiet := cardTitleInk(false, false).Render("t")
+	if cursor == other || other == quiet || cursor == quiet {
+		t.Fatal("the three title grades are not all distinct")
+	}
 	if cardBorderFor(false, false, false) != colorBorder() {
 		t.Fatal("a card off the path is lit")
 	}

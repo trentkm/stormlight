@@ -160,12 +160,8 @@ func renderAgentCard(
 	// glow — outrank either, as they do on the compact row; a delete
 	// confirmation outranks everything.
 	border := cardBorderFor(selected, focused, danger)
-	titleInk := mutedStyle()
-	if selected || focused {
-		titleInk = titleStyle().Bold(true)
-	}
 	detailStyle := mutedStyle()
-	renderedTitle := titleInk.Render(title)
+	renderedTitle := cardTitleInk(selected, focused).Render(title)
 	switch {
 	case danger:
 		renderedTitle = lipgloss.NewStyle().Foreground(colorFailed()).Bold(true).Render(title)
