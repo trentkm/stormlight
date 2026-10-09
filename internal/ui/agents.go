@@ -131,9 +131,9 @@ func renderAgentRowWithDensity(
 
 // renderAgentCard is the expanded row: the status glyph, title and age
 // on one line, and on the next what the agent is doing — its latest
-// summary, else the task it was given — with the mode ahead of it when
-// the mode changes what happens without you. Where this is belongs to
-// the workspace card above it, not here. See card.go.
+// summary, else the task it was given. Where this is belongs to the
+// workspace card above it, not here; the mode belongs to the masthead,
+// which says it when the agent is selected. See card.go.
 func renderAgentCard(
 	managedAgent agent.Agent,
 	selected bool,
@@ -153,13 +153,7 @@ func renderAgentCard(
 	titleWidth := max(1, inner-2-ageWidth-1)
 	title := truncate(agentDisplayTitle(managedAgent), titleWidth)
 	gap := max(1, inner-2-lipgloss.Width(title)-ageWidth)
-	badge := modeBadge(managedAgent.Mode)
-	detail := agentDetail(managedAgent, title)
-	detailRoom := inner
-	if badge != "" {
-		detailRoom = max(1, inner-lipgloss.Width(badge)-lipgloss.Width(metaSeparator))
-	}
-	detail = truncate(detail, detailRoom)
+	detail := truncate(agentDetail(managedAgent, title), inner)
 
 	// On the path the title is in full ink; off it, muted like the rest
 	// of the card. The state's own colors — urgent amber, the working
@@ -184,18 +178,7 @@ func renderAgentCard(
 	}
 	top := statusStyle.Render(symbol) + " " + renderedTitle +
 		strings.Repeat(" ", gap) + detailStyle.Render(age)
-	bottom := detailStyle.Render(detail)
-	if badge != "" {
-		// AUTO is the one token that changes what happens without you;
-		// the dispatch modal and the masthead say it in amber, and so
-		// does the card.
-		badgeStyle := mutedStyle()
-		if managedAgent.Mode == agent.ModeAuto {
-			badgeStyle = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
-		}
-		bottom = badgeStyle.Render(badge) + detailStyle.Render(metaSeparator) + bottom
-	}
-	return renderCard(top, bottom, width, border)
+	return renderCard(top, detailStyle.Render(detail), width, border)
 }
 
 // agentDetail is what an agent card says under its title: the agent's

@@ -82,11 +82,11 @@ func TestAnAgentCardSaysWhatTheAgentIsDoing(t *testing.T) {
 	if !strings.Contains(card, "Shipped the night sky") || strings.Contains(card, "fill the dead") {
 		t.Fatalf("the detail is not the summary:\n%s", card)
 	}
-	// AUTO leads the line.
+	// The mode is the masthead's to say, not the card's.
 	value.Mode = agent.ModeAuto
 	card = ansi.Strip(renderAgentCard(value, false, false, 48, false, -1))
-	if !strings.Contains(strings.Split(card, "\n")[2], "AUTO · Shipped") {
-		t.Fatalf("the mode does not lead the detail:\n%s", card)
+	if strings.Contains(card, "AUTO") {
+		t.Fatalf("the mode is on the card:\n%s", card)
 	}
 	// A title built from the task is not repeated under itself.
 	named := agent.Agent{ID: "b", Provider: agent.ProviderCodex, Name: "cx-fix-parser",

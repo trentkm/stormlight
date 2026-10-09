@@ -349,7 +349,7 @@ semantics remain outside Stormlight. See
 Compact rows are the default and show the primary workspace or agent line.
 Press `z` to open each row into a card: a thin border around the title line
 and one line of detail beneath it — a workspace's path, or what an agent is
-doing (its latest summary, else its task, with `AUTO` ahead of it when set).
+doing (its latest summary, else its task).
 Narrow terminals show one full-width pane at a time and honor the same row
 density.
 
