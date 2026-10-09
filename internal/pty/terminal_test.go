@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"strings"
 	"sync"
@@ -898,5 +899,58 @@ func TestARefreshDuringAnAssertionDoesNotRepeatIt(t *testing.T) {
 	time.Sleep(4 * settle)
 	if got := transport.resized(); len(got) != 1 {
 		t.Fatalf("daemon heard %v, want the one 60x20", got)
+	}
+}
+
+// The hold is timed from the terminal changing size, not from the
+// dashboard deciding it: on a slow wire the clear and redraw arrive long
+// after the decision. The daemon's own notice, which echoes this widget's
+// assertion back, opens the window whether or not the emulator moved.
+func TestTheHoldOpensOnTheDaemonsNoticeNotTheDecision(t *testing.T) {
+	previous := resizeHold
+	resizeHold = 60 * time.Millisecond
+	t.Cleanup(func() { resizeHold = previous })
+
+	transport := newFakeTransport(strings.Repeat("\r\n", 19) + "hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	time.Sleep(3 * resizeHold) // the decision's own window has passed
+
+	transport.output <- Message{Resize: &Size{Cols: 60, Rows: 20}}
+	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2J")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("the clear after a late notice was painted:\n%s", view)
+	}
+}
+
+// Scrolling back is never held: the scrollback is not the screen being
+// redrawn, and a wheel that moves nothing reads as a wheel ignored.
+func TestScrollingIsNotHeldByAnOpenUpdate(t *testing.T) {
+	var seed strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&seed, "line %02d\r\n", i)
+	}
+	transport := newFakeTransport(seed.String())
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
+	fence(transport)
+	if view := plain(terminal); strings.Contains(view, "PART") {
+		t.Fatalf("the open block was painted:\n%s", view)
+	}
+	terminal.ScrollBy(10)
+	// Ten lines back: scrollback above the live screen's partial row.
+	if view := plain(terminal); !strings.Contains(view, "line 5") {
+		t.Fatalf("the wheel moved nothing while a block was open:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); visible {
+		t.Fatal("a cursor on a scrolled view")
 	}
 }

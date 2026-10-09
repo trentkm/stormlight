@@ -286,6 +286,12 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	// that replays it.
 	go func() { _, _ = io.Copy(io.Discard, replacement) }()
 	replacement.Write(seed)
+	// The frame to hold from here, rendered off the lock like the
+	// emulator it comes from.
+	s.mu.Lock()
+	boxRows := s.rows
+	s.mu.Unlock()
+	heldLines := linesOf(replacement, boxRows)
 
 	s.mu.Lock()
 	if s.closed {
@@ -303,6 +309,7 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 		// ever correct it, because the box size never changed.
 		cols, rows = s.termCols, s.termRows
 		replacement.Resize(cols, rows)
+		heldLines = linesOf(replacement, s.rows)
 	}
 	previous := s.emu
 	s.emu = replacement
@@ -317,7 +324,7 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	if s.syncing {
 		s.setSyncing(false)
 	}
-	s.setHeld(s.screenLines())
+	s.setHeld(heldLines)
 	s.mu.Unlock()
 
 	// The old emulator's drain goroutine only ends when its pipe does,
@@ -341,6 +348,12 @@ func closeEmulator(emu *vt.Emulator) {
 // setTerminalSize follows the hosted terminal when someone else moved it:
 // the emulator adopts the terminal's true size while the box keeps the
 // pane's, and View clips or pads the difference.
+//
+// The notice is also the surest anchor for the frame hold: it is the
+// moment the terminal's size changed, whoever changed it — this widget
+// included, whose own assertion the daemon echoes back — and the clear
+// and redraw that follow are timed from here. So the hold opens on
+// every notice, moved or not.
 func (m Model) setTerminalSize(cols, rows int) {
 	cols, rows = max(2, cols), max(2, rows)
 	s := m.state
@@ -350,8 +363,8 @@ func (m Model) setTerminalSize(cols, rows int) {
 		s.termCols, s.termRows = cols, rows
 		s.sizeGeneration++
 		s.viewDirty = true
-		s.openHold()
 	}
+	s.openHold()
 	s.mu.Unlock()
 	if s.visible.Load() {
 		s.gate.Notify()
@@ -389,6 +402,14 @@ func (s *state) pump(model Model) {
 		s.emu.Write(chunk)
 		if sync != nil {
 			s.setSyncing(*sync)
+			// The screen at a close is whole, and the frame to hold
+			// from here. Taken now rather than at the next render
+			// pass, which a program redrawing fast enough opens the
+			// next block before; only for a terminal on screen, whose
+			// held frame is the only one anything paints.
+			if !*sync && s.visible.Load() && s.scroll == 0 {
+				s.setHeld(linesOf(s.emu, s.rows))
+			}
 		}
 		if s.emu.IsAltScreen() {
 			s.scroll, s.scrollDelta = 0, 0
@@ -407,7 +428,18 @@ func (s *state) pump(model Model) {
 // SetVisible marks the terminal on or off screen; only visible terminals
 // request redraws. Flipping to visible needs no catch-up knock — the
 // render pass that follows the flip paints the emulator's current state.
-func (m Model) SetVisible(visible bool) { m.state.visible.Store(visible) }
+//
+// A terminal coming on screen drops its held frame: it is from whenever
+// the terminal was last looked at, and standing in for a screen mid-
+// change with a frame that old would mislead rather than steady.
+func (m Model) SetVisible(visible bool) {
+	s := m.state
+	if was := s.visible.Swap(visible); visible && !was {
+		s.mu.Lock()
+		s.held, s.heldShowing, s.heldFitValid = nil, false, false
+		s.mu.Unlock()
+	}
+}
 
 // MouseReporting reports whether the hosted program asked for the mouse.
 func (m Model) MouseReporting() bool { return m.state.mouseReporting.Load() }
@@ -565,6 +597,16 @@ func (s *state) repaint() {
 	}
 }
 
+// showHeld answers a render pass with the held frame and caches it as
+// the view: nothing changes what the pass would see until bytes arrive
+// or a timer fires, and both mark the view dirty. Called with mu held.
+func (s *state) showHeld() string {
+	s.heldShowing = true
+	s.view = s.heldView()
+	s.viewDirty = false
+	return s.view
+}
+
 // heldView is the last frame painted whole, fitted to the current box.
 func (s *state) heldView() string {
 	if s.heldFitValid && s.heldFitCols == s.cols && s.heldFitRows == s.rows {
@@ -586,18 +628,10 @@ func (s *state) setHeld(lines []string) {
 // the live grid clipped to the box's rows around the cursor, or the
 // scrollback window when scrolled. Called with mu held.
 func (s *state) screenLines() []string {
-	var lines []string
 	if s.scroll == 0 || s.emu.IsAltScreen() {
-		lines = strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
-		if len(lines) > s.rows {
-			bottom := len(lines)
-			if cursor := s.emu.CursorPosition().Y; cursor < bottom-s.rows {
-				bottom = max(cursor+1, s.rows)
-			}
-			lines = lines[bottom-s.rows : bottom]
-		}
-		return lines
+		return linesOf(s.emu, s.rows)
 	}
+	var lines []string
 	back := s.emu.Scrollback()
 	top := max(0, back.Len()+s.termRows-s.rows-s.scroll)
 	bottom := min(back.Len()+s.termRows, top+s.rows)
@@ -611,6 +645,34 @@ func (s *state) screenLines() []string {
 		}
 	}
 	return lines
+}
+
+// linesOf is an emulator's live screen clipped to rows: the bottom of
+// it, unless the cursor sits above that, in which case the rows around
+// the cursor.
+func linesOf(emu *vt.Emulator, rows int) []string {
+	lines := strings.Split(repairVTHyperlinks(emu.Render()), "\n")
+	if len(lines) > rows {
+		bottom := len(lines)
+		if cursor := emu.CursorPosition().Y; cursor < bottom-rows {
+			bottom = max(cursor+1, rows)
+		}
+		lines = lines[bottom-rows : bottom]
+	}
+	return lines
+}
+
+// decide numbers a new size decision: whatever was pending — a settle's
+// timer, an older decision's assertion — is superseded by it. Called
+// with mu held.
+func (s *state) decide() uint64 {
+	s.resizeSeq++
+	s.settling = false
+	if s.settleTimer != nil {
+		s.settleTimer.Stop()
+		s.settleTimer = nil
+	}
+	return s.resizeSeq
 }
 
 // blank reports a screen with nothing on it.
@@ -638,13 +700,7 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 		s.viewDirty = true
 		s.openHold()
 	}
-	s.resizeSeq++
-	seq := s.resizeSeq
-	s.settling = false
-	if s.settleTimer != nil {
-		s.settleTimer.Stop()
-		s.settleTimer = nil
-	}
+	seq := s.decide()
 	s.mu.Unlock()
 	return m, func() tea.Msg {
 		s.assert(seq, cols, rows)
@@ -687,8 +743,7 @@ func (m Model) Settle(cols, rows int, delay time.Duration) {
 			s.mu.Unlock()
 			return
 		}
-		s.resizeSeq++
-		seq := s.resizeSeq
+		seq := s.decide()
 		s.mu.Unlock()
 		// Off the caller's goroutine: a retry is a transport call, and
 		// the caller may be the event loop.
@@ -788,6 +843,11 @@ func (s *state) assert(seq uint64, cols, rows int) {
 	s.asserting = false
 	if err == nil {
 		s.assertedCols, s.assertedRows = cols, rows
+		// The terminal has the size now; its clear and redraw follow
+		// from here, not from when the size was decided — which on a
+		// slow wire is long enough ago that the window would already
+		// be closing.
+		s.openHold()
 	}
 	// The failure is left unrecorded in the size on purpose: the
 	// terminal is still whatever size it was, and Asserted disagreeing
@@ -910,16 +970,17 @@ func (m Model) View() string {
 	if !s.viewDirty {
 		return s.view
 	}
-	// Mid-update, the last whole frame stands in; the view stays dirty
-	// so the close repaints. See the frame hold above SetSize.
-	if s.syncing && s.held != nil {
-		s.heldShowing = true
-		return s.heldView()
+	// Mid-update, the last whole frame stands in. A scrolled view is
+	// never held: it is the scrollback, not the screen being redrawn,
+	// and a wheel that moved nothing reads as a wheel ignored. See the
+	// frame hold above SetSize.
+	live := s.scroll == 0 || s.emu.IsAltScreen()
+	if live && s.syncing && s.held != nil {
+		return s.showHeld()
 	}
 	lines := s.screenLines()
-	if s.held != nil && time.Now().Before(s.holdUntil) && blank(lines) {
-		s.heldShowing = true
-		return s.heldView()
+	if live && s.held != nil && time.Now().Before(s.holdUntil) && blank(lines) {
+		return s.showHeld()
 	}
 	s.setHeld(lines)
 	s.heldShowing = false
