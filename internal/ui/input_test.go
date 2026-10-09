@@ -1627,12 +1627,9 @@ func TestWorkspaceDetailIsThePath(t *testing.T) {
 	if wide := workspaceDetail(value, 60); wide != "/Volumes/repos/shared/alpha-service" {
 		t.Fatalf("wide detail = %q", wide)
 	}
-	// Cut from the left when it must be, so the tail survives.
-	narrow := workspaceDetail(value, 24)
-	if !strings.HasSuffix(narrow, "alpha-service") ||
-		!strings.HasPrefix(narrow, "…") ||
-		lipgloss.Width(narrow) > 24 {
-		t.Fatalf("narrow detail lost its distinguishing tail: %q", narrow)
+	// Shortened when it must be, parents first, so the name survives.
+	if narrow := workspaceDetail(value, 24); narrow != "/V/r/s/alpha-service" {
+		t.Fatalf("narrow detail = %q", narrow)
 	}
 	// A worktree's execution root is not the workspace's path; the
 	// workspace is the checkout, and the card says where that is.

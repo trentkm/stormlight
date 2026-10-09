@@ -72,12 +72,45 @@ func renderCard(top, bottom string, width int, border color.Color) string {
 	}, "\n")
 }
 
+// shortenPath fits a path into a width by giving up what matters least
+// first: the parents' spelling (fish style, each to its first rune:
+// /Volumes/repos/stormlight → /V/r/stormlight), then the parents
+// themselves from the left, whole (…/stormlight) — never a segment cut
+// in half, which reads as a different name — and only then the name
+// itself, cut from the left.
+func shortenPath(path string, width int) string {
+	if width <= 0 || path == "" {
+		return ""
+	}
+	if lipgloss.Width(path) <= width {
+		return path
+	}
+	segments := strings.Split(path, "/")
+	abbreviated := make([]string, len(segments))
+	for index, segment := range segments {
+		abbreviated[index] = segment
+		if index < len(segments)-1 && segment != "~" {
+			if runes := []rune(segment); len(runes) > 1 {
+				abbreviated[index] = string(runes[:1])
+			}
+		}
+	}
+	if joined := strings.Join(abbreviated, "/"); lipgloss.Width(joined) <= width {
+		return joined
+	}
+	for from := 1; from < len(segments); from++ {
+		if tail := "…/" + strings.Join(segments[from:], "/"); lipgloss.Width(tail) <= width {
+			return tail
+		}
+	}
+	return truncatePathTail(segments[len(segments)-1], width)
+}
+
 // cardDetail joins a card's detail tokens with the path last. The path
 // is the point of the line, so it comes first in every sense: tokens
 // are given least important last and are dropped from the end until
-// the whole path fits, and a path that cannot fit even alone is cut
-// from the left so its tail — the part that tells two paths apart —
-// survives.
+// the whole path fits, and a path that cannot fit even alone is
+// shortened — see shortenPath.
 func cardDetail(tokens []string, path string, width int) string {
 	kept := make([]string, 0, len(tokens))
 	for _, token := range tokens {
@@ -97,5 +130,5 @@ func cardDetail(tokens []string, path string, width int) string {
 	for len(kept) > 0 && width-lipgloss.Width(lead()) < lipgloss.Width(path) {
 		kept = kept[:len(kept)-1]
 	}
-	return lead() + truncatePathTail(path, max(1, width-lipgloss.Width(lead())))
+	return lead() + shortenPath(path, max(1, width-lipgloss.Width(lead())))
 }

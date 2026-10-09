@@ -55,10 +55,8 @@ func TestTheCardDetailGivesThePathItsRoomFirst(t *testing.T) {
 	if got != path {
 		t.Fatalf("tight detail = %q", got)
 	}
-	// Tighter than the path itself: cut from the left, tail kept.
-	got = cardDetail([]string{"codex", "AUTO", "working"}, path, 14)
-	if strings.Contains(got, "codex") || !strings.HasPrefix(got, "…") ||
-		!strings.HasSuffix(got, "alpha-service") || lipgloss.Width(got) > 14 {
+	// Tighter than the path itself: shortened, the name kept whole.
+	if got = cardDetail([]string{"codex", "AUTO", "working"}, path, 16); got != "…/alpha-service" {
 		t.Fatalf("path-only detail = %q", got)
 	}
 	// An empty token leaves no stray separator behind.
@@ -142,5 +140,27 @@ func TestTheDimmingKeepsTheWholeCard(t *testing.T) {
 	rows := model.selectedRowRange(3, 1, 20)
 	if rows.start != cardRows || rows.count != cardRows {
 		t.Fatalf("undimmed rows = %+v, want the second card's four rows", rows)
+	}
+}
+
+func TestAPathShortensParentsBeforeItsName(t *testing.T) {
+	path := "/Volumes/repos/shared/alpha-service"
+	cases := []struct {
+		width int
+		want  string
+	}{
+		{60, path},
+		{24, "/V/r/s/alpha-service"},
+		{19, "…/alpha-service"},
+		{14, "alpha-service"},
+		{10, "…a-service"},
+	}
+	for _, c := range cases {
+		if got := shortenPath(path, c.width); got != c.want {
+			t.Fatalf("width %d: %q, want %q", c.width, got, c.want)
+		}
+	}
+	if got := shortenPath("~/notes/daily", 10); got != "~/n/daily" {
+		t.Fatalf("home path = %q", got)
 	}
 }
