@@ -136,6 +136,14 @@ type state struct {
 	heldShowing bool
 	holdUntil   time.Time
 	holdTimer   *time.Timer
+	// heldFit caches held fitted to the box, since a render pass asks
+	// for it as often as it likes while a block is open.
+	heldFit                  string
+	heldFitCols, heldFitRows int
+	heldFitValid             bool
+	// asserting marks an assertion on the wire, so a retry does not send
+	// the same size behind it.
+	asserting bool
 	// syncing is an open synchronized update (DEC 2026): the program has
 	// said the screen is mid-change and not to be shown until it closes.
 	syncing   bool
@@ -302,6 +310,14 @@ func (s *state) replaceReplica(seed []byte, size *Size) {
 	// Scrollback position belongs to the replica that just went away.
 	s.scroll, s.scrollDelta = 0, 0
 	s.viewDirty = true
+	// A snapshot is a whole screen by definition: any synchronized
+	// update it interrupted is over, and it is the frame to hold from
+	// here, so the first thing painted after an attach is never a
+	// half-drawn screen.
+	if s.syncing {
+		s.setSyncing(false)
+	}
+	s.setHeld(s.screenLines())
 	s.mu.Unlock()
 
 	// The old emulator's drain goroutine only ends when its pipe does,
@@ -368,9 +384,12 @@ func (s *state) pump(model Model) {
 		// Most output is raw PTY data and needs no change. Resize repaints
 		// come from windrunner's x/vt and carry its reversed OSC 8 fields.
 		chunk := []byte(repairVTHyperlinks(string(message.Bytes)))
-		s.observeModes(chunk)
+		sync := s.observeModes(chunk)
 		s.mu.Lock()
 		s.emu.Write(chunk)
+		if sync != nil {
+			s.setSyncing(*sync)
+		}
 		if s.emu.IsAltScreen() {
 			s.scroll, s.scrollDelta = 0, 0
 		}
@@ -396,7 +415,11 @@ func (m Model) MouseReporting() bool { return m.state.mouseReporting.Load() }
 // observeModes shadows the mouse-tracking modes from the byte stream. The
 // stream arrives on whole-sequence boundaries (the daemon guarantees it),
 // so a plain scan cannot tear a sequence.
-func (s *state) observeModes(chunk []byte) {
+//
+// The synchronized-update mark (2026) is returned rather than applied,
+// as the last transition in the chunk, so the caller can apply it in
+// the same critical section that writes the chunk.
+func (s *state) observeModes(chunk []byte) (sync *bool) {
 	for index := 0; index+5 < len(chunk); index++ {
 		if chunk[index] != 0x1b || chunk[index+1] != '[' || chunk[index+2] != '?' {
 			continue
@@ -415,10 +438,12 @@ func (s *state) observeModes(chunk []byte) {
 			case "1000", "1002", "1003":
 				s.mouseReporting.Store(set)
 			case "2026":
-				s.setSyncing(set)
+				open := set
+				sync = &open
 			}
 		}
 	}
+	return sync
 }
 
 // Text is the visible screen as plain lines, for selection copies.
@@ -495,10 +520,13 @@ func (s *state) openHold() {
 }
 
 // setSyncing follows a synchronized update opening or closing in the
-// stream. An open block that outlives syncWatchdog is treated as closed,
-// so a program that forgets the close cannot freeze the pane.
+// stream. Called with mu held, in the same critical section that wrote
+// the bytes carrying the mark: a close noted before its chunk is in the
+// emulator would let a render pass in between paint the half-drawn
+// screen the mark was guarding. An open block that outlives
+// syncWatchdog is treated as closed, so a program that forgets the
+// close cannot freeze the pane.
 func (s *state) setSyncing(open bool) {
-	s.mu.Lock()
 	s.syncing = open
 	if s.syncTimer != nil {
 		s.syncTimer.Stop()
@@ -512,7 +540,18 @@ func (s *state) setSyncing(open bool) {
 			s.repaint()
 		})
 	}
-	s.mu.Unlock()
+}
+
+// stopTimers ends every wait the widget has running. Called with mu
+// held, by Close: a timer holding the state holds the emulator and its
+// scrollback with it.
+func (s *state) stopTimers() {
+	for _, timer := range []*time.Timer{s.settleTimer, s.holdTimer, s.syncTimer} {
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+	s.settleTimer, s.holdTimer, s.syncTimer = nil, nil, nil
 }
 
 // repaint marks the view stale and asks for a render pass, for timers
@@ -528,8 +567,50 @@ func (s *state) repaint() {
 
 // heldView is the last frame painted whole, fitted to the current box.
 func (s *state) heldView() string {
+	if s.heldFitValid && s.heldFitCols == s.cols && s.heldFitRows == s.rows {
+		return s.heldFit
+	}
 	lines := append([]string(nil), s.held...)
-	return fit(lines, s.cols, s.rows)
+	s.heldFit = fit(lines, s.cols, s.rows)
+	s.heldFitCols, s.heldFitRows, s.heldFitValid = s.cols, s.rows, true
+	return s.heldFit
+}
+
+// setHeld records a frame painted whole. Called with mu held.
+func (s *state) setHeld(lines []string) {
+	s.held = append(s.held[:0], lines...)
+	s.heldFitValid = false
+}
+
+// screenLines is the screen as View would paint it, before fitting:
+// the live grid clipped to the box's rows around the cursor, or the
+// scrollback window when scrolled. Called with mu held.
+func (s *state) screenLines() []string {
+	var lines []string
+	if s.scroll == 0 || s.emu.IsAltScreen() {
+		lines = strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
+		if len(lines) > s.rows {
+			bottom := len(lines)
+			if cursor := s.emu.CursorPosition().Y; cursor < bottom-s.rows {
+				bottom = max(cursor+1, s.rows)
+			}
+			lines = lines[bottom-s.rows : bottom]
+		}
+		return lines
+	}
+	back := s.emu.Scrollback()
+	top := max(0, back.Len()+s.termRows-s.rows-s.scroll)
+	bottom := min(back.Len()+s.termRows, top+s.rows)
+	for i := top; i < min(bottom, back.Len()); i++ {
+		lines = append(lines, repairVTHyperlinks(back.Line(i).Render()))
+	}
+	if bottom > back.Len() {
+		live := strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
+		for i := max(0, top-back.Len()); i < min(len(live), bottom-back.Len()); i++ {
+			lines = append(lines, live[i])
+		}
+	}
+	return lines
 }
 
 // blank reports a screen with nothing on it.
@@ -560,6 +641,10 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	s.resizeSeq++
 	seq := s.resizeSeq
 	s.settling = false
+	if s.settleTimer != nil {
+		s.settleTimer.Stop()
+		s.settleTimer = nil
+	}
 	s.mu.Unlock()
 	return m, func() tea.Msg {
 		s.assert(seq, cols, rows)
@@ -598,7 +683,7 @@ func (m Model) Settle(cols, rows int, delay time.Duration) {
 		return
 	}
 	if cols == s.cols && rows == s.rows {
-		if s.settling || (cols == s.assertedCols && rows == s.assertedRows) {
+		if s.settling || s.asserting || (cols == s.assertedCols && rows == s.assertedRows) {
 			s.mu.Unlock()
 			return
 		}
@@ -637,6 +722,12 @@ func (s *state) settle(seq uint64, cols, rows int) {
 		return
 	}
 	s.settling = false
+	// Whether the hosted terminal already holds this size is decided
+	// before the emulator moves: if the emulator was following another
+	// viewer's size, the terminal is at that size, whatever was last
+	// asserted here, and this gesture is the dashboard taking it back.
+	landed := cols == s.termCols && rows == s.termRows &&
+		cols == s.assertedCols && rows == s.assertedRows
 	if cols != s.termCols || rows != s.termRows {
 		s.emu.Resize(cols, rows)
 		s.termCols, s.termRows = cols, rows
@@ -644,7 +735,6 @@ func (s *state) settle(seq uint64, cols, rows int) {
 		s.viewDirty = true
 		s.openHold()
 	}
-	landed := cols == s.assertedCols && rows == s.assertedRows
 	s.mu.Unlock()
 	if s.visible.Load() {
 		s.gate.Notify()
@@ -685,6 +775,7 @@ func (s *state) assert(seq uint64, cols, rows int) {
 	defer s.resizeMu.Unlock()
 	s.mu.Lock()
 	stale := seq != s.resizeSeq || s.closed
+	s.asserting = !stale
 	s.mu.Unlock()
 	if stale {
 		return
@@ -694,6 +785,7 @@ func (s *state) assert(seq uint64, cols, rows int) {
 	err := s.transport.Resize(ctx, cols, rows)
 
 	s.mu.Lock()
+	s.asserting = false
 	if err == nil {
 		s.assertedCols, s.assertedRows = cols, rows
 	}
@@ -824,35 +916,12 @@ func (m Model) View() string {
 		s.heldShowing = true
 		return s.heldView()
 	}
-	var lines []string
-	if s.scroll == 0 || s.emu.IsAltScreen() {
-		lines = strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
-		if len(lines) > s.rows {
-			bottom := len(lines)
-			if cursor := s.emu.CursorPosition().Y; cursor < bottom-s.rows {
-				bottom = max(cursor+1, s.rows)
-			}
-			lines = lines[bottom-s.rows : bottom]
-		}
-	} else {
-		back := s.emu.Scrollback()
-		top := max(0, back.Len()+s.termRows-s.rows-s.scroll)
-		bottom := min(back.Len()+s.termRows, top+s.rows)
-		for i := top; i < min(bottom, back.Len()); i++ {
-			lines = append(lines, repairVTHyperlinks(back.Line(i).Render()))
-		}
-		if bottom > back.Len() {
-			live := strings.Split(repairVTHyperlinks(s.emu.Render()), "\n")
-			for i := max(0, top-back.Len()); i < min(len(live), bottom-back.Len()); i++ {
-				lines = append(lines, live[i])
-			}
-		}
-	}
+	lines := s.screenLines()
 	if s.held != nil && time.Now().Before(s.holdUntil) && blank(lines) {
 		s.heldShowing = true
 		return s.heldView()
 	}
-	s.held = append(s.held[:0], lines...)
+	s.setHeld(lines)
 	s.heldShowing = false
 	s.view = fit(lines, s.cols, s.rows)
 	s.viewDirty = false
@@ -937,6 +1006,7 @@ func (m Model) Close() {
 		return
 	}
 	s.closed, s.scrollDelta = true, 0
+	s.stopTimers()
 	// Under the lock, alongside the flag Write reads: the two together
 	// are what stop a write already inside Write from sending into a
 	// closed queue. The drain goroutine ends on the closed channel rather

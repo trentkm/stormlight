@@ -22,6 +22,9 @@ type fakeTransport struct {
 	mu       sync.Mutex
 	resizes  []Size
 	refuse   bool
+	// hold, when set, parks each Resize until released, so a test can
+	// stand inside one assertion while more decisions arrive.
+	hold chan struct{}
 }
 
 func newFakeTransport(seed string) *fakeTransport {
@@ -34,6 +37,12 @@ func (t *fakeTransport) Seed() Message {
 func (t *fakeTransport) Output() <-chan Message  { return t.output }
 func (t *fakeTransport) Write(data []byte) error { t.writes = append(t.writes, data); return nil }
 func (t *fakeTransport) Resize(_ context.Context, cols, rows int) error {
+	t.mu.Lock()
+	hold := t.hold
+	t.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.refuse {
@@ -749,7 +758,7 @@ func TestASynchronizedUpdateIsPaintedWholeOrNotAtAll(t *testing.T) {
 	transport := newFakeTransport("hi")
 	terminal := New(transport, NewGate(), 80, 24)
 	defer terminal.Close()
-	plain(terminal)
+	// Nothing painted yet: the seed itself is the frame that stands in.
 
 	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
 	fence(transport)
@@ -813,5 +822,81 @@ func TestABlankScreenIsPaintedOnceTheResizeWindowPasses(t *testing.T) {
 	}
 	if view := plain(terminal); strings.Contains(view, "hi") {
 		t.Fatalf("the window never closed; the stale frame is still up:\n%s", view)
+	}
+}
+
+// A gesture that ends where the box began still tells the terminal when
+// the emulator had been following another viewer's size: the terminal is
+// at that viewer's size, and this is the dashboard taking it back.
+func TestAReturningGestureStillAssertsOverAnotherViewersSize(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 120, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	transport.output <- Message{Resize: &Size{Cols: 100, Rows: 30}}
+	waitForTerminal(t, terminal, 100, 30)
+
+	terminal.Settle(110, 40, settle)
+	terminal.Settle(120, 40, settle)
+	deadline := time.Now().Add(time.Second)
+	for len(transport.resized()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 120, Rows: 40}) {
+		t.Fatalf("daemon heard %v, want 120x40 asserted once", got)
+	}
+	if cols, rows := terminal.TerminalSize(); cols != 120 || rows != 40 {
+		t.Fatalf("emulator at %dx%d, want 120x40", cols, rows)
+	}
+}
+
+// A snapshot is a whole screen: a resync that lands inside an open
+// synchronized update ends it and is painted at once.
+func TestAResyncEndsAnOpenSynchronizedUpdate(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("the open block was painted:\n%s", view)
+	}
+	transport.output <- Message{Resync: []byte("FRESH")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "FRESH") {
+		t.Fatalf("the snapshot stayed hidden behind the held frame:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); !visible {
+		t.Fatal("the cursor stayed hidden on a painted snapshot")
+	}
+}
+
+// A retry for the same box while the gesture's own assertion is still on
+// the wire sends nothing: one gesture, one resize.
+func TestARefreshDuringAnAssertionDoesNotRepeatIt(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	const settle = 10 * time.Millisecond
+
+	hold := make(chan struct{})
+	transport.mu.Lock()
+	transport.hold = hold
+	transport.mu.Unlock()
+
+	terminal.Settle(60, 20, settle)
+	time.Sleep(4 * settle)          // the timer has fired; the assertion is parked
+	terminal.Settle(60, 20, settle) // the refresh, naming the same box
+	transport.mu.Lock()
+	transport.hold = nil
+	transport.mu.Unlock()
+	close(hold)
+	time.Sleep(4 * settle)
+	if got := transport.resized(); len(got) != 1 {
+		t.Fatalf("daemon heard %v, want the one 60x20", got)
 	}
 }
