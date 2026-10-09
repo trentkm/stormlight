@@ -8,8 +8,10 @@ package ui
 // The border carries the selection, and nothing else does: the two
 // cards on the path, the chosen workspace and the chosen agent in it,
 // are framed in the strip's bright silver with their titles in full
-// ink, every other card sits in the quiet border color with its title
-// muted, and a row awaiting its delete confirmation is framed in red.
+// ink — the cursor's card a shade brighter than the other, so the eye
+// finds the cursor without the other falling out of the path — every
+// other card sits in the quiet border color with its title muted, and
+// a row awaiting its delete confirmation is framed in red.
 // No card is filled. The compact list paints its cursor row's
 // background, and that fill inside a frame read as a smear rather than
 // a cursor; the band at the top of the panes already says which side
@@ -39,14 +41,16 @@ func cardInnerWidth(width int) int {
 }
 
 // cardBorderFor is the border's color for a row's selection state: on
-// the path — the cursor row, or the selection remembered in the pane
-// the cursor has left — it is lit.
+// the path it is lit, brightest on the cursor's row and a shade behind
+// on the selection remembered in the pane the cursor has left.
 func cardBorderFor(selected, focused, danger bool) color.Color {
 	switch {
 	case danger:
 		return colorFailed()
-	case selected || focused:
+	case focused:
 		return colorBand()
+	case selected:
+		return colorBandSoft()
 	}
 	return colorBorder()
 }

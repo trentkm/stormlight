@@ -55,6 +55,11 @@ var (
 	// below Band in the same hue, so the selected pane's segment reads
 	// brighter at a glance without breaking the shared surface.
 	BandMuted = Pair{Light: "#D5E7F2", Dark: "#8AB3D1"}
+	// BandSoft is the Band barely receded: the card on the selection
+	// path that the cursor is not on, lit like the cursor's card but a
+	// shade behind it, so the eye finds the cursor without the other
+	// card falling out of the path. A third of the way to BandMuted.
+	BandSoft = Pair{Light: "#C3DEF0", Dark: "#B1D6EF"}
 	// BandDim is the same surface receded: the roster half of the strip
 	// steps back while the keyboard lives in the portal, so the lit
 	// band always means "you are on this side of the seam".

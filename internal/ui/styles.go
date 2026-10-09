@@ -36,6 +36,7 @@ func colorDangerBg() color.Color     { return theme.Color(theme.DangerBg) }
 func colorPortalInk() color.Color    { return theme.Color(theme.PortalInk) }
 func colorBand() color.Color         { return theme.Color(theme.Band) }
 func colorBandMuted() color.Color    { return theme.Color(theme.BandMuted) }
+func colorBandSoft() color.Color     { return theme.Color(theme.BandSoft) }
 func colorBandDim() color.Color      { return theme.Color(theme.BandDim) }
 func colorAccentDim() color.Color    { return theme.Color(theme.AccentDim) }
 

@@ -129,8 +129,11 @@ func TestAWorkspaceCardNamesItsMachineAndPath(t *testing.T) {
 // chosen agent in it, whichever pane the cursor is in. Nothing else is,
 // and nothing is filled.
 func TestThePathsCardsAreLitAndNothingIsFilled(t *testing.T) {
-	if cardBorderFor(true, false, false) != colorBand() || cardBorderFor(false, true, false) != colorBand() {
-		t.Fatal("a card on the path is not lit")
+	if cardBorderFor(false, true, false) != colorBand() || cardBorderFor(true, false, false) != colorBandSoft() {
+		t.Fatal("the path's cards are not lit, the cursor's brightest")
+	}
+	if cardBorderFor(true, false, false) == cardBorderFor(false, true, false) {
+		t.Fatal("the cursor's card is not told apart from the other on the path")
 	}
 	if cardBorderFor(false, false, false) != colorBorder() {
 		t.Fatal("a card off the path is lit")
