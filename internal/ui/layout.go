@@ -303,8 +303,10 @@ func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
 		return 0, 0, false
 	}
 
-	expanded := m.expandedRows()
 	listHeight := contentHeight - 2
+	// The same fallback the renderers make: a list too short for one
+	// card holds compact rows.
+	expanded := m.expandedRows() && listHeight >= cardRows
 	workspaceCapacity := listRowCapacity(listHeight, expanded)
 	workspaceStart, workspaceEnd := visibleRange(
 		len(m.groups),
@@ -713,7 +715,7 @@ type paneDimming struct {
 // selectedRowRange is the body-line range a list's selected entry occupies,
 // or a zero range when the selection is scrolled out of view.
 func (m Model) selectedRowRange(total, cursor, listHeight int) undimmedRows {
-	expanded := m.expandedRows()
+	expanded := m.expandedRows() && listHeight >= cardRows
 	capacity := listRowCapacity(listHeight, expanded)
 	start, end := visibleRange(total, cursor, capacity)
 	if cursor < start || cursor >= end {

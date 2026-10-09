@@ -12,7 +12,7 @@ import (
 
 func TestACardIsAFrameAtThePanesWidth(t *testing.T) {
 	for _, width := range []int{12, 30, 52} {
-		card := ansi.Strip(renderCard("title", "detail", width, colorBorder()))
+		card := ansi.Strip(renderCard("title", "detail", width, cardFrame{ink: colorBorder()}))
 		lines := strings.Split(card, "\n")
 		if len(lines) != cardRows {
 			t.Fatalf("width %d: %d lines, want %d:\n%s", width, len(lines), cardRows, card)
@@ -31,7 +31,7 @@ func TestACardIsAFrameAtThePanesWidth(t *testing.T) {
 }
 
 func TestACardCutsALineThatOverflows(t *testing.T) {
-	card := ansi.Strip(renderCard(strings.Repeat("x", 40), "d", 20, colorBorder()))
+	card := ansi.Strip(renderCard(strings.Repeat("x", 40), "d", 20, cardFrame{ink: colorBorder()}))
 	for index, line := range strings.Split(card, "\n") {
 		if got := lipgloss.Width(line); got != 20 {
 			t.Fatalf("line %d is %d wide, want 20: %q", index, got, line)
@@ -88,12 +88,15 @@ func TestAnAgentCardSaysWhatTheAgentIsDoing(t *testing.T) {
 	if strings.Contains(card, "AUTO") {
 		t.Fatalf("the mode is on the card:\n%s", card)
 	}
-	// A title built from the task is not repeated under itself.
+	// A title built from the task is not repeated under itself — even
+	// when the title had to be cut to fit, or the task's spacing differs
+	// from how the title draws it.
 	named := agent.Agent{ID: "b", Provider: agent.ProviderCodex, Name: "cx-fix-parser",
-		Task: "Fix the parser", Activity: agent.ActivityWorking, ProcessLive: true}
-	card = ansi.Strip(renderAgentCard(named, false, false, 48, false, -1))
+		Task:     "Fix the  parser and the lexer so nested blocks round-trip",
+		Activity: agent.ActivityWorking, ProcessLive: true}
+	card = ansi.Strip(renderAgentCard(named, false, false, 36, false, -1))
 	lines = strings.Split(card, "\n")
-	if !strings.Contains(lines[1], "Fix the parser") || strings.Contains(lines[2], "Fix the parser") ||
+	if !strings.Contains(lines[1], "Fix the parser") || strings.Contains(lines[2], "Fix the") ||
 		!strings.Contains(lines[2], "codex · working") {
 		t.Fatalf("a task-titled card repeats itself:\n%s", card)
 	}
@@ -125,35 +128,46 @@ func TestAWorkspaceCardNamesItsMachineAndPath(t *testing.T) {
 	}
 }
 
-// Both cards on the path are lit the same: the chosen workspace and the
-// chosen agent in it, whichever pane the cursor is in. Nothing else is,
-// and nothing is filled.
-func TestThePathsCardsAreLitAndNothingIsFilled(t *testing.T) {
-	if cardBorderFor(false, true, false) != colorBand() || cardBorderFor(true, false, false) != colorBandSoft() {
-		t.Fatal("the path's cards are not lit, the cursor's brightest")
+// The cursor's card is the one heavy frame; the path's other card is
+// thin and a shade behind it, border and title both; off the path, thin
+// and quiet. Nothing is filled.
+func TestTheCursorsCardIsHeavyAndNothingIsFilled(t *testing.T) {
+	cursorFrame, cursorInk := cardGrade(false, true, false)
+	otherFrame, otherInk := cardGrade(true, false, false)
+	quietFrame, quietInk := cardGrade(false, false, false)
+	dangerFrame, _ := cardGrade(true, true, true)
+	if !cursorFrame.heavy || cursorFrame.ink != colorBand() {
+		t.Fatal("the cursor's card is not the heavy silver frame")
 	}
-	if cardBorderFor(true, false, false) == cardBorderFor(false, true, false) {
-		t.Fatal("the cursor's card is not told apart from the other on the path")
+	if otherFrame.heavy || otherFrame.ink != colorBandSoft() {
+		t.Fatal("the path's other card is not thin and a shade behind")
 	}
-	// The title is graded the same way as the border.
-	cursor := cardTitleInk(false, true).Render("t")
-	other := cardTitleInk(true, false).Render("t")
-	quiet := cardTitleInk(false, false).Render("t")
+	if quietFrame.heavy || quietFrame.ink != colorBorder() {
+		t.Fatal("a card off the path is lit")
+	}
+	if !dangerFrame.heavy || dangerFrame.ink != colorFailed() {
+		t.Fatal("a card awaiting delete confirmation is not heavy and red")
+	}
+	cursor, other, quiet := cursorInk.Render("t"), otherInk.Render("t"), quietInk.Render("t")
 	if cursor == other || other == quiet || cursor == quiet {
 		t.Fatal("the three title grades are not all distinct")
 	}
-	if cardBorderFor(false, false, false) != colorBorder() {
-		t.Fatal("a card off the path is lit")
-	}
-	if cardBorderFor(true, true, true) != colorFailed() {
-		t.Fatal("a card awaiting delete confirmation is not red")
-	}
+
 	lit := renderAgentCard(agent.Agent{ID: "a", Provider: agent.ProviderCodex, Name: "hello", Cwd: "/x"},
 		true, true, 40, false, -1)
+	lines := strings.Split(ansi.Strip(lit), "\n")
+	if !strings.HasPrefix(lines[0], "┏") || !strings.HasPrefix(lines[1], "┃") || !strings.HasPrefix(lines[3], "┗") {
+		t.Fatalf("the cursor's card is not drawn heavy:\n%s", ansi.Strip(lit))
+	}
 	for _, line := range strings.Split(lit, "\n") {
 		if strings.Contains(line, "[48;") {
 			t.Fatalf("a background fill inside a card: %q", line)
 		}
+	}
+	thin := ansi.Strip(renderAgentCard(agent.Agent{ID: "a", Provider: agent.ProviderCodex, Name: "hello"},
+		true, false, 40, false, -1))
+	if !strings.HasPrefix(thin, "╭") {
+		t.Fatalf("the path's other card is not drawn thin:\n%s", thin)
 	}
 }
 
@@ -187,5 +201,35 @@ func TestAPathShortensParentsBeforeItsName(t *testing.T) {
 	}
 	if got := shortenPath("~/notes/daily", 10); got != "~/n/daily" {
 		t.Fatalf("home path = %q", got)
+	}
+}
+
+// A list too short for one card holds compact rows instead of a card
+// with its bottom cut off; the connector and the dimming agree.
+func TestAListTooShortForACardShowsCompactRows(t *testing.T) {
+	workspaceContext := workspace.DirectoryContext("/workspace")
+	model := NewModel(stubBackend{})
+	model.activePane = paneAgents
+	model.agents = []agent.Agent{{ID: "one", Name: "one", Workspace: workspaceContext}}
+	model.rebuildGroups(workspaceContext.ID, "one")
+	model.rowsExpanded = true
+
+	rendered := ansi.Strip(model.renderAgents(40, 3))
+	if strings.ContainsAny(rendered, "╭┏") || strings.Count(rendered, "\n") > 0 {
+		t.Fatalf("a three-row list drew a card:\n%s", rendered)
+	}
+	if rows := model.selectedRowRange(1, 0, 3); rows.count != 1 {
+		t.Fatalf("dimming for a compact fallback = %+v", rows)
+	}
+}
+
+// A pane narrower than the frame gets the frame cut to the pane.
+func TestACardNeverSpillsPastATinyPane(t *testing.T) {
+	for _, width := range []int{1, 3, 4} {
+		for index, line := range strings.Split(ansi.Strip(renderCard("t", "d", width, cardFrame{ink: colorBorder()})), "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Fatalf("width %d: line %d is %d wide: %q", width, index, got, line)
+			}
+		}
 	}
 }

@@ -1918,7 +1918,7 @@ func TestListRowsHaveVisualSeparation(t *testing.T) {
 	// Cards separate themselves: one's bottom border sits over the next
 	// one's top.
 	rendered := ansi.Strip(model.renderAgents(52, 20))
-	if !strings.Contains(rendered, "╯\n╭") {
+	if !strings.Contains(rendered, "┛\n╭") && !strings.Contains(rendered, "╯\n╭") {
 		t.Fatalf("agent cards run together:\n%s", rendered)
 	}
 }
@@ -1942,9 +1942,9 @@ func TestFocusedAgentRowUsesTaskFirstTitleAndSelectionRail(t *testing.T) {
 	// Expanded, the row is a card: a frame of four lines at the pane's
 	// width, and no chevron inside it.
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != cardRows || !strings.HasPrefix(lines[0], "╭") ||
-		!strings.HasPrefix(lines[3], "╰") || strings.Contains(rendered, ">") {
-		t.Fatalf("agent card is not framed:\n%s", rendered)
+	if len(lines) != cardRows || !strings.HasPrefix(lines[0], "┏") ||
+		!strings.HasPrefix(lines[3], "┗") || strings.Contains(rendered, ">") {
+		t.Fatalf("the cursor's agent card is not framed heavy:\n%s", rendered)
 	}
 	for index, line := range lines {
 		if width := lipgloss.Width(line); width != 52 {

@@ -5,22 +5,25 @@ package ui
 // A compact row is one line, and the panes are lists of them. Expanded,
 // each row is a card — its title line and one line of detail, inside a
 // thin rounded border — stacked with the borders as their separation.
-// The border carries the selection, and nothing else does: the two
-// cards on the path, the chosen workspace and the chosen agent in it,
-// are framed in the strip's bright silver with their titles in full
-// ink — the cursor's card a shade brighter than the other, border and
-// title both, so the eye finds the cursor without the other falling out
-// of the path — every
-// other card sits in the quiet border color with its title muted, and
-// a row awaiting its delete confirmation is framed in red.
-// No card is filled. The compact list paints its cursor row's
+// The border carries the selection, and nothing else does. The cursor's
+// card is framed heavy — ┏━━┓, the one bold frame on the screen, so
+// which column the keyboard is in is legible from across the room, the
+// way the compact rows' ▌ is heavy where ▏ is light. The path's other
+// card, the selection remembered in the pane the cursor has left, keeps
+// the thin rounded frame but lit a shade behind, border and title both,
+// so the eye finds the cursor without that card falling out of the
+// path. Every other card sits thin in the quiet border color with its
+// title muted, and a row awaiting its delete confirmation is framed in
+// red. No card is filled: the compact list paints its cursor row's
 // background, and that fill inside a frame read as a smear rather than
-// a cursor; the band at the top of the panes already says which side
-// of the seam the keyboard is on.
+// a cursor.
 //
-// The detail line is the path. Resolver kinds, checkout labels, and
-// component names used to share it, and none of them said anything the
-// path does not: where this is, is the one thing worth a second line.
+// The detail line says the one thing the title does not. For a
+// workspace that is where it is: its path, with its machine when it is
+// not this one — resolver kinds, checkout labels and component names
+// used to share the line and said nothing the path does not. For an
+// agent it is what it is doing: its latest summary, else its task;
+// where it is belongs to the workspace card above it.
 
 import (
 	"image/color"
@@ -41,53 +44,70 @@ func cardInnerWidth(width int) int {
 	return max(1, width-cardInset)
 }
 
-// cardTitleInk is the title's style for a row's selection state, graded
-// the way the border is: full ink on the cursor's row, a shade behind on
-// the path's other card, muted off the path.
-func cardTitleInk(selected, focused bool) lipgloss.Style {
-	switch {
-	case focused:
-		return titleStyle().Bold(true)
-	case selected:
-		return lipgloss.NewStyle().Foreground(colorTextSoft()).Bold(true)
-	}
-	return mutedStyle()
+// cardFrame is the frame a card is drawn in: its color and weight.
+type cardFrame struct {
+	ink   color.Color
+	heavy bool
 }
 
-// cardBorderFor is the border's color for a row's selection state: on
-// the path it is lit, brightest on the cursor's row and a shade behind
-// on the selection remembered in the pane the cursor has left.
-func cardBorderFor(selected, focused, danger bool) color.Color {
+// cardGrade is a card's frame and title style for its selection state,
+// decided together so the two never disagree about where the cursor
+// is: heavy and red for a delete confirmation; heavy in the band's full
+// silver with full ink on the cursor's row; thin, a shade behind each,
+// on the selection remembered in the pane the cursor has left; thin in
+// the quiet border color with muted ink off the path.
+func cardGrade(selected, focused, danger bool) (cardFrame, lipgloss.Style) {
 	switch {
 	case danger:
-		return colorFailed()
+		return cardFrame{ink: colorFailed(), heavy: true},
+			lipgloss.NewStyle().Foreground(colorFailed()).Bold(true)
 	case focused:
-		return colorBand()
+		return cardFrame{ink: colorBand(), heavy: true}, titleStyle()
 	case selected:
-		return colorBandSoft()
+		return cardFrame{ink: colorBandSoft()},
+			lipgloss.NewStyle().Foreground(colorTextSoft()).Bold(true)
 	}
-	return colorBorder()
+	return cardFrame{ink: colorBorder()}, mutedStyle()
 }
 
+// The two weights of frame. The heavy one has square corners: box
+// drawing has no heavy rounded ones.
+var (
+	thinFrame  = [6]string{"╭", "─", "╮", "│", "╰", "╯"}
+	heavyFrame = [6]string{"┏", "━", "┓", "┃", "┗", "┛"}
+)
+
 // renderCard frames two lines, already rendered at the card's inner
-// width, in a thin rounded border.
-func renderCard(top, bottom string, width int, border color.Color) string {
+// width, in a thin rounded border. A pane narrower than the frame's
+// own five columns gets the frame cut to the pane rather than one that
+// spills past it.
+func renderCard(top, bottom string, width int, frame cardFrame) string {
+	glyphs := thinFrame
+	if frame.heavy {
+		glyphs = heavyFrame
+	}
 	inner := cardInnerWidth(width)
-	edge := lipgloss.NewStyle().Foreground(border)
-	rule := strings.Repeat("─", inner+2)
+	edge := lipgloss.NewStyle().Foreground(frame.ink)
+	rule := strings.Repeat(glyphs[1], inner+2)
 	line := func(content string) string {
 		content = ansi.Truncate(content, inner, "")
 		if short := inner - lipgloss.Width(content); short > 0 {
 			content += strings.Repeat(" ", short)
 		}
-		return edge.Render("│ ") + content + edge.Render(" │")
+		return edge.Render(glyphs[3]+" ") + content + edge.Render(" "+glyphs[3])
 	}
-	return strings.Join([]string{
-		edge.Render("╭" + rule + "╮"),
+	rows := []string{
+		edge.Render(glyphs[0] + rule + glyphs[2]),
 		line(top),
 		line(bottom),
-		edge.Render("╰" + rule + "╯"),
-	}, "\n")
+		edge.Render(glyphs[4] + rule + glyphs[5]),
+	}
+	if width < inner+cardInset {
+		for index, row := range rows {
+			rows[index] = ansi.Truncate(row, max(1, width), "")
+		}
+	}
+	return strings.Join(rows, "\n")
 }
 
 // shortenPath fits a path into a width by giving up what matters least

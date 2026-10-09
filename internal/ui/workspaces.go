@@ -160,6 +160,11 @@ func (m Model) renderWorkspaces(width, height int) string {
 		height = max(1, height-1)
 	}
 
+	// A list too short for one card shows compact rows instead; m is a
+	// copy, so the rest of this render sees the same answer.
+	if height < cardRows {
+		m.rowsExpanded = false
+	}
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
 	start, end := visibleRange(len(m.groups), m.workspaceCursor, capacity)
@@ -314,14 +319,13 @@ func (m Model) renderWorkspaceCard(
 	detail := workspaceDetail(group.context, inner)
 	tier := attentionTierOf(stats)
 
-	// On the path the name is in full ink; off it, muted like the rest
-	// of the card. Attention and the working glow outrank either, as on
-	// the compact row; a delete confirmation outranks everything.
-	border := cardBorderFor(selected, focused, danger)
-	renderedName := cardTitleInk(selected, focused).Render(name)
+	// The grade says where the cursor is; attention and the working glow
+	// outrank it, as on the compact row, and a delete confirmation
+	// outranks everything.
+	frame, nameInk := cardGrade(selected, focused, danger)
+	renderedName := nameInk.Render(name)
 	switch {
 	case danger:
-		renderedName = lipgloss.NewStyle().Foreground(colorFailed()).Bold(true).Render(name)
 	case tier == tierUrgent:
 		renderedName = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true).Render(name)
 	case stats.Working > 0:
@@ -332,7 +336,7 @@ func (m Model) renderWorkspaceCard(
 		styledSuffix = mutedStyle().Render(mark) + styledSuffix
 	}
 	top := renderedName + strings.Repeat(" ", gap) + styledSuffix
-	return renderCard(top, mutedStyle().Render(detail), width, border)
+	return renderCard(top, mutedStyle().Render(detail), width, frame)
 }
 
 // A countChip is one tier of a workspace's population, told in the glyph the
@@ -509,15 +513,11 @@ func renderSelectedWorkspaceRow(
 // StormGlyph for the measurements.
 const remoteGlyph = "\U000f059d"
 
-// workspaceDetail is the expanded row's subtitle: quiet middot-joined
-// tokens — resolver kind, home-relative root, and the component when it
-// adds information — indented under the name rather than justified across
-// the row.
 // workspaceDetail is a workspace card's second line: the machine, when
 // it is not this one, and the path. The machine comes first — two
 // checkouts at the same path on different machines are otherwise the
-// same row twice — and the path is cut from the left when it must be,
-// so its tail survives.
+// same row twice — and the path is shortened when it must be, so its
+// name survives; see shortenPath.
 func workspaceDetail(value workspace.Context, width int) string {
 	var tokens []string
 	if value.Host != "" {

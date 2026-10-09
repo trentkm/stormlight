@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/trentkm/stormlight/internal/agent"
 )
 
@@ -25,6 +24,11 @@ func (m Model) renderAgents(width, height int) string {
 			return note
 		}
 		return mutedStyle().Render(" No agents")
+	}
+	// A list too short for one card shows compact rows instead; m is a
+	// copy, so the rest of this render sees the same answer.
+	if height < cardRows {
+		m.rowsExpanded = false
 	}
 	expanded := m.expandedRows()
 	capacity := listRowCapacity(height, expanded)
@@ -63,6 +67,16 @@ func renderAgentRow(
 	)
 }
 
+// providerLabel is the provider's name as the roster writes it: lower
+// case, at most six letters.
+func providerLabel(managedAgent agent.Agent) string {
+	name := strings.ToLower(string(managedAgent.Provider))
+	if len(name) > 6 {
+		name = name[:6]
+	}
+	return name
+}
+
 func renderAgentRowWithDensity(
 	managedAgent agent.Agent,
 	selected bool,
@@ -76,10 +90,6 @@ func renderAgentRowWithDensity(
 		return renderAgentCard(managedAgent, selected, focused, width, danger, shimmerPhase)
 	}
 	symbol, statusStyle := statusVisual(managedAgent)
-	providerName := strings.ToLower(string(managedAgent.Provider))
-	if len(providerName) > 6 {
-		providerName = providerName[:6]
-	}
 	age := timeAgo(managedAgent.CreatedAt)
 	contentWidth := max(1, width-1)
 	ageWidth := lipgloss.Width(age)
@@ -143,51 +153,48 @@ func renderAgentCard(
 	shimmerPhase int,
 ) string {
 	symbol, statusStyle := statusVisual(managedAgent)
-	providerName := strings.ToLower(string(managedAgent.Provider))
-	if len(providerName) > 6 {
-		providerName = providerName[:6]
-	}
 	age := timeAgo(managedAgent.CreatedAt)
 	inner := cardInnerWidth(width)
 	ageWidth := lipgloss.Width(age)
 	titleWidth := max(1, inner-2-ageWidth-1)
-	title := truncate(agentDisplayTitle(managedAgent), titleWidth)
+	fullTitle := agentDisplayTitle(managedAgent)
+	title := truncate(fullTitle, titleWidth)
 	gap := max(1, inner-2-lipgloss.Width(title)-ageWidth)
-	detail := truncate(agentDetail(managedAgent, title), inner)
+	detail := truncate(agentDetail(managedAgent, fullTitle), inner)
 
-	// On the path the title is in full ink; off it, muted like the rest
-	// of the card. The state's own colors — urgent amber, the working
-	// glow — outrank either, as they do on the compact row; a delete
-	// confirmation outranks everything.
-	border := cardBorderFor(selected, focused, danger)
+	// The grade says where the cursor is; the state's own colors —
+	// urgent amber, the working glow — outrank it, as they do on the
+	// compact row, and a delete confirmation outranks everything.
+	frame, titleInk := cardGrade(selected, focused, danger)
 	detailStyle := mutedStyle()
-	renderedTitle := cardTitleInk(selected, focused).Render(title)
-	switch {
+	renderedTitle := titleInk.Render(title)
+	switch emphasis := rowEmphasisFor(managedAgent); {
 	case danger:
-		renderedTitle = lipgloss.NewStyle().Foreground(colorFailed()).Bold(true).Render(title)
-	case rowEmphasisFor(managedAgent) == emphasisUrgent:
+	case emphasis == emphasisUrgent:
 		attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
 		renderedTitle = attentionStyle.Render(title)
 		detailStyle = attentionStyle
-	case rowEmphasisFor(managedAgent) == emphasisWorking:
+	case emphasis == emphasisWorking:
 		renderedTitle = shimmerText(title, shimmerPhase, nil)
 	}
 	top := statusStyle.Render(symbol) + " " + renderedTitle +
 		strings.Repeat(" ", gap) + detailStyle.Render(age)
-	return renderCard(top, detailStyle.Render(detail), width, border)
+	return renderCard(top, detailStyle.Render(detail), width, frame)
 }
 
 // agentDetail is what an agent card says under its title: the agent's
 // latest summary, else its task. A title built from the task would only
 // be repeated by it, and then the provider and state stand in, so the
-// line always says something the title does not.
+// line always says something the title does not. title is the full
+// title, before any truncation, and both sides are compared with their
+// whitespace collapsed, since that is how either is drawn.
 func agentDetail(managedAgent agent.Agent, title string) string {
-	if summary := managedAgent.DisplaySummary(); summary != "" && summary != title {
+	collapse := func(text string) string { return strings.Join(strings.Fields(text), " ") }
+	if summary := managedAgent.DisplaySummary(); summary != "" && collapse(summary) != collapse(title) {
 		return summary
 	}
-	provider := strings.ToLower(string(managedAgent.Provider))
 	tokens := make([]string, 0, 2)
-	for _, token := range []string{provider, agentStateLabel(managedAgent)} {
+	for _, token := range []string{providerLabel(managedAgent), agentStateLabel(managedAgent)} {
 		if token != "" {
 			tokens = append(tokens, token)
 		}
@@ -260,85 +267,6 @@ func listRowCapacity(height int, expanded bool) int {
 		return max(1, height)
 	}
 	return max(1, height/cardRows)
-}
-
-func renderFocusedRow(top, bottom string, width int) string {
-	return selectTheme().focusedRow(top, bottom, width)
-}
-
-func (t rowTheme) focusedRow(top, bottom string, width int) string {
-	if width < 3 {
-		style := lipgloss.NewStyle().
-			Foreground(t.text).
-			Background(t.background).
-			Width(max(1, width))
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			style.Copy().Bold(true).Render(ansi.Truncate("▌"+top, width, "")),
-			style.Render(ansi.Truncate("▌"+bottom, width, "")),
-		)
-	}
-
-	contentWidth := width - 1
-	markerStyle := lipgloss.NewStyle().
-		Foreground(t.focusMark).
-		Background(t.background).
-		Bold(true)
-	topStyle := lipgloss.NewStyle().
-		Foreground(t.text).
-		Background(t.background).
-		Bold(true).
-		Width(contentWidth).
-		MaxWidth(contentWidth)
-	bottomStyle := lipgloss.NewStyle().
-		Foreground(t.text).
-		Background(t.background).
-		Width(contentWidth).
-		MaxWidth(contentWidth)
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		markerStyle.Render("▌")+topStyle.Render(top),
-		markerStyle.Render("▌")+bottomStyle.Render(bottom),
-	)
-}
-
-func renderContextRow(top, bottom string, width int) string {
-	return selectTheme().contextRow(top, bottom, width)
-}
-
-func (t rowTheme) contextRow(top, bottom string, width int) string {
-	if width < 3 {
-		style := lipgloss.NewStyle().
-			Foreground(t.text).
-			Background(t.background).
-			Width(max(1, width))
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			style.Copy().Bold(true).Render(ansi.Truncate(top, width, "")),
-			style.Render(ansi.Truncate(bottom, width, "")),
-		)
-	}
-
-	contentWidth := width - 1
-	markerStyle := lipgloss.NewStyle().
-		Foreground(t.restMark).
-		Background(t.background)
-	topStyle := lipgloss.NewStyle().
-		Foreground(t.text).
-		Background(t.background).
-		Bold(true).
-		Width(contentWidth).
-		MaxWidth(contentWidth)
-	bottomStyle := lipgloss.NewStyle().
-		Foreground(t.text).
-		Background(t.background).
-		Width(contentWidth).
-		MaxWidth(contentWidth)
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		markerStyle.Render("▏")+topStyle.Render(top),
-		markerStyle.Render("▏")+bottomStyle.Render(bottom),
-	)
 }
 
 func agentDisplayTitle(managedAgent agent.Agent) string {
