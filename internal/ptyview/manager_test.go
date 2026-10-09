@@ -104,7 +104,7 @@ func TestFailedTerminalOpenBacksOffBetweenRefreshes(t *testing.T) {
 	manager := NewManager(backend)
 
 	for range 5 {
-		manager.Ensure(context.Background(), []string{"agent"}, 100, 40)
+		manager.Ensure(context.Background(), []string{"agent"}, 100, 40, 0)
 	}
 	if backend.calls != 1 {
 		t.Fatalf("five immediate refreshes made %d attach attempts", backend.calls)
@@ -124,7 +124,7 @@ func TestOverlappingEnsuresCoalesceOntoTheNewest(t *testing.T) {
 	manager := NewManager(&fakeBackend{transport: transport})
 	ctx := context.Background()
 
-	manager.Ensure(ctx, []string{"agent"}, 100, 40)
+	manager.Ensure(ctx, []string{"agent"}, 100, 40, 0)
 
 	// Park the next assertion mid-flight.
 	entered := make(chan struct{}, 1)
@@ -136,14 +136,14 @@ func TestOverlappingEnsuresCoalesceOntoTheNewest(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		manager.Ensure(ctx, []string{"agent"}, 168, 42)
+		manager.Ensure(ctx, []string{"agent"}, 168, 42, 0)
 	}()
 	<-entered
 
 	// Two more window sizes land while the first is still in the air.
 	// Both return without reconciling; only the newest survives.
-	manager.Ensure(ctx, []string{"agent"}, 200, 55)
-	manager.Ensure(ctx, []string{"agent"}, 249, 71)
+	manager.Ensure(ctx, []string{"agent"}, 200, 55, 0)
+	manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 
 	transport.mu.Lock()
 	transport.entered, transport.hold = nil, nil
@@ -179,7 +179,7 @@ func TestAStaleResizeCannotLandAfterANewerOne(t *testing.T) {
 	manager := NewManager(&fakeBackend{transport: transport})
 	ctx := context.Background()
 
-	manager.Ensure(ctx, []string{"agent"}, 100, 40)
+	manager.Ensure(ctx, []string{"agent"}, 100, 40, 0)
 	widget, ok := manager.Widget("agent")
 	if !ok {
 		t.Fatal("no widget for the agent")
@@ -207,15 +207,15 @@ func TestARefusedResizeIsTriedAgain(t *testing.T) {
 	manager := NewManager(&fakeBackend{transport: transport})
 	ctx := context.Background()
 
-	manager.Ensure(ctx, []string{"agent"}, 100, 40)
+	manager.Ensure(ctx, []string{"agent"}, 100, 40, 0)
 	transport.refusing(true)
-	manager.Ensure(ctx, []string{"agent"}, 249, 71)
+	manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 	if got := transport.last(); got.Cols == 249 {
 		t.Fatal("the refusal did not take; the test proves nothing")
 	}
 
 	transport.refusing(false)
-	manager.Ensure(ctx, []string{"agent"}, 249, 71)
+	manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 	if got := transport.last(); got.Cols != 249 || got.Rows != 71 {
 		t.Errorf("daemon left at %dx%d after the refusal cleared, "+
 			"want 249x71", got.Cols, got.Rows)
@@ -230,9 +230,9 @@ func TestAnUnchangedTerminalAssertsNothing(t *testing.T) {
 	manager := NewManager(&fakeBackend{transport: transport})
 	ctx := context.Background()
 
-	manager.Ensure(ctx, []string{"agent"}, 249, 71)
+	manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 	for range 5 {
-		manager.Ensure(ctx, []string{"agent"}, 249, 71)
+		manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 	}
 	if count := transport.count(); count != 0 {
 		t.Errorf("%d resizes asserted on a terminal that never moved, "+
@@ -250,7 +250,7 @@ func TestAnotherViewersResizeIsFollowedNotFought(t *testing.T) {
 	manager := NewManager(&fakeBackend{transport: transport})
 	ctx := context.Background()
 
-	manager.Ensure(ctx, []string{"agent"}, 249, 71)
+	manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 	widget, ok := manager.Widget("agent")
 	if !ok {
 		t.Fatal("no widget for the agent")
@@ -263,7 +263,7 @@ func TestAnotherViewersResizeIsFollowedNotFought(t *testing.T) {
 	}, "the emulator never followed the other viewer")
 
 	for range 3 {
-		manager.Ensure(ctx, []string{"agent"}, 249, 71)
+		manager.Ensure(ctx, []string{"agent"}, 249, 71, 0)
 	}
 	if count := transport.count(); count != 0 {
 		t.Errorf("%d resizes sent back at the other viewer, want none", count)
@@ -279,4 +279,61 @@ func waitFor(t *testing.T, condition func() bool, complaint string) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal(complaint)
+}
+
+// A gesture is a burst of sizes, and the herd owes the daemon one resize
+// for it: the last one, once the pane holds still (#243). Until then the
+// widget's box has moved and its terminal has not.
+func TestAGestureLandsOneResizeOnceItHoldsStill(t *testing.T) {
+	transport := newFakeTransport()
+	manager := NewManager(&fakeBackend{transport: transport})
+	ctx := context.Background()
+	const settle = 15 * time.Millisecond
+
+	manager.Ensure(ctx, []string{"agent"}, 100, 40, 0)
+	widget, ok := manager.Widget("agent")
+	if !ok {
+		t.Fatal("no widget for the agent")
+	}
+
+	for _, size := range []pty.Size{{Cols: 110, Rows: 40}, {Cols: 120, Rows: 41}, {Cols: 130, Rows: 42}} {
+		manager.Ensure(ctx, []string{"agent"}, size.Cols, size.Rows, settle)
+	}
+	if count := transport.count(); count != 0 {
+		t.Fatalf("%d sizes reached the daemon mid-gesture, want none", count)
+	}
+	if cols, rows := widget.Size(); cols != 130 || rows != 42 {
+		t.Fatalf("box = %dx%d mid-gesture, want the live 130x42", cols, rows)
+	}
+	if cols, rows := widget.TerminalSize(); cols != 100 || rows != 40 {
+		t.Fatalf("terminal = %dx%d mid-gesture, want the old 100x40", cols, rows)
+	}
+	if !widget.Settling() {
+		t.Fatal("mid-gesture the widget does not report settling")
+	}
+	// The refresh lands in the middle, naming the size the pane already
+	// has; it must not restart the wait or assert anything.
+	manager.Ensure(ctx, []string{"agent"}, 130, 42, settle)
+
+	waitFor(t, func() bool { return transport.count() == 1 },
+		"the gesture never reached the daemon after it held still")
+	if got := transport.last(); got.Cols != 130 || got.Rows != 42 {
+		t.Errorf("daemon told %dx%d, want the final 130x42", got.Cols, got.Rows)
+	}
+	if cols, rows := widget.TerminalSize(); cols != 130 || rows != 42 {
+		t.Errorf("terminal = %dx%d after settling, want 130x42", cols, rows)
+	}
+	if widget.Settling() {
+		t.Error("settled, the widget still reports settling")
+	}
+	time.Sleep(3 * settle)
+	if count := transport.count(); count != 1 {
+		t.Errorf("%d sizes reached the daemon for one gesture, want 1", count)
+	}
+	// Steady state stays quiet.
+	manager.Ensure(ctx, []string{"agent"}, 130, 42, settle)
+	time.Sleep(3 * settle)
+	if count := transport.count(); count != 1 {
+		t.Errorf("a settled, unchanged size asserted again (%d total)", count)
+	}
 }

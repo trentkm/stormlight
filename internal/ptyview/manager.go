@@ -57,6 +57,7 @@ const (
 // roster is one desired state of the herd: which agents exist and what
 // size their boxes are.
 type roster struct {
+	settle        time.Duration
 	ids           []string
 	width, height int
 }
@@ -95,6 +96,12 @@ func (g *Manager) SetVisible(ids ...string) {
 	}
 }
 
+// ResizeSettle is how long a pane's size has to hold still before the
+// herd follows it. Long enough that a drag lands one resize rather than
+// one per frame, short enough that letting go feels like it took. The
+// web client waits the same on its ResizeObserver, for the same reason.
+const ResizeSettle = 120 * time.Millisecond
+
 // Ensure reconciles the terminals against the roster: agents without one
 // get one, departed agents lose theirs, and boxes follow the grid.
 // Errors are logged and retried on the next reconcile.
@@ -109,9 +116,20 @@ func (g *Manager) SetVisible(ids ...string) {
 // empty. Intermediate states are superseded before they are ever
 // applied, and what is applied is always the newest thing anyone asked
 // for.
-func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height int) {
+//
+// settle is how long a changed size has to hold still before the herd
+// follows it — ResizeSettle for the sizes a gesture produces, zero for a
+// deliberate one such as a zoom, which is one event and owes nobody a
+// wait. See pty.Model.Settle.
+func (g *Manager) Ensure(ctx context.Context, agentIDs []string, width, height int, settle time.Duration) {
 	g.mu.Lock()
-	g.pending = &roster{ids: agentIDs, width: width, height: height}
+	// A deliberate size parked behind a running reconcile must not be
+	// made to wait by a refresh that names the same size after it: the
+	// shorter settle of the two is the one that stands.
+	if g.pending != nil && g.pending.width == width && g.pending.height == height {
+		settle = min(settle, g.pending.settle)
+	}
+	g.pending = &roster{ids: agentIDs, width: width, height: height, settle: settle}
 	if g.reconciling || g.draining {
 		g.mu.Unlock()
 		return
@@ -164,10 +182,15 @@ func (g *Manager) reconcile(ctx context.Context, want roster) {
 		widget.Close()
 	}
 	for _, widget := range existing {
-		if needsSize(widget, want.width, want.height) {
-			if _, resize := widget.SetSize(want.width, want.height); resize != nil {
-				resize()
-			}
+		if !needsSize(widget, want.width, want.height) {
+			continue
+		}
+		if want.settle > 0 {
+			widget.Settle(want.width, want.height, want.settle)
+			continue
+		}
+		if _, resize := widget.SetSize(want.width, want.height); resize != nil {
+			resize()
 		}
 	}
 	for _, id := range missing {

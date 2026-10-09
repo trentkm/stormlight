@@ -3,12 +3,16 @@ package pty
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type fakeTransport struct {
@@ -16,6 +20,12 @@ type fakeTransport struct {
 	seedSize *Size
 	output   chan Message
 	writes   [][]byte
+	mu       sync.Mutex
+	resizes  []Size
+	refuse   bool
+	// hold, when set, parks each Resize until released, so a test can
+	// stand inside one assertion while more decisions arrive.
+	hold chan struct{}
 }
 
 func newFakeTransport(seed string) *fakeTransport {
@@ -25,10 +35,30 @@ func newFakeTransport(seed string) *fakeTransport {
 func (t *fakeTransport) Seed() Message {
 	return Message{Resync: t.seed, Resize: t.seedSize}
 }
-func (t *fakeTransport) Output() <-chan Message                 { return t.output }
-func (t *fakeTransport) Write(data []byte) error                { t.writes = append(t.writes, data); return nil }
-func (t *fakeTransport) Resize(context.Context, int, int) error { return nil }
-func (t *fakeTransport) Close()                                 { close(t.output) }
+func (t *fakeTransport) Output() <-chan Message  { return t.output }
+func (t *fakeTransport) Write(data []byte) error { t.writes = append(t.writes, data); return nil }
+func (t *fakeTransport) Resize(_ context.Context, cols, rows int) error {
+	t.mu.Lock()
+	hold := t.hold
+	t.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.refuse {
+		return errors.New("daemon said no")
+	}
+	t.resizes = append(t.resizes, Size{Cols: cols, Rows: rows})
+	return nil
+}
+
+func (t *fakeTransport) resized() []Size {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]Size(nil), t.resizes...)
+}
+func (t *fakeTransport) Close() { close(t.output) }
 
 func TestTerminalRendersSeedAndScrollback(t *testing.T) {
 	transport := newFakeTransport("first\r\nsecond\r\nthird\r\nfourth")
@@ -527,5 +557,424 @@ func TestADegenerateSeedSizeIsIgnored(t *testing.T) {
 
 	if cols, rows := terminal.TerminalSize(); cols != 120 || rows != 40 {
 		t.Fatalf("a 0x0 seed size produced a %dx%d replica", cols, rows)
+	}
+}
+
+// Settle moves the box now and the terminal later: the view fits the
+// pane at once, clipped the way it is for another viewer's size, and the
+// emulator and daemon follow only once the box has held still (#243).
+func TestSettleMovesTheBoxNowAndTheTerminalOnceItHoldsStill(t *testing.T) {
+	transport := newFakeTransport(strings.Repeat("line\r\n", 30) + "$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	terminal.Settle(60, 20, settle)
+	terminal.Settle(50, 12, settle)
+	if cols, rows := terminal.Size(); cols != 50 || rows != 12 {
+		t.Fatalf("box = %dx%d, want the live 50x12", cols, rows)
+	}
+	if cols, rows := terminal.TerminalSize(); cols != 80 || rows != 40 {
+		t.Fatalf("terminal = %dx%d mid-settle, want the old 80x40", cols, rows)
+	}
+	if !terminal.Settling() {
+		t.Fatal("mid-settle the widget does not say so")
+	}
+	view := strings.Split(ansi.Strip(terminal.View()), "\n")
+	if len(view) != 12 {
+		t.Fatalf("mid-settle view is %d rows, want the box's 12", len(view))
+	}
+	// The screen's bottom is what shows, so the prompt stays in view
+	// and the cursor sits inside the box, as when another viewer shrinks
+	// the terminal.
+	if !strings.Contains(strings.Join(view, "\n"), "$") {
+		t.Fatalf("mid-settle view lost the prompt at the screen's bottom:\n%s", strings.Join(view, "\n"))
+	}
+	if _, y, visible := terminal.Cursor(); !visible || y >= 12 {
+		t.Fatalf("cursor visible=%v at row %d, want visible inside the 12-row box", visible, y)
+	}
+	if got := transport.resized(); len(got) != 0 {
+		t.Fatalf("the daemon heard %v mid-settle, want nothing", got)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for len(transport.resized()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 50, Rows: 12}) {
+		t.Fatalf("daemon heard %v, want exactly one 50x12", got)
+	}
+	if cols, rows := terminal.TerminalSize(); cols != 50 || rows != 12 {
+		t.Fatalf("terminal = %dx%d after settling, want 50x12", cols, rows)
+	}
+	if terminal.Settling() {
+		t.Fatal("settled, the widget still says settling")
+	}
+}
+
+// A deliberate size decided while a settle is pending is the newer
+// decision: the settle's timer finds itself superseded and says nothing.
+func TestSetSizeSupersedesAPendingSettle(t *testing.T) {
+	transport := newFakeTransport("$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	terminal.Settle(60, 20, settle)
+	_, assert := terminal.SetSize(100, 50)
+	assert()
+	if terminal.Settling() {
+		t.Fatal("a SetSize left the widget settling")
+	}
+	time.Sleep(3 * settle)
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 100, Rows: 50}) {
+		t.Fatalf("daemon heard %v, want only the deliberate 100x50", got)
+	}
+}
+
+// A Settle for the box the widget already has is not a gesture. With the
+// assertion landed there is nothing to do and nothing to report; with it
+// never landed it is retried at once, without a wait and without the
+// widget calling itself settling — a pane that is not moving must not
+// blink its size on every refresh.
+func TestSettleForTheSameBoxIsARetryNotAGesture(t *testing.T) {
+	transport := newFakeTransport("$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+
+	terminal.Settle(80, 40, 15*time.Millisecond)
+	if terminal.Settling() {
+		t.Fatal("an unchanged, landed box reports settling")
+	}
+	time.Sleep(45 * time.Millisecond)
+	if got := transport.resized(); len(got) != 0 {
+		t.Fatalf("an unchanged, landed box was asserted: %v", got)
+	}
+
+	// Now the assertion has not landed: the attach's size is what the
+	// widget believes, and a later deliberate size was refused.
+	transport.refuse = true
+	_, assert := terminal.SetSize(100, 50)
+	assert()
+	transport.refuse = false
+	terminal.Settle(100, 50, 15*time.Millisecond)
+	if terminal.Settling() {
+		t.Fatal("a retry reports settling")
+	}
+	// The refusal recorded nothing; the retry is the one size heard.
+	deadline := time.Now().Add(time.Second)
+	for len(transport.resized()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 100, Rows: 50}) {
+		t.Fatalf("daemon heard %v, want the refused 100x50 retried once", got)
+	}
+}
+
+// A gesture that ends where it began owes the daemon nothing.
+func TestAGestureThatEndsWhereItBeganAssertsNothing(t *testing.T) {
+	transport := newFakeTransport("$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	terminal.Settle(100, 50, settle)
+	terminal.Settle(80, 40, settle)
+	time.Sleep(4 * settle)
+	if got := transport.resized(); len(got) != 0 {
+		t.Fatalf("daemon heard %v for a gesture that went nowhere", got)
+	}
+	if terminal.Settling() {
+		t.Fatal("still settling after the wait")
+	}
+}
+
+// fence proves the pump has finished the chunk before it: the output
+// channel is unbuffered, so a send returns once the previous one was
+// taken and processed.
+func fence(transport *fakeTransport) {
+	transport.output <- Message{Bytes: nil}
+	transport.output <- Message{Bytes: nil}
+}
+
+func plain(terminal Model) string {
+	return ansi.Strip(terminal.View())
+}
+
+// The blink a resize used to show, replayed from a captured Codex
+// session (#245): the daemon's clear-and-reflow, Codex's partial
+// synchronized update of its bottom rows, its clear outside any
+// synchronized update, then its whole redraw inside one across several
+// messages. Nothing before the whole redraw is painted; it is painted
+// once it is whole.
+func TestAResizePaintsOnlyTheWholeRedraw(t *testing.T) {
+	transport := newFakeTransport("hello")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	if !strings.Contains(plain(terminal), "hello") {
+		t.Fatal("seed not painted")
+	}
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	// The local reflow is not painted.
+	if view := plain(terminal); !strings.Contains(view, "hello") {
+		t.Fatalf("the emulator's own reflow was painted:\n%s", view)
+	}
+
+	steps := []struct{ name, bytes, mustNot string }{
+		{"the daemon's reflow", "\x1b[0m\x1b[r\x1b[H\x1b[2JREFLOW", "REFLOW"},
+		{"the partial update", "\x1b[?2026h\x1b[18;1H\x1b[JPARTIAL\x1b[?2026l", "PARTIAL"},
+		{"the clear", "\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H", ""},
+		{"the redraw's first message", "\x1b[?2026h\x1b[1;20r\x1b[1;1HRE", "RE"},
+		{"the redraw's second message", "DRAW", "DRAW"},
+	}
+	for _, step := range steps {
+		transport.output <- Message{Bytes: []byte(step.bytes)}
+		fence(transport)
+		view := plain(terminal)
+		if !strings.Contains(view, "hello") || (step.mustNot != "" && strings.Contains(view, step.mustNot)) {
+			t.Fatalf("after %s the held frame was let go:\n%s", step.name, view)
+		}
+		if _, _, visible := terminal.Cursor(); visible {
+			t.Fatalf("after %s a cursor was shown on a held frame", step.name)
+		}
+	}
+	transport.output <- Message{Bytes: []byte("\x1b[?2026l")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "REDRAW") || strings.Contains(view, "hello") {
+		t.Fatalf("the finished redraw was not painted:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); !visible {
+		t.Fatal("the cursor stayed hidden on a painted screen")
+	}
+}
+
+// Claude Code's shape of the same thing: the daemon's reflow, then one
+// synchronized update that clears and redraws, across messages.
+func TestAResizePaintsClaudeCodesRedrawWhole(t *testing.T) {
+	transport := newFakeTransport("hello")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	transport.output <- Message{Bytes: []byte("\x1b[0m\x1b[r\x1b[H\x1b[2JREFLOW")}
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[?25l\x1b[2J\x1b[HCLAUDE ")}
+	transport.output <- Message{Bytes: []byte("REDREW")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hello") {
+		t.Fatalf("something before the whole redraw was painted:\n%s", view)
+	}
+	transport.output <- Message{Bytes: []byte("\x1b[?2026l")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "CLAUDE REDREW") {
+		t.Fatalf("the finished redraw was not painted:\n%s", view)
+	}
+}
+
+// Synchronized updates are honored whether or not a resize is involved:
+// the screen inside one is painted when it closes, not as it arrives.
+func TestASynchronizedUpdateIsPaintedWholeOrNotAtAll(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	// Nothing painted yet: the seed itself is the frame that stands in.
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("an open synchronized update was painted:\n%s", view)
+	}
+	transport.output <- Message{Bytes: []byte("IAL\x1b[?2026l")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "PARTIAL") {
+		t.Fatalf("the closed update was not painted:\n%s", view)
+	}
+}
+
+// A program that opens a synchronized update and never closes it cannot
+// freeze the pane: the watchdog paints what is there.
+func TestAStalledSynchronizedUpdateIsReleased(t *testing.T) {
+	previous := syncWatchdog
+	syncWatchdog = 20 * time.Millisecond
+	t.Cleanup(func() { syncWatchdog = previous })
+
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HSTUCK")}
+	fence(transport)
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(plain(terminal), "STUCK") && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if view := plain(terminal); !strings.Contains(view, "STUCK") {
+		t.Fatalf("the stalled update was never released:\n%s", view)
+	}
+}
+
+// A program that redraws without synchronized updates is painted once
+// the window passes: a stale frame, briefly, rather than its reflow.
+func TestAPlainRedrawIsPaintedOnceTheResizeWindowPasses(t *testing.T) {
+	previous := resizeHold
+	resizeHold = 150 * time.Millisecond
+	t.Cleanup(func() { resizeHold = previous })
+
+	// The seed sits on the last row: a held frame is fitted to the box
+	// the way the screen is, bottom first, and the pane is shrinking.
+	transport := newFakeTransport(strings.Repeat("\r\n", 23) + "hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2JPLAIN")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("a plain repaint inside the window was painted:\n%s", view)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(plain(terminal), "PLAIN") && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if view := plain(terminal); !strings.Contains(view, "PLAIN") {
+		t.Fatalf("the window never closed; the stale frame is still up:\n%s", view)
+	}
+}
+
+// A gesture that ends where the box began still tells the terminal when
+// the emulator had been following another viewer's size: the terminal is
+// at that viewer's size, and this is the dashboard taking it back.
+func TestAReturningGestureStillAssertsOverAnotherViewersSize(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 120, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	transport.output <- Message{Resize: &Size{Cols: 100, Rows: 30}}
+	waitForTerminal(t, terminal, 100, 30)
+
+	terminal.Settle(110, 40, settle)
+	terminal.Settle(120, 40, settle)
+	deadline := time.Now().Add(time.Second)
+	for len(transport.resized()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 120, Rows: 40}) {
+		t.Fatalf("daemon heard %v, want 120x40 asserted once", got)
+	}
+	if cols, rows := terminal.TerminalSize(); cols != 120 || rows != 40 {
+		t.Fatalf("emulator at %dx%d, want 120x40", cols, rows)
+	}
+}
+
+// A snapshot is a whole screen: a resync that lands inside an open
+// synchronized update ends it and is painted at once.
+func TestAResyncEndsAnOpenSynchronizedUpdate(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("the open block was painted:\n%s", view)
+	}
+	transport.output <- Message{Resync: []byte("FRESH")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "FRESH") {
+		t.Fatalf("the snapshot stayed hidden behind the held frame:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); !visible {
+		t.Fatal("the cursor stayed hidden on a painted snapshot")
+	}
+}
+
+// A retry for the same box while the gesture's own assertion is still on
+// the wire sends nothing: one gesture, one resize.
+func TestARefreshDuringAnAssertionDoesNotRepeatIt(t *testing.T) {
+	transport := newFakeTransport("hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	const settle = 10 * time.Millisecond
+
+	hold := make(chan struct{})
+	transport.mu.Lock()
+	transport.hold = hold
+	transport.mu.Unlock()
+
+	terminal.Settle(60, 20, settle)
+	time.Sleep(4 * settle)          // the timer has fired; the assertion is parked
+	terminal.Settle(60, 20, settle) // the refresh, naming the same box
+	transport.mu.Lock()
+	transport.hold = nil
+	transport.mu.Unlock()
+	close(hold)
+	time.Sleep(4 * settle)
+	if got := transport.resized(); len(got) != 1 {
+		t.Fatalf("daemon heard %v, want the one 60x20", got)
+	}
+}
+
+// The hold is timed from the terminal changing size, not from the
+// dashboard deciding it: on a slow wire the clear and redraw arrive long
+// after the decision. The daemon's own notice, which echoes this widget's
+// assertion back, opens the window whether or not the emulator moved.
+func TestTheHoldOpensOnTheDaemonsNoticeNotTheDecision(t *testing.T) {
+	previous := resizeHold
+	resizeHold = 60 * time.Millisecond
+	t.Cleanup(func() { resizeHold = previous })
+
+	transport := newFakeTransport(strings.Repeat("\r\n", 19) + "hi")
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	_, assert := terminal.SetSize(60, 20)
+	assert()
+	time.Sleep(3 * resizeHold) // the decision's own window has passed
+
+	transport.output <- Message{Resize: &Size{Cols: 60, Rows: 20}}
+	transport.output <- Message{Bytes: []byte("\x1b[H\x1b[2J")}
+	fence(transport)
+	if view := plain(terminal); !strings.Contains(view, "hi") {
+		t.Fatalf("the clear after a late notice was painted:\n%s", view)
+	}
+}
+
+// Scrolling back is never held: the scrollback is not the screen being
+// redrawn, and a wheel that moves nothing reads as a wheel ignored.
+func TestScrollingIsNotHeldByAnOpenUpdate(t *testing.T) {
+	var seed strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&seed, "line %02d\r\n", i)
+	}
+	transport := newFakeTransport(seed.String())
+	terminal := New(transport, NewGate(), 80, 24)
+	defer terminal.Close()
+	plain(terminal)
+
+	transport.output <- Message{Bytes: []byte("\x1b[?2026h\x1b[2J\x1b[HPART")}
+	fence(transport)
+	if view := plain(terminal); strings.Contains(view, "PART") {
+		t.Fatalf("the open block was painted:\n%s", view)
+	}
+	terminal.ScrollBy(10)
+	// Ten lines back: scrollback above the live screen's partial row.
+	if view := plain(terminal); !strings.Contains(view, "line 5") {
+		t.Fatalf("the wheel moved nothing while a block was open:\n%s", view)
+	}
+	if _, _, visible := terminal.Cursor(); visible {
+		t.Fatal("a cursor on a scrolled view")
 	}
 }
