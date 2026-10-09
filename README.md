@@ -347,8 +347,10 @@ semantics remain outside Stormlight. See
 [workspace resolvers](docs/workspace-resolvers.md).
 
 Compact rows are the default and show the primary workspace or agent line.
-Press `z` to reveal the path and resolver or provider details. Narrow
-terminals show one full-width pane at a time and honor the same row density.
+Press `z` to open each row into a card: a thin border around the title line
+and the path beneath it (with the provider, state, and mode for an agent).
+Narrow terminals show one full-width pane at a time and honor the same row
+density.
 
 Rows never rearrange on their own: the default order is newest first, and
 `,` opens a yazi-style sort chord (`a` attention, `n` name, `c` newest).

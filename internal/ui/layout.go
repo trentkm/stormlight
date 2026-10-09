@@ -324,14 +324,16 @@ func (m Model) hierarchyConnectorRows(contentHeight int) (int, int, bool) {
 		return 0, 0, false
 	}
 
-	rowStep := 1
+	rowStep, titleOffset := 1, 0
 	if expanded {
-		rowStep = 3
+		// A card is four rows, and the connector meets its title line,
+		// one row inside the border.
+		rowStep, titleOffset = cardRows, 1
 	}
 	// Two rows of chrome above the first list row: the header band and the
 	// blank row the inset opens with.
-	workspaceRow := 2 + (m.workspaceCursor-workspaceStart)*rowStep
-	agentRow := 2 + (m.agentCursor-agentStart)*rowStep
+	workspaceRow := 2 + (m.workspaceCursor-workspaceStart)*rowStep + titleOffset
+	agentRow := 2 + (m.agentCursor-agentStart)*rowStep + titleOffset
 	return workspaceRow, agentRow, true
 }
 

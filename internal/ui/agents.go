@@ -4,7 +4,6 @@ package ui
 // Split from model.go; see #34.
 
 import (
-	"path/filepath"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -43,11 +42,8 @@ func (m Model) renderAgents(width, height int) string {
 			m.shimmerPhaseOrRest(),
 		))
 	}
-	separator := "\n"
-	if expanded {
-		separator = "\n\n"
-	}
-	return strings.Join(rows, separator)
+	// Cards carry their own separation in their borders.
+	return strings.Join(rows, "\n")
 }
 
 func renderAgentRow(
@@ -76,6 +72,9 @@ func renderAgentRowWithDensity(
 	danger bool,
 	shimmerPhase int,
 ) string {
+	if expanded {
+		return renderAgentCard(managedAgent, selected, focused, width, danger, shimmerPhase)
+	}
 	symbol, statusStyle := statusVisual(managedAgent)
 	providerName := strings.ToLower(string(managedAgent.Provider))
 	if len(providerName) > 6 {
@@ -91,17 +90,6 @@ func renderAgentRowWithDensity(
 	// remembered selection shows the chevron, everything else shows its
 	// status glyph. Displaced state speaks through the title styling.
 
-	details := []string{providerName, agentStateLabel(managedAgent)}
-	if badge := modeBadge(managedAgent.Mode); badge != "" {
-		details = append(details, badge)
-	}
-	if location := agentLocation(managedAgent); location != "" {
-		details = append(details, location)
-	}
-	bottomContent := " " + truncate(
-		strings.Join(details, " · "),
-		max(1, contentWidth-2),
-	)
 	// Only the active pane's cursor row gets the filled background; a
 	// selection remembered in an inactive pane keeps just a faint marker,
 	// so exactly one row on screen is hot.
@@ -111,10 +99,8 @@ func renderAgentRowWithDensity(
 			displayTitle,
 			gap,
 			age,
-			bottomContent,
 			width,
 			focused,
-			expanded,
 			shimmerPhase,
 			rowThemeFor(danger),
 		)
@@ -137,15 +123,85 @@ func renderAgentRowWithDensity(
 	if selected {
 		indicator = lipgloss.NewStyle().Foreground(colorBorder()).Render("›")
 	}
-	top := indicator + " " +
+	return indicator + " " +
 		renderedTitle +
 		strings.Repeat(" ", gap) +
 		detailStyle.Render(age)
-	bottom := detailStyle.Render(" " + bottomContent)
-	if !expanded {
-		return top
+}
+
+// renderAgentCard is the expanded row: the status glyph, title and age
+// on one line, the provider, state, mode and path on the next, framed.
+// See card.go.
+func renderAgentCard(
+	managedAgent agent.Agent,
+	selected bool,
+	focused bool,
+	width int,
+	danger bool,
+	shimmerPhase int,
+) string {
+	symbol, statusStyle := statusVisual(managedAgent)
+	providerName := strings.ToLower(string(managedAgent.Provider))
+	if len(providerName) > 6 {
+		providerName = providerName[:6]
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	age := timeAgo(managedAgent.CreatedAt)
+	inner := cardInnerWidth(width)
+	ageWidth := lipgloss.Width(age)
+	titleWidth := max(1, inner-2-ageWidth-1)
+	title := truncate(agentDisplayTitle(managedAgent), titleWidth)
+	gap := max(1, inner-2-lipgloss.Width(title)-ageWidth)
+	// Least important last: the state is already in the glyph, so it is
+	// the first to yield to the path; the mode changes what happens
+	// without you, so it outlasts it.
+	detail := cardDetail(
+		[]string{providerName, modeBadge(managedAgent.Mode), agentStateLabel(managedAgent)},
+		agentPath(managedAgent),
+		inner,
+	)
+
+	border := cardBorderFor(selected, focused, danger)
+	if !focused && !danger {
+		renderedTitle := titleStyle().Render(title)
+		detailStyle := mutedStyle()
+		switch rowEmphasisFor(managedAgent) {
+		case emphasisUrgent:
+			attentionStyle := lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
+			renderedTitle = attentionStyle.Render(title)
+			detailStyle = attentionStyle
+		case emphasisWorking:
+			renderedTitle = shimmerText(title, shimmerPhase, nil)
+		}
+		top := statusStyle.Render(symbol) + " " + renderedTitle +
+			strings.Repeat(" ", gap) + detailStyle.Render(age)
+		return renderCard(top, detailStyle.Render(detail), width, border, nil)
+	}
+
+	theme := rowThemeFor(danger)
+	base := lipgloss.NewStyle().Foreground(theme.text).Background(theme.background)
+	renderedTitle := base.Copy().Bold(true).Render(title)
+	switch rowEmphasisFor(managedAgent) {
+	case emphasisUrgent:
+		renderedTitle = base.Copy().Foreground(colorWaiting()).Bold(true).Render(title)
+	case emphasisWorking:
+		renderedTitle = shimmerText(title, shimmerPhase, theme.background)
+	}
+	top := statusStyle.Copy().Background(theme.background).Render(symbol) +
+		base.Render(" ") + renderedTitle +
+		base.Render(strings.Repeat(" ", gap)+age)
+	return renderCard(top, base.Render(detail), width, border, theme.background)
+}
+
+// agentPath is where an agent is: the component it was dispatched into,
+// else the checkout it runs in, else its working directory.
+func agentPath(managedAgent agent.Agent) string {
+	value := effectiveWorkspace(managedAgent)
+	for _, candidate := range []string{value.ComponentRoot, value.ExecutionRoot, managedAgent.Cwd} {
+		if candidate != "" {
+			return shortPath(candidate)
+		}
+	}
+	return ""
 }
 
 // renderSelectedAgentRow draws the cursor row over the selection background
@@ -161,22 +217,14 @@ func renderSelectedAgentRow(
 	title string,
 	gap int,
 	age string,
-	bottom string,
 	width int,
 	focused bool,
-	expanded bool,
 	shimmerPhase int,
 	theme rowTheme,
 ) string {
 	top := " " + title + strings.Repeat(" ", gap) + age
 	if width < 3 || lipgloss.Width(top) > max(0, width-2) {
-		if !expanded {
-			return theme.selectableRow(top, width, focused)
-		}
-		if focused {
-			return theme.focusedRow(top, bottom, width)
-		}
-		return theme.contextRow(top, bottom, width)
+		return theme.selectableRow(top, width, focused)
 	}
 
 	marker := "▏"
@@ -207,29 +255,20 @@ func renderSelectedAgentRow(
 
 	contentWidth := width - 1
 	tailWidth := max(0, contentWidth-1-lipgloss.Width(title))
-	topLine := markerStyle.Render(marker) +
+	return markerStyle.Render(marker) +
 		baseStyle.Render(" ") +
 		renderedTitle +
 		baseStyle.Copy().
 			Width(tailWidth).
 			MaxWidth(tailWidth).
 			Render(strings.Repeat(" ", gap)+age)
-	if !expanded {
-		return topLine
-	}
-	bottomLine := markerStyle.Render(marker) +
-		baseStyle.Copy().
-			Width(contentWidth).
-			MaxWidth(contentWidth).
-			Render(ansi.Truncate(bottom, contentWidth, ""))
-	return lipgloss.JoinVertical(lipgloss.Left, topLine, bottomLine)
 }
 
 func listRowCapacity(height int, expanded bool) int {
 	if !expanded {
 		return max(1, height)
 	}
-	return max(1, (height+1)/3)
+	return max(1, height/cardRows)
 }
 
 func renderFocusedRow(top, bottom string, width int) string {
@@ -359,20 +398,6 @@ func attentionTierOf(stats agent.Stats) attentionTier {
 	default:
 		return tierNone
 	}
-}
-
-func agentLocation(managedAgent agent.Agent) string {
-	value := effectiveWorkspace(managedAgent)
-	if value.ComponentName != "" {
-		return value.ComponentName
-	}
-	if value.ExecutionRoot != "" {
-		return filepath.Base(value.ExecutionRoot)
-	}
-	if managedAgent.Cwd != "" {
-		return filepath.Base(managedAgent.Cwd)
-	}
-	return ""
 }
 
 // rowEmphasis says how a row's title should read. A manual mark comes first:

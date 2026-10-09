@@ -1616,54 +1616,30 @@ func TestWorkspaceGroupingDrivesAgentPane(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDetailPrioritizesPathInCompactPane(t *testing.T) {
+func TestWorkspaceDetailIsThePath(t *testing.T) {
 	value := workspace.Context{
 		Kind: "custom",
-		Root: "/Volumes/repos/shared/alpha-service",
-	}
-
-	narrow := workspaceDetail(value, 24)
-	if !strings.Contains(narrow, "custom") ||
-		!strings.HasSuffix(narrow, "alpha-service") ||
-		lipgloss.Width(narrow) > 24 {
-		t.Fatalf("narrow detail lost its distinguishing tail: %q", narrow)
-	}
-
-	wide := workspaceDetail(value, 60)
-	if wide != "custom · /Volumes/repos/shared/alpha-service" {
-		t.Fatalf("wide detail = %q", wide)
-	}
-
-	named := workspace.Context{
-		Kind: "git",
 		Name: "alpha-service",
 		Root: "/Volumes/repos/shared/alpha-service",
 	}
-	if detail := workspaceDetail(named, 60); detail != "git · /Volumes/repos/shared" {
-		t.Fatalf("parent-only detail = %q", detail)
+	// The kind said nothing the path does not; the path is the detail,
+	// whole when it fits.
+	if wide := workspaceDetail(value, 60); wide != "/Volumes/repos/shared/alpha-service" {
+		t.Fatalf("wide detail = %q", wide)
 	}
-	if got := abbreviatePath("/Volumes/repos/alpha-service"); got != "/V/r/alpha-service" {
-		t.Fatalf("abbreviated path = %q", got)
+	// Cut from the left when it must be, so the tail survives.
+	narrow := workspaceDetail(value, 24)
+	if !strings.HasSuffix(narrow, "alpha-service") ||
+		!strings.HasPrefix(narrow, "…") ||
+		lipgloss.Width(narrow) > 24 {
+		t.Fatalf("narrow detail lost its distinguishing tail: %q", narrow)
 	}
-
-	worktree := workspace.Context{
-		Kind:          "git",
-		Name:          "alpha-service",
-		Root:          "/Volumes/repos/shared/alpha-service",
-		ExecutionRoot: "/Volumes/repos/shared/alpha-service-worktrees/fix-auth",
-	}
-	if detail := workspaceDetail(worktree, 60); !strings.HasSuffix(detail, " · fix-auth") {
-		t.Fatalf("worktree detail lost its tail: %q", detail)
-	}
-
-	mainCheckout := workspace.Context{
-		Kind:          "git",
-		Name:          "alpha-service",
-		Root:          "/Volumes/repos/shared/alpha-service",
-		ExecutionRoot: "/Volumes/repos/shared/alpha-service",
-	}
-	if detail := workspaceDetail(mainCheckout, 60); detail != "git · /Volumes/repos/shared" {
-		t.Fatalf("main-checkout detail = %q", detail)
+	// A worktree's execution root is not the workspace's path; the
+	// workspace is the checkout, and the card says where that is.
+	worktree := value
+	worktree.ExecutionRoot = "/Volumes/repos/shared/alpha-service-worktrees/fix-auth"
+	if detail := workspaceDetail(worktree, 60); detail != "/Volumes/repos/shared/alpha-service" {
+		t.Fatalf("worktree detail = %q", detail)
 	}
 }
 
@@ -1796,9 +1772,11 @@ func TestHierarchyConnectorRowsFollowDensity(t *testing.T) {
 		)
 	}
 
+	// A card is four rows and the connector meets its title line, one
+	// row inside the border.
 	model.rowsExpanded = true
 	workspaceRow, agentRow, ok = model.hierarchyConnectorRows(20)
-	if !ok || workspaceRow != 5 || agentRow != 8 {
+	if !ok || workspaceRow != 7 || agentRow != 11 {
 		t.Fatalf(
 			"expanded connector rows = %d -> %d, ok=%v",
 			workspaceRow,
@@ -1938,9 +1916,11 @@ func TestListRowsHaveVisualSeparation(t *testing.T) {
 	model.rebuildGroups(workspaceContext.ID, "one")
 	model.rowsExpanded = true
 
+	// Cards separate themselves: one's bottom border sits over the next
+	// one's top.
 	rendered := ansi.Strip(model.renderAgents(52, 20))
-	if !strings.Contains(rendered, "\n\n") {
-		t.Fatalf("agent rows run together:\n%s", rendered)
+	if !strings.Contains(rendered, "╯\n╭") {
+		t.Fatalf("agent cards run together:\n%s", rendered)
 	}
 }
 
@@ -1960,10 +1940,14 @@ func TestFocusedAgentRowUsesTaskFirstTitleAndSelectionRail(t *testing.T) {
 		strings.Contains(rendered, "cx-fix-parser") {
 		t.Fatalf("agent row does not use task-first labeling:\n%s", rendered)
 	}
-	if strings.Count(rendered, "▌") != 2 || strings.Contains(rendered, ">") {
-		t.Fatalf("agent selection rail is unclear:\n%s", rendered)
+	// Expanded, the row is a card: a frame of four lines at the pane's
+	// width, and no chevron inside it.
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != cardRows || !strings.HasPrefix(lines[0], "╭") ||
+		!strings.HasPrefix(lines[3], "╰") || strings.Contains(rendered, ">") {
+		t.Fatalf("agent card is not framed:\n%s", rendered)
 	}
-	for index, line := range strings.Split(rendered, "\n") {
+	for index, line := range lines {
 		if width := lipgloss.Width(line); width != 52 {
 			t.Fatalf("line %d width = %d, want 52: %q", index+1, width, line)
 		}
@@ -1994,9 +1978,10 @@ func TestSelectedAgentRowKeepsWorkingAndUrgentState(t *testing.T) {
 		return renderAgentRowWithDensity(value, true, true, 52, true, false, phase)
 	}
 	// The subtitle spells the state out in words either way; the claim here
-	// is about the title line, which is what carries the color.
+	// is about the title line — the card's second line, inside the border —
+	// which is what carries the color.
 	titleLine := func(rendered string) string {
-		return strings.SplitN(rendered, "\n", 2)[0]
+		return strings.SplitN(rendered, "\n", 3)[1]
 	}
 
 	idle := render(withState(agent.ActivityIdle, agent.AttentionNone), 4)
