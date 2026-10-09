@@ -153,7 +153,22 @@ func (m Model) selectedPTY() (pty.Model, bool) {
 // ensurePTYCmd reconciles the terminal herd against the roster. It runs on
 // every dashboard refresh; when nothing changed it is a map diff and no
 // transport calls, so the fast cadence stays cheap.
+//
+// A size it carries settles before the herd follows it: the refresh,
+// the window, and the column keys all run through here, and any of them
+// can land in the middle of a drag. Only a deliberate one-off size — a
+// zoom — goes through ensurePTYNowCmd (#243).
 func (m Model) ensurePTYCmd() tea.Cmd {
+	return m.ensurePTYWithin(ptyview.ResizeSettle)
+}
+
+// ensurePTYNowCmd is the reconcile for a size change that is one event
+// rather than a gesture: the terminal follows at once.
+func (m Model) ensurePTYNowCmd() tea.Cmd {
+	return m.ensurePTYWithin(0)
+}
+
+func (m Model) ensurePTYWithin(settle time.Duration) tea.Cmd {
 	if m.ptyManager == nil || !m.ready {
 		return nil
 	}
@@ -166,7 +181,7 @@ func (m Model) ensurePTYCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		manager.Ensure(ctx, ids, width, height)
+		manager.Ensure(ctx, ids, width, height, settle)
 		return ptyEnsuredMsg{}
 	}
 }
@@ -309,6 +324,13 @@ func (m Model) renderTerminalBar(managedAgent agent.Agent, width int) string {
 		if list := m.agentsForSelectedWorkspace(); len(list) > 1 {
 			position = fmt.Sprintf("‹ %d/%d ›", m.agentCursor+1, len(list))
 		}
+	}
+	if widget, ok := m.ptyManager.Widget(managedAgent.ID); ok && widget.Settling() {
+		// For the beat a drag lasts, the size the pane is heading for
+		// is the one thing worth reading there; the terminal follows
+		// once the pane holds still (see pty.Model.Settle).
+		cols, rows := widget.Size()
+		position = fmt.Sprintf("%d×%d", cols, rows)
 	}
 	label := agentDisplayTitle(managedAgent)
 	if meta := terminalBarMeta(managedAgent); meta != "" {

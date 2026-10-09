@@ -708,16 +708,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncTaskComposerSize()
 		m.refitForms()
 		if m.overlay != nil {
+			// The popup follows the window the way the herd does: once
+			// it holds still. The transcript under it is not reloaded
+			// for a window the popup is covering.
 			outerWidth, outerHeight := m.overlayDimensions()
-			_, resize := m.overlay.widget.SetSize(
-				max(2, outerWidth-2), max(2, outerHeight-2))
-			if resize != nil {
-				return m, tea.Batch(resize, m.ensurePTYCmd())
-			}
+			m.overlay.widget.Settle(
+				max(2, outerWidth-2), max(2, outerHeight-2), ptyview.ResizeSettle)
+			return m, m.ensurePTYCmd()
 		}
 		if m.ptyEnabled {
 			// Ensure re-reads the grid size and moves every window and
-			// emulator with it.
+			// emulator with it, once the size settles.
 			return m, m.ensurePTYCmd()
 		}
 		return m, tea.Batch(m.loadInteractionCmd(), m.ensurePTYCmd())
@@ -1231,7 +1232,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ptyEnabled = true
 			m.ptyZoom = true
 			m.activePane = paneInteraction
-			return m, m.ensurePTYCmd()
+			return m, m.ensurePTYNowCmd()
 		}
 	}
 	if m.normalPrefix == "," {
@@ -1330,7 +1331,7 @@ func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ptyEnabled = true
 			m.ptyZoom = true
 			m.activePane = paneInteraction
-			return m, tea.Batch(m.ensurePTYCmd(), m.armPTYWait())
+			return m, tea.Batch(m.ensurePTYNowCmd(), m.armPTYWait())
 		}
 		return m, nil
 	case "ctrl+space", "ctrl+@":

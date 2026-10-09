@@ -3,12 +3,15 @@ package pty
 import (
 	"bytes"
 	"context"
+	"errors"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type fakeTransport struct {
@@ -16,6 +19,9 @@ type fakeTransport struct {
 	seedSize *Size
 	output   chan Message
 	writes   [][]byte
+	mu       sync.Mutex
+	resizes  []Size
+	refuse   bool
 }
 
 func newFakeTransport(seed string) *fakeTransport {
@@ -25,10 +31,24 @@ func newFakeTransport(seed string) *fakeTransport {
 func (t *fakeTransport) Seed() Message {
 	return Message{Resync: t.seed, Resize: t.seedSize}
 }
-func (t *fakeTransport) Output() <-chan Message                 { return t.output }
-func (t *fakeTransport) Write(data []byte) error                { t.writes = append(t.writes, data); return nil }
-func (t *fakeTransport) Resize(context.Context, int, int) error { return nil }
-func (t *fakeTransport) Close()                                 { close(t.output) }
+func (t *fakeTransport) Output() <-chan Message  { return t.output }
+func (t *fakeTransport) Write(data []byte) error { t.writes = append(t.writes, data); return nil }
+func (t *fakeTransport) Resize(_ context.Context, cols, rows int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.refuse {
+		return errors.New("daemon said no")
+	}
+	t.resizes = append(t.resizes, Size{Cols: cols, Rows: rows})
+	return nil
+}
+
+func (t *fakeTransport) resized() []Size {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]Size(nil), t.resizes...)
+}
+func (t *fakeTransport) Close() { close(t.output) }
 
 func TestTerminalRendersSeedAndScrollback(t *testing.T) {
 	transport := newFakeTransport("first\r\nsecond\r\nthird\r\nfourth")
@@ -527,5 +547,137 @@ func TestADegenerateSeedSizeIsIgnored(t *testing.T) {
 
 	if cols, rows := terminal.TerminalSize(); cols != 120 || rows != 40 {
 		t.Fatalf("a 0x0 seed size produced a %dx%d replica", cols, rows)
+	}
+}
+
+// Settle moves the box now and the terminal later: the view fits the
+// pane at once, clipped the way it is for another viewer's size, and the
+// emulator and daemon follow only once the box has held still (#243).
+func TestSettleMovesTheBoxNowAndTheTerminalOnceItHoldsStill(t *testing.T) {
+	transport := newFakeTransport(strings.Repeat("line\r\n", 30) + "$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	terminal.Settle(60, 20, settle)
+	terminal.Settle(50, 12, settle)
+	if cols, rows := terminal.Size(); cols != 50 || rows != 12 {
+		t.Fatalf("box = %dx%d, want the live 50x12", cols, rows)
+	}
+	if cols, rows := terminal.TerminalSize(); cols != 80 || rows != 40 {
+		t.Fatalf("terminal = %dx%d mid-settle, want the old 80x40", cols, rows)
+	}
+	if !terminal.Settling() {
+		t.Fatal("mid-settle the widget does not say so")
+	}
+	view := strings.Split(ansi.Strip(terminal.View()), "\n")
+	if len(view) != 12 {
+		t.Fatalf("mid-settle view is %d rows, want the box's 12", len(view))
+	}
+	// The screen's bottom is what shows, so the prompt stays in view
+	// and the cursor sits inside the box, as when another viewer shrinks
+	// the terminal.
+	if !strings.Contains(strings.Join(view, "\n"), "$") {
+		t.Fatalf("mid-settle view lost the prompt at the screen's bottom:\n%s", strings.Join(view, "\n"))
+	}
+	if _, y, visible := terminal.Cursor(); !visible || y >= 12 {
+		t.Fatalf("cursor visible=%v at row %d, want visible inside the 12-row box", visible, y)
+	}
+	if got := transport.resized(); len(got) != 0 {
+		t.Fatalf("the daemon heard %v mid-settle, want nothing", got)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for len(transport.resized()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 50, Rows: 12}) {
+		t.Fatalf("daemon heard %v, want exactly one 50x12", got)
+	}
+	if cols, rows := terminal.TerminalSize(); cols != 50 || rows != 12 {
+		t.Fatalf("terminal = %dx%d after settling, want 50x12", cols, rows)
+	}
+	if terminal.Settling() {
+		t.Fatal("settled, the widget still says settling")
+	}
+}
+
+// A deliberate size decided while a settle is pending is the newer
+// decision: the settle's timer finds itself superseded and says nothing.
+func TestSetSizeSupersedesAPendingSettle(t *testing.T) {
+	transport := newFakeTransport("$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	terminal.Settle(60, 20, settle)
+	_, assert := terminal.SetSize(100, 50)
+	assert()
+	if terminal.Settling() {
+		t.Fatal("a SetSize left the widget settling")
+	}
+	time.Sleep(3 * settle)
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 100, Rows: 50}) {
+		t.Fatalf("daemon heard %v, want only the deliberate 100x50", got)
+	}
+}
+
+// A Settle for the box the widget already has is not a gesture. With the
+// assertion landed there is nothing to do and nothing to report; with it
+// never landed it is retried at once, without a wait and without the
+// widget calling itself settling — a pane that is not moving must not
+// blink its size on every refresh.
+func TestSettleForTheSameBoxIsARetryNotAGesture(t *testing.T) {
+	transport := newFakeTransport("$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+
+	terminal.Settle(80, 40, 15*time.Millisecond)
+	if terminal.Settling() {
+		t.Fatal("an unchanged, landed box reports settling")
+	}
+	time.Sleep(45 * time.Millisecond)
+	if got := transport.resized(); len(got) != 0 {
+		t.Fatalf("an unchanged, landed box was asserted: %v", got)
+	}
+
+	// Now the assertion has not landed: the attach's size is what the
+	// widget believes, and a later deliberate size was refused.
+	transport.refuse = true
+	_, assert := terminal.SetSize(100, 50)
+	assert()
+	transport.refuse = false
+	terminal.Settle(100, 50, 15*time.Millisecond)
+	if terminal.Settling() {
+		t.Fatal("a retry reports settling")
+	}
+	// The refusal recorded nothing; the retry is the one size heard.
+	deadline := time.Now().Add(time.Second)
+	for len(transport.resized()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := transport.resized()
+	if len(got) != 1 || got[0] != (Size{Cols: 100, Rows: 50}) {
+		t.Fatalf("daemon heard %v, want the refused 100x50 retried once", got)
+	}
+}
+
+// A gesture that ends where it began owes the daemon nothing.
+func TestAGestureThatEndsWhereItBeganAssertsNothing(t *testing.T) {
+	transport := newFakeTransport("$ ")
+	terminal := New(transport, NewGate(), 80, 40)
+	defer terminal.Close()
+	const settle = 15 * time.Millisecond
+
+	terminal.Settle(100, 50, settle)
+	terminal.Settle(80, 40, settle)
+	time.Sleep(4 * settle)
+	if got := transport.resized(); len(got) != 0 {
+		t.Fatalf("daemon heard %v for a gesture that went nowhere", got)
+	}
+	if terminal.Settling() {
+		t.Fatal("still settling after the wait")
 	}
 }

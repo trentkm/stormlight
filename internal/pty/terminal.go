@@ -124,6 +124,10 @@ type state struct {
 	// which is not the same as the last one asked for — see assert.
 	resizeSeq                  uint64
 	assertedCols, assertedRows int
+	// settling marks a box size the emulator and the hosted terminal
+	// have not followed yet: settleTimer is running. See Settle.
+	settling    bool
+	settleTimer *time.Timer
 	// assertFailing marks a run of failed assertions, so a terminal
 	// that refuses every one — a session whose process has exited is
 	// the usual way — is reported once rather than at the reconcile's
@@ -438,15 +442,15 @@ func (m Model) Write(data []byte) error {
 
 func (m Model) ID() int64 { return m.id }
 
-// SetSize is the deliberate resize: the dashboard's own window moved, a
-// zoom toggled, an attach returned. It asserts the new size on both the
-// replica and the hosted terminal — as opposed to setTerminalSize, which
-// follows a move someone else made.
+// SetSize is the deliberate resize: a zoom toggled, an attach returned.
+// It asserts the new size on both the replica and the hosted terminal at
+// once — as opposed to setTerminalSize, which follows a move someone
+// else made, and Settle, which waits for a pane in motion to stop.
 func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	cols, rows = max(2, cols), max(2, rows)
 	s := m.state
 	s.mu.Lock()
-	if cols != s.cols || rows != s.rows {
+	if cols != s.cols || rows != s.rows || cols != s.termCols || rows != s.termRows {
 		s.emu.Resize(cols, rows)
 		s.cols, s.rows, s.termCols, s.termRows = cols, rows, cols, rows
 		s.sizeGeneration++
@@ -454,11 +458,107 @@ func (m Model) SetSize(cols, rows int) (Model, tea.Cmd) {
 	}
 	s.resizeSeq++
 	seq := s.resizeSeq
+	s.settling = false
 	s.mu.Unlock()
 	return m, func() tea.Msg {
 		s.assert(seq, cols, rows)
 		return nil
 	}
+}
+
+// Settle is the resize for a pane still in motion: a window being
+// dragged, a run of column keys, the sidebars folding away. The box takes
+// the new size now, so View clips or pads to it the way it does when
+// another viewer moves the terminal, while the emulator and the hosted
+// terminal keep theirs until the box has held still for delay. Then the
+// emulator follows and the size is asserted, once.
+//
+// Every terminal is shared, and every size asserted makes the agent
+// repaint for every viewer — Codex clears its screen and scrollback to
+// do it — so a drag that asserted each size it passed through was a
+// pane that blanked and came back several times per gesture (#243). A
+// Settle that arrives while one is already running for the same box is
+// nothing new and leaves the timer alone; one for a different box
+// restarts it, so only the last size a gesture reaches is ever sent.
+//
+// A Settle for the box the widget already has is not a gesture at all.
+// If a wait is running it is left alone; if the hosted terminal already
+// took this size there is nothing to do; otherwise an earlier assertion
+// never landed — refused, or lost a race — and it is simply asserted
+// again, now, the way a reconcile always retried it. That keeps a
+// terminal whose session has exited from reporting a settle on every
+// refresh for a pane that is not moving.
+func (m Model) Settle(cols, rows int, delay time.Duration) {
+	cols, rows = max(2, cols), max(2, rows)
+	s := m.state
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	if cols == s.cols && rows == s.rows {
+		if s.settling || (cols == s.assertedCols && rows == s.assertedRows) {
+			s.mu.Unlock()
+			return
+		}
+		s.resizeSeq++
+		seq := s.resizeSeq
+		s.mu.Unlock()
+		// Off the caller's goroutine: a retry is a transport call, and
+		// the caller may be the event loop.
+		go s.assert(seq, cols, rows)
+		return
+	}
+	s.cols, s.rows = cols, rows
+	s.viewDirty = true
+	s.resizeSeq++
+	seq := s.resizeSeq
+	s.settling = true
+	if s.settleTimer != nil {
+		s.settleTimer.Stop()
+	}
+	s.settleTimer = time.AfterFunc(delay, func() { s.settle(seq, cols, rows) })
+	s.mu.Unlock()
+	if s.visible.Load() {
+		s.gate.Notify()
+	}
+}
+
+// settle is a Settle's timer expiring. A newer decision — another
+// Settle, or a SetSize — has moved resizeSeq on and this one says
+// nothing; otherwise the emulator takes the box's size and the hosted
+// terminal is told — unless it already holds this size, because the
+// gesture ended where it began, in which case it is not told anything.
+func (s *state) settle(seq uint64, cols, rows int) {
+	s.mu.Lock()
+	if seq != s.resizeSeq || s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.settling = false
+	if cols != s.termCols || rows != s.termRows {
+		s.emu.Resize(cols, rows)
+		s.termCols, s.termRows = cols, rows
+		s.sizeGeneration++
+		s.viewDirty = true
+	}
+	landed := cols == s.assertedCols && rows == s.assertedRows
+	s.mu.Unlock()
+	if s.visible.Load() {
+		s.gate.Notify()
+	}
+	if !landed {
+		s.assert(seq, cols, rows)
+	}
+}
+
+// Settling reports a box the terminal has not followed yet: the beat
+// between a gesture and its one resize.
+func (m Model) Settling() bool {
+	s := m.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settling
 }
 
 // assert carries a decided size to the hosted terminal, and is the only

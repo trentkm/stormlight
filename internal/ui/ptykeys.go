@@ -35,7 +35,7 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// with it, so it always lands back on the roster.
 		m.ptyZoom = false
 		m.activePane = paneAgents
-		return m, m.ensurePTYCmd()
+		return m, m.ensurePTYNowCmd()
 	case slices.Contains(m.keys.AgentsNext, key):
 		// Switch agents without stepping out: the portal swaps terminals
 		// under the keyboard and the bar re-labels. The roster's cursor is
@@ -53,7 +53,7 @@ func (m Model) updateTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.jumpQueue(agent.QueueBack)
 	case slices.Contains(m.keys.Zoom, key):
 		m.ptyZoom = !m.ptyZoom
-		return m, m.ensurePTYCmd()
+		return m, m.ensurePTYNowCmd()
 	}
 	widget, ok := m.selectedPTY()
 	if !ok {
