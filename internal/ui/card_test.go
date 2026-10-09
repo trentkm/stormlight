@@ -68,30 +68,45 @@ func TestTheCardDetailGivesThePathItsRoomFirst(t *testing.T) {
 	}
 }
 
-func TestAnAgentsPathIsWhereItRuns(t *testing.T) {
-	value := agent.Agent{Cwd: "/tmp/cwd"}
-	if got := agentPath(value); got != "/tmp/cwd" {
-		t.Fatalf("cwd only = %q", got)
+func TestAnAgentCardSaysWhatTheAgentIsDoing(t *testing.T) {
+	value := agent.Agent{ID: "a", Provider: agent.ProviderClaude, Name: "ascii art",
+		Task: "fill the dead space with art", Cwd: "/Volumes/repos/stormlight", ProcessLive: true}
+	card := ansi.Strip(renderAgentCard(value, false, false, 48, false, -1))
+	lines := strings.Split(card, "\n")
+	if !strings.Contains(lines[2], "fill the dead space with art") || strings.Contains(card, "/Volumes") {
+		t.Fatalf("the detail is not the task:\n%s", card)
 	}
-	value.Workspace = workspace.Context{ID: "w", Kind: "git", Name: "repo", Root: "/repo",
-		ExecutionRoot: "/repo-worktrees/fix"}
-	if got := agentPath(value); got != "/repo-worktrees/fix" {
-		t.Fatalf("worktree = %q", got)
+	// The latest summary outranks the task.
+	value.Summary = "Shipped the night sky in PR #242."
+	card = ansi.Strip(renderAgentCard(value, false, false, 48, false, -1))
+	if !strings.Contains(card, "Shipped the night sky") || strings.Contains(card, "fill the dead") {
+		t.Fatalf("the detail is not the summary:\n%s", card)
 	}
-	value.Workspace.ComponentRoot = "/repo-worktrees/fix/src/parser"
-	if got := agentPath(value); got != "/repo-worktrees/fix/src/parser" {
-		t.Fatalf("component = %q", got)
+	// AUTO leads the line.
+	value.Mode = agent.ModeAuto
+	card = ansi.Strip(renderAgentCard(value, false, false, 48, false, -1))
+	if !strings.Contains(strings.Split(card, "\n")[2], "AUTO · Shipped") {
+		t.Fatalf("the mode does not lead the detail:\n%s", card)
+	}
+	// A title built from the task is not repeated under itself.
+	named := agent.Agent{ID: "b", Provider: agent.ProviderCodex, Name: "cx-fix-parser",
+		Task: "Fix the parser", Activity: agent.ActivityWorking, ProcessLive: true}
+	card = ansi.Strip(renderAgentCard(named, false, false, 48, false, -1))
+	lines = strings.Split(card, "\n")
+	if !strings.Contains(lines[1], "Fix the parser") || strings.Contains(lines[2], "Fix the parser") ||
+		!strings.Contains(lines[2], "codex · working") {
+		t.Fatalf("a task-titled card repeats itself:\n%s", card)
 	}
 }
 
 func TestAnIdleAgentCardHasNoStrayState(t *testing.T) {
+	// Nothing said yet and no task: the provider stands in, and the
+	// idle state, being empty, leaves no stray separator behind.
 	card := ansi.Strip(renderAgentCard(agent.Agent{
-		ID: "a", Provider: agent.ProviderCodex, Name: "hello", Cwd: "/Users/me/src/app",
-		ProcessLive: true,
+		ID: "a", Provider: agent.ProviderCodex, Name: "hello", ProcessLive: true,
 	}, false, false, 40, false, -1))
 	lines := strings.Split(card, "\n")
-	if strings.Contains(lines[2], "· ·") || !strings.Contains(lines[2], "codex · ") ||
-		!strings.Contains(lines[2], "src/app") {
+	if strings.Contains(lines[2], "·") || !strings.Contains(lines[2], "codex") {
 		t.Fatalf("idle card detail = %q", lines[2])
 	}
 }

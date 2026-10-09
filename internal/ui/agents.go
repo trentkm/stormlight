@@ -130,8 +130,10 @@ func renderAgentRowWithDensity(
 }
 
 // renderAgentCard is the expanded row: the status glyph, title and age
-// on one line, the provider, state, mode and path on the next, framed.
-// See card.go.
+// on one line, and on the next what the agent is doing — its latest
+// summary, else the task it was given — with the mode ahead of it when
+// the mode changes what happens without you. Where this is belongs to
+// the workspace card above it, not here. See card.go.
 func renderAgentCard(
 	managedAgent agent.Agent,
 	selected bool,
@@ -151,14 +153,13 @@ func renderAgentCard(
 	titleWidth := max(1, inner-2-ageWidth-1)
 	title := truncate(agentDisplayTitle(managedAgent), titleWidth)
 	gap := max(1, inner-2-lipgloss.Width(title)-ageWidth)
-	// Least important last: the state is already in the glyph, so it is
-	// the first to yield to the path; the mode changes what happens
-	// without you, so it outlasts it.
-	detail := cardDetail(
-		[]string{providerName, modeBadge(managedAgent.Mode), agentStateLabel(managedAgent)},
-		agentPath(managedAgent),
-		inner,
-	)
+	badge := modeBadge(managedAgent.Mode)
+	detail := agentDetail(managedAgent, title)
+	detailRoom := inner
+	if badge != "" {
+		detailRoom = max(1, inner-lipgloss.Width(badge)-lipgloss.Width(metaSeparator))
+	}
+	detail = truncate(detail, detailRoom)
 
 	// On the path the title is in full ink; off it, muted like the rest
 	// of the card. The state's own colors — urgent amber, the working
@@ -183,19 +184,36 @@ func renderAgentCard(
 	}
 	top := statusStyle.Render(symbol) + " " + renderedTitle +
 		strings.Repeat(" ", gap) + detailStyle.Render(age)
-	return renderCard(top, detailStyle.Render(detail), width, border)
+	bottom := detailStyle.Render(detail)
+	if badge != "" {
+		// AUTO is the one token that changes what happens without you;
+		// the dispatch modal and the masthead say it in amber, and so
+		// does the card.
+		badgeStyle := mutedStyle()
+		if managedAgent.Mode == agent.ModeAuto {
+			badgeStyle = lipgloss.NewStyle().Foreground(colorWaiting()).Bold(true)
+		}
+		bottom = badgeStyle.Render(badge) + detailStyle.Render(metaSeparator) + bottom
+	}
+	return renderCard(top, bottom, width, border)
 }
 
-// agentPath is where an agent is: the component it was dispatched into,
-// else the checkout it runs in, else its working directory.
-func agentPath(managedAgent agent.Agent) string {
-	value := effectiveWorkspace(managedAgent)
-	for _, candidate := range []string{value.ComponentRoot, value.ExecutionRoot, managedAgent.Cwd} {
-		if candidate != "" {
-			return shortPath(candidate)
+// agentDetail is what an agent card says under its title: the agent's
+// latest summary, else its task. A title built from the task would only
+// be repeated by it, and then the provider and state stand in, so the
+// line always says something the title does not.
+func agentDetail(managedAgent agent.Agent, title string) string {
+	if summary := managedAgent.DisplaySummary(); summary != "" && summary != title {
+		return summary
+	}
+	provider := strings.ToLower(string(managedAgent.Provider))
+	tokens := make([]string, 0, 2)
+	for _, token := range []string{provider, agentStateLabel(managedAgent)} {
+		if token != "" {
+			tokens = append(tokens, token)
 		}
 	}
-	return ""
+	return strings.Join(tokens, metaSeparator)
 }
 
 // renderSelectedAgentRow draws the cursor row over the selection background

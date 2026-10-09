@@ -1896,9 +1896,11 @@ func TestAgentRowsShowWorkspaceComponent(t *testing.T) {
 	}}
 	model.rebuildGroups("monorepo:/workspace", "one")
 	model.rowsExpanded = true
+	// Where the agent is belongs to the workspace card; the agent's own
+	// card says what it is doing.
 	rendered := ansi.Strip(model.renderAgents(52, 20))
-	if !strings.Contains(rendered, "ParserPackage") {
-		t.Fatalf("workspace component missing from agent pane:\n%s", rendered)
+	if strings.Contains(rendered, "ParserPackage") {
+		t.Fatalf("the agent pane repeats the workspace's location:\n%s", rendered)
 	}
 }
 
